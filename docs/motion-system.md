@@ -7,12 +7,12 @@
 | Token                | Duración | Uso                          |
 | -------------------- | -------: | ---------------------------- |
 | instant              |    88 ms | respuesta secundaria mínima  |
-| focus-fast           |   132 ms | foco de teclado/gamepad      |
-| standard             |   184 ms | contenido y controles        |
+| focus-fast           |   150 ms | foco de teclado/gamepad      |
+| standard             |   204 ms | contenido y controles        |
 | panel                |   212 ms | modal y Details              |
-| view-enter           |   248 ms | entrada Home/Library/Details |
-| view-exit            |   168 ms | presupuesto de salida        |
-| background-crossfade |   304 ms | intercambio de fondo         |
+| view-enter           |   275 ms | entrada Home/Library/Details |
+| view-exit            |   176 ms | presupuesto de salida        |
+| background-crossfade |   344 ms | intercambio de fondo         |
 
 Curvas: `standard` es `cubic-bezier(0.2, 0.8, 0.2, 1)`, `enter` es
 `cubic-bezier(0.16, 1, 0.3, 1)`, `exit` es `cubic-bezier(0.4, 0, 1, 1)` y

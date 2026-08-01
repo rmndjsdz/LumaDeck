@@ -12,12 +12,12 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --motion-instant: 88ms;
-  --motion-focus-fast: 132ms;
-  --motion-standard: 184ms;
+  --motion-focus-fast: 150ms;
+  --motion-standard: 204ms;
   --motion-panel: 212ms;
-  --motion-view-enter: 248ms;
-  --motion-view-exit: 168ms;
-  --motion-background-crossfade: 304ms;
+  --motion-view-enter: 275ms;
+  --motion-view-exit: 176ms;
+  --motion-background-crossfade: 344ms;
   --motion-stagger: 32ms;
   --motion-stagger-wide: 48ms;
   --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);

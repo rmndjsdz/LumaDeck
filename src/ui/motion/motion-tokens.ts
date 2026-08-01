@@ -1,12 +1,12 @@
 export const motionTokens = {
   duration: {
     instant: 88,
-    focusFast: 132,
-    standard: 184,
+    focusFast: 150,
+    standard: 204,
     panel: 212,
-    viewEnter: 248,
-    viewExit: 168,
-    backgroundCrossfade: 304,
+    viewEnter: 275,
+    viewExit: 176,
+    backgroundCrossfade: 344,
   },
   easing: {
     standard: "cubic-bezier(0.2, 0.8, 0.2, 1)",
