@@ -22,6 +22,11 @@ listeners globales ni calculan vecinos por su cuenta.
 
 ## Estructura
 
+- `src/features/catalog`: catálogo local determinista y consulta TanStack Query.
+- `src/features/launcher`: shell persistente y vistas Home, Library y Details.
+- `src/ui/background`, `src/ui/input` y `src/ui/performance`: servicios
+  transversales de fondo, cursor, diagnóstico de gamepad y métricas.
+
 - `src/ui/navigation/core`: acciones, registry, engine y navegación espacial.
 - `src/ui/navigation/input`: adaptadores físicos y repetición.
 - `src/ui/navigation/focus`: `Focusable`, `FocusScope` y contexto.

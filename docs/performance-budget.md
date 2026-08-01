@@ -1,5 +1,10 @@
 # Presupuesto de rendimiento
 
+Library mantiene como máximo 60 tarjetas montadas para que el catálogo de 200
+no convierta cada movimiento en trabajo proporcional al total. El overlay de
+desarrollo publica FPS, frame medio/máximo y nodos montados cada 500 ms; no se
+incluye en producción.
+
 Objetivos iniciales:
 
 - Resolución espacial habitual menor de 2 ms.

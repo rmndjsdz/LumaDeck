@@ -73,6 +73,13 @@ pausa el scope padre y al desmontarse restaura ese foco exacto.
 
 ## Motor espacial
 
+`NavigationTabs` y `NavigationRow` declaran grupos lineales horizontales. El
+engine resuelve Left/Right por índice estable y solo aplica wrap cuando el
+layout lo solicita; no dependen de la geometría de los rectángulos. Los grids
+pueden declarar `index` e `itemCount` lógicos para soportar ventanas virtuales:
+si el destino todavía no está montado, el layout lo materializa y el foco se
+aplica después del commit.
+
 `findSpatialCandidate` es una función pura: filtra por dirección, prioriza
 alineación y solapamiento de ejes, combina distancia principal y perpendicular,
 y rompe empates por prioridad y `focusId`. El engine primero prueba overrides,
@@ -91,6 +98,12 @@ La repetición direccional es un servicio compartido con retraso inicial de
 soltar, cambiar de dirección, perder foco o detener el manager.
 
 ## Scroll y debug
+
+La aplicación de producto reutiliza el mismo scope persistente para header,
+footer y contenido. Los scopes modales se registran como exclusivos: el scope
+padre queda pausado, sus candidatos no participan y `trapFocus` intercepta
+Tab y navegación direccional hasta el cierre. Al cerrar, se restaura el opener
+y el scroll recordado del scope anterior.
 
 `FocusScrollManager` solo desplaza cuando el elemento no es visible y usa
 `scrollIntoView({ block: "nearest", inline: "nearest" })`. `ScrollRestoration`

@@ -13,6 +13,10 @@ La suite usa Vitest con `jsdom`.
 
 ## Integración
 
+`navigation-demo.integration.test.tsx` monta la aplicación de producto real,
+comprueba el shell persistente, la ventana de Library, filtros, apertura/cierre
+de Details y la restauración del foco.
+
 `navigation-demo.integration.test.tsx` monta la aplicación real, comprueba que
 la demo registra focusables y que existe un foco activo desde el arranque.
 
