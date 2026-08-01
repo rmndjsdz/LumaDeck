@@ -9,16 +9,17 @@ La suite usa Vitest con `jsdom`.
 - deadzone y transición direccional de gamepad;
 - registro, desregistro y focusId duplicado;
 - navegación espacial, overrides, empates y disabled;
-- confirmación y restauración de scope/modal.
+- confirmación y restauración de scope/modal;
+- tokens de motion y curvas centralizadas;
+- fases `navigating`, `fast-navigating`, `settling` y cleanup del timer;
+- BackgroundManager con destino final, caché, doble capa y conservación en error;
+- foco/cierre de Details y restauración del elemento exacto.
 
 ## Integración
 
-`navigation-demo.integration.test.tsx` monta la aplicación de producto real,
-comprueba el shell persistente, la ventana de Library, filtros, apertura/cierre
-de Details y la restauración del foco.
-
-`navigation-demo.integration.test.tsx` monta la aplicación real, comprueba que
-la demo registra focusables y que existe un foco activo desde el arranque.
+`navigation-demo.integration.test.tsx` monta la aplicación real y comprueba el
+shell persistente, la ventana de Library, filtros, apertura/cierre de Details,
+restauración de foco y ciclos repetidos.
 
 ## Comandos
 
@@ -32,6 +33,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 npm run tauri:build
 ```
 
-La validación manual debe cubrir mouse, flechas, WASD, repetición sostenida,
-Enter/Space, modal/Escape, disabled, tabs, grid, scroll, cambio de input mode,
-Gamepad API y consola limpia.
+La validación manual cubre mouse, flechas, WASD, repetición sostenida,
+Enter/Space, Escape, disabled, grid, scroll, cambio de input mode, gamepad,
+reduced motion y consola limpia. Para revisar rendimiento se usa `?hud=1`
+(compacto) o `?hud=detail` (detallado); sin query el HUD no aparece.

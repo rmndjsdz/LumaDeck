@@ -2,10 +2,10 @@
 
 ## Flujo unificado
 
-Los adaptadores traducen eventos físicos a `NavigationAction`. El
-`InputManager` es la única instancia activa y despacha la acción al
-`NavigationEngine`. Las pantallas solo registran elementos con `Focusable` y
-agrupan elementos con `FocusScope` o los layouts conductuales.
+Los adaptadores traducen eventos físicos a `NavigationAction`. `InputManager`
+es la única instancia activa y despacha la acción al `NavigationEngine`.
+Home, Library y Details solo registran elementos con `Focusable` y agrupan con
+`FocusScope` o layouts conductuales.
 
 ```text
 mouse / keyboard / gamepad
@@ -19,94 +19,46 @@ mouse / keyboard / gamepad
   DOM focus + callbacks
 ```
 
-## Acciones y estado
+Zustand conserva `inputMode`, scopes/foco activos, foco anterior, última acción,
+fase de navegación y métricas pequeñas. `FocusRegistry` mantiene nodos,
+scope, vecinos y rectángulos cacheados de forma imperativa.
 
-`NavigationAction` contiene `move-up`, `move-down`, `move-left`, `move-right`,
-`confirm`, `back`, `menu`, `page-next` y `page-previous`. `InputMode` distingue
-`mouse`, `keyboard` y `gamepad`.
+## Focus, scopes y grid
 
-Zustand conserva únicamente `inputMode`, scope/foco activos, foco anterior,
-última acción y métricas pequeñas. `FocusRegistry` mantiene de forma
-imperativa los nodos, sus rectángulos cacheados y callbacks.
+Cada `Focusable` declara un `focusId` estable, un nodo, un `scopeId` y sus
+callbacks. Los scopes pueden anidarse; Details pausa el padre y restaura el
+opener exacto. Un scope solo es interactivo cuando existe un focusable válido
+y el engine confirma el foco DOM.
 
-## Focus Registry
+Library conserva una cuadrícula lógica absoluta de cinco columnas, 12 filas
+visibles, dos filas de overscan y una ventana máxima aproximada de 60 tarjetas.
+El índice es el del catálogo filtrado; la fila final es estricta y no sustituye
+columnas. Un destino no montado usa `pendingFocusRequest` con índice, columna y
+`requestId`; la invariantes de `virtual-grid.ts` no cambian.
 
-Cada entrada necesita un `focusId` estable, un nodo, un `scopeId` y puede
-declarar vecinos explícitos, disabled, hidden, prioridad y callbacks. El
-registry registra/desregistra automáticamente, observa resize mediante un
-observer compartido, invalida medidas al cambiar el layout e ignora nodos
-desconectados.
+## Scroll e input mode
 
-## Focusable
+`FocusScrollManager` usa `nearest`; durante navegación rápida evita smooth scroll
+acumulado y cuando el input se estabiliza permite un ajuste suave. La rueda y
+hover activan mouse; teclado/gamepad conservan el foco lógico y ocultan el
+cursor tras un breve delay sin remontar componentes.
 
-```tsx
-<Focusable
-  focusId="demo-item-1"
-  scopeId="demo-grid"
-  disabled={false}
-  onConfirm={() => openDetails()}
->
-  Item
-</Focusable>
-```
+## Navegación rápida y settling
 
-El componente administra `tabIndex`, `data-focus-id`, `aria-disabled`, hover,
-click, foco lógico y sincronización con el input mode. El contenido no necesita
-saber si la acción vino de mouse, teclado o gamepad.
+`NavigationSettlingController` clasifica el movimiento en `idle`, `navigating`,
+`fast-navigating` y `settling`. Mantiene un único timer: cada movimiento
+reinicia la ventana de 112 ms; al detenerse emite `settling` y vuelve a `idle`
+tras 128 ms. El input y el foco lógico no esperan a esta política.
 
-## FocusScope
+`BackgroundManager` recibe la fase y guarda solo el último destino durante
+`navigating`/`fast-navigating`. Así no inicia un crossfade por cada tarjeta
+atravesada. Al estabilizarse precarga/decodifica el destino final y descarta
+solicitudes obsoletas mediante `requestId`.
 
-```tsx
-<FocusScope
-  scopeId="demo-library"
-  initialFocusId="demo-item-0"
-  restoreFocus
-  rememberScroll
-  trapFocus={false}
->
-  {children}
-</FocusScope>
-```
+## Transiciones de vista
 
-Los scopes pueden anidarse. Un scope modal se prepara con el foco que lo abrió,
-pausa el scope padre y al desmontarse restaura ese foco exacto.
-
-## Motor espacial
-
-`NavigationTabs` y `NavigationRow` declaran grupos lineales horizontales. El
-engine resuelve Left/Right por índice estable y solo aplica wrap cuando el
-layout lo solicita; no dependen de la geometría de los rectángulos. Los grids
-pueden declarar `index` e `itemCount` lógicos para soportar ventanas virtuales:
-si el destino todavía no está montado, el layout lo materializa y el foco se
-aplica después del commit.
-
-`findSpatialCandidate` es una función pura: filtra por dirección, prioriza
-alineación y solapamiento de ejes, combina distancia principal y perpendicular,
-y rompe empates por prioridad y `focusId`. El engine primero prueba overrides,
-luego candidatos válidos del scope, mueve el foco DOM y pide visibilidad al
-`FocusScrollManager`.
-
-## Inputs
-
-- Teclado: flechas/WASD, Enter/Space, Escape/Backspace y PageUp/PageDown.
-- Mouse: movimiento acumulado con umbral, hover, click y wheel.
-- Gamepad: D-pad, stick izquierdo, botones 0/1 y bumpers 4/5, deadzone y
-  transiciones.
-
-La repetición direccional es un servicio compartido con retraso inicial de
-260 ms, intervalo de 90 ms y aceleración opcional a 58 ms. Se cancela al
-soltar, cambiar de dirección, perder foco o detener el manager.
-
-## Scroll y debug
-
-La aplicación de producto reutiliza el mismo scope persistente para header,
-footer y contenido. Los scopes modales se registran como exclusivos: el scope
-padre queda pausado, sus candidatos no participan y `trapFocus` intercepta
-Tab y navegación direccional hasta el cierre. Al cerrar, se restaura el opener
-y el scroll recordado del scope anterior.
-
-`FocusScrollManager` solo desplaza cuando el elemento no es visible y usa
-`scrollIntoView({ block: "nearest", inline: "nearest" })`. `ScrollRestoration`
-recuerda `scrollTop`/`scrollLeft` por scope. El overlay de desarrollo expone
-modo, scope, foco, candidatos, tiempo espacial, gamepad, restauración y
-métricas ligeras.
+`App Shell` y `BackgroundManager` permanecen montados. Home, Library y
+Details se renderizan dentro de `ViewTransition`, cuya key reinicia la entrada
+cuando cambia la vista; una navegación nueva reemplaza inmediatamente la
+animación obsoleta. Details activa su scope y foco antes de aceptar acciones y
+Back restaura `returnFocusId`.

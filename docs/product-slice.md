@@ -9,8 +9,9 @@ their page content inside the same `product-shell` scope.
 `src/features/catalog/mock-catalog.ts` creates exactly 200 deterministic local
 games. `useGames` exposes that catalog through TanStack Query with an infinite
 stale time; there is no network, Steam integration or launcher process yet.
-The product store only keeps the active view, selected game and the focus/view
-needed to return from Details.
+The product store only keeps the active view, selected game, the focus/view
+needed to return from Details, and a monotonically increasing view transition
+token.
 
 ## Library rendering
 
@@ -25,10 +26,19 @@ switching views remembers and restores its exact `scrollTop`/`scrollLeft`.
 
 ## Backgrounds and input
 
-`BackgroundManager` preloads the next local SVG before committing it and
-crossfades the current and incoming layers. A failed preload leaves the current
-background untouched. `AutoCursor` hides the cursor after keyboard/gamepad
-input and reveals it on pointer movement.
+`BackgroundManager` keeps a current and incoming layer, defers intermediate
+requests during rapid navigation, and uses a six-entry LRU cache for the
+current, previous, next and immediate neighbor resources. It only crossfades
+opacity after the final resource is decoded; a failed preload leaves the
+current background untouched. `AutoCursor` hides the cursor after
+keyboard/gamepad input and reveals it on meaningful pointer movement.
+
+## Motion
+
+`src/ui/motion/motion-tokens.ts` is the source of truth for visual durations
+and easing curves. Focus changes use a moderate transform-only lift without
+changing grid layout. View and Details content enter with opacity plus a small
+translate; `prefers-reduced-motion` collapses these transitions.
 
 Development builds expose navigation and performance overlays. The gamepad
 adapter reports connection, direction and pressed-button diagnostics only when

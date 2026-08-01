@@ -9,3 +9,8 @@ La navegación es el producto.
 - Las animaciones no sacrifican FPS.
 - La aplicación funciona localmente.
 - La simplicidad gana.
+- El foco responde antes que fondos, metadatos o transiciones secundarias.
+- Navegación rápida conserva continuidad visual y solo resuelve el destino
+  final al estabilizarse.
+- Motion, fondos y métricas son sistemas compartidos, medibles y respetuosos
+  de `prefers-reduced-motion`.

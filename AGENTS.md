@@ -33,3 +33,16 @@ listeners globales ni calculan vecinos por su cuenta.
 - `src/ui/navigation/layouts`: layouts conductuales sin identidad visual fija.
 - `src/features/navigation-demo`: demostración técnica navegable.
 - `docs/`: decisiones, presupuesto y pruebas del sistema.
+
+## Motion y rendimiento perceptivo
+
+- Las duraciones visuales usan los tokens de `src/ui/motion/motion-tokens.ts`
+  y sus variables CSS equivalentes; no se añaden duraciones aisladas en
+  componentes.
+- `NavigationSettlingController` es el único dueño de la política de
+  navegación rápida, settling y su timer.
+- `BackgroundManager` conserva como máximo dos capas visibles y una caché LRU
+  pequeña; nunca bloquea el foco ni descarga recursos externos.
+- HUD y performance marks solo se activan en desarrollo; el HUD requiere
+  `?hud=1` o `VITE_PERFORMANCE_HUD=true`.
+- Todo timer, RAF, observer y listener añadido debe cancelarse en cleanup.
