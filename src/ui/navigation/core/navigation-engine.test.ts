@@ -16,6 +16,7 @@ function addElement(rect: Rect): HTMLElement {
 
 function resetStore(): void {
   useNavigationStore.setState({
+    inputMode: "mouse",
     activeScopeId: null,
     activeFocusId: null,
     previousFocusId: null,
@@ -242,6 +243,94 @@ describe("NavigationEngine", () => {
 
     expect(engine.getActiveScopeId()).toBe("modal");
     expect(engine.getActiveFocusId()).toBe("modal-action");
+  });
+
+  it("waits for a delayed scope focusable and blocks the parent while waiting", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "library-game-0",
+      scopeId: "library",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "library",
+      initialFocusId: "library-game-0",
+      activateOnMount: true,
+    });
+    engine.prepareScopeOpen("details", "library-game-0");
+    engine.registerScope({
+      scopeId: "details",
+      parentScopeId: "library",
+      initialFocusId: "details-play",
+      activateOnMount: true,
+      modal: true,
+    });
+
+    expect(engine.getActiveScopeId()).toBe("library");
+    expect(engine.getScopeLifecycleState("details")).toBe(
+      "waiting-for-focusable",
+    );
+    expect(engine.dispatch("move-right")).toBe(false);
+
+    registry.register({
+      focusId: "details-play",
+      scopeId: "details",
+      element: addElement(new DOMRect()),
+    });
+
+    expect(engine.getActiveScopeId()).toBe("details");
+    expect(engine.getActiveFocusId()).toBe("details-play");
+    expect(engine.getScopeLifecycleState("details")).toBe("active");
+  });
+
+  it("falls back to the first valid focusable when the initial focus is missing or disabled", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "disabled-action",
+      scopeId: "details",
+      element: addElement(new DOMRect()),
+      disabled: true,
+    });
+    registry.register({
+      focusId: "details-back",
+      scopeId: "details",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "details",
+      initialFocusId: "details-play",
+      activateOnMount: true,
+    });
+
+    expect(engine.getActiveScopeId()).toBe("details");
+    expect(engine.getActiveFocusId()).toBe("details-back");
+  });
+
+  it("keeps logical and DOM focus synchronized for gamepad input", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    registry.register({
+      focusId: "details-play",
+      scopeId: "details",
+      element: button,
+    });
+    useNavigationStore.getState().setInputMode("gamepad");
+    engine.registerScope({
+      scopeId: "details",
+      initialFocusId: "details-play",
+      activateOnMount: true,
+    });
+
+    expect(engine.getActiveFocusId()).toBe("details-play");
+    expect(document.activeElement).toBe(button);
+    expect(useNavigationStore.getState().debug.activeFocusValid).toBe(true);
   });
 
   it("keeps grid navigation in the current row and column", () => {
