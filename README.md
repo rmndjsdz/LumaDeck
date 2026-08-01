@@ -3,6 +3,13 @@
 Base del proyecto de escritorio LumaDeck con Tauri 2, React, TypeScript y Vite.
 La demo actual valida el primer sistema unificado de navegación.
 
+## Estado actual
+
+La primera slice de producto incluye una shell persistente con Home, Library y
+Details, un catálogo local determinista de 200 juegos y navegación por mouse,
+teclado y Gamepad API. No hay integración con Steam ni lanzamiento real de
+procesos.
+
 ## Desarrollo
 
 ```bash
