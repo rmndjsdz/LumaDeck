@@ -73,14 +73,35 @@ export class NavigationEngine {
   }
 
   public prepareScopeOpen(scopeId: string, openerFocusId?: string): void {
+    const activeScopeId = useNavigationStore.getState().activeScopeId;
+    if (
+      activeScopeId &&
+      activeScopeId !== scopeId &&
+      this.scopes.get(activeScopeId)?.modal
+    ) {
+      return;
+    }
     this.pendingOpeners.set(scopeId, openerFocusId);
     if (this.scopes.has(scopeId)) this.activateScope(scopeId, openerFocusId);
   }
 
   public activateScope(scopeId: string, preferredFocusId?: string): boolean {
+    const activeScopeId = useNavigationStore.getState().activeScopeId;
+    if (
+      activeScopeId &&
+      activeScopeId !== scopeId &&
+      this.scopes.get(activeScopeId)?.modal
+    ) {
+      return false;
+    }
     const scope = this.scopes.get(scopeId);
     if (!scope) return false;
+    if (activeScopeId && activeScopeId !== scopeId) {
+      this.scrollManager.rememberScope(activeScopeId);
+    }
     useNavigationStore.getState().setActiveScopeId(scopeId);
+    this.syncTabStops();
+    this.scrollManager.restoreScope(scopeId);
 
     const remembered = scope.rememberScroll
       ? this.focusHistory.get(scopeId)
@@ -117,12 +138,16 @@ export class NavigationEngine {
     ) {
       return false;
     }
+    const activeScopeId = useNavigationStore.getState().activeScopeId;
     if (
-      activateScope &&
-      useNavigationStore.getState().activeScopeId !== entry.scopeId
+      activeScopeId &&
+      activeScopeId !== entry.scopeId &&
+      this.scopes.get(activeScopeId)?.modal
     ) {
-      this.activateScope(entry.scopeId, focusId);
-      return true;
+      return false;
+    }
+    if (activateScope && activeScopeId !== entry.scopeId) {
+      return this.activateScope(entry.scopeId, focusId);
     }
     this.setFocus(entry);
     return true;
@@ -159,6 +184,49 @@ export class NavigationEngine {
       return this.activateScope(scopeId);
     }
 
+    const linear = current.linearNavigation;
+    const isLinearDirection =
+      linear &&
+      ((linear.axis === "horizontal" &&
+        (direction === "left" || direction === "right")) ||
+        (linear.axis === "vertical" &&
+          (direction === "up" || direction === "down")));
+    if (isLinearDirection) {
+      const entries = this.registry
+        .getScopeEntries(scopeId)
+        .filter(
+          (entry) =>
+            entry.linearNavigation?.groupId === linear.groupId &&
+            entry.linearNavigation.axis === linear.axis,
+        );
+      const currentIndex = entries.findIndex(
+        (entry) => entry.focusId === current.focusId,
+      );
+      if (currentIndex < 0) return false;
+      const delta = direction === "left" || direction === "up" ? -1 : 1;
+      let targetIndex = currentIndex + delta;
+      if (targetIndex < 0 || targetIndex >= entries.length) {
+        if (!linear.wrap || entries.length === 0) {
+          this.recordResolution(
+            direction,
+            undefined,
+            entries.map((entry) => entry.focusId),
+            0,
+          );
+          return false;
+        }
+        targetIndex = (targetIndex + entries.length) % entries.length;
+      }
+      const target = entries[targetIndex];
+      this.recordResolution(
+        direction,
+        target?.focusId,
+        entries.map((entry) => entry.focusId),
+        0,
+      );
+      return target ? this.focus(target.focusId) : false;
+    }
+
     const override = current.navigation?.[direction];
     if (override && this.focus(override)) {
       this.recordResolution(direction, override, [], 0);
@@ -187,10 +255,14 @@ export class NavigationEngine {
     const scope = this.scopes.get(scopeId);
     if (scope?.trapFocus) {
       const entries = this.registry.getScopeEntries(scopeId);
+      const currentIndex = entries.findIndex(
+        (entry) => entry.focusId === current.focusId,
+      );
+      const delta = direction === "up" || direction === "left" ? -1 : 1;
       const fallback =
-        direction === "up" || direction === "left"
-          ? entries[entries.length - 1]
-          : entries[0];
+        currentIndex >= 0 && entries.length > 0
+          ? entries[(currentIndex + delta + entries.length) % entries.length]
+          : undefined;
       return fallback ? this.focus(fallback.focusId) : false;
     }
     return false;
@@ -215,6 +287,7 @@ export class NavigationEngine {
       previousEntry.onBlur?.();
     }
     useNavigationStore.getState().setActiveFocusId(entry?.focusId ?? null);
+    this.syncTabStops();
     if (entry) {
       entry.element.dataset.active = "true";
       entry.element.tabIndex = 0;
@@ -231,6 +304,36 @@ export class NavigationEngine {
           lastScroll: scrollResult.focusId,
         });
       }
+    }
+  }
+
+  public handleTab(shiftKey: boolean): boolean {
+    const state = useNavigationStore.getState();
+    const scope = state.activeScopeId
+      ? this.scopes.get(state.activeScopeId)
+      : undefined;
+    if (!scope?.trapFocus || !state.activeScopeId) return false;
+    const entries = this.registry.getScopeEntries(state.activeScopeId);
+    const currentIndex = entries.findIndex(
+      (entry) => entry.focusId === state.activeFocusId,
+    );
+    if (currentIndex < 0 || entries.length === 0) return false;
+    const delta = shiftKey ? -1 : 1;
+    const target =
+      entries[(currentIndex + delta + entries.length) % entries.length];
+    return target ? this.focus(target.focusId) : false;
+  }
+
+  private syncTabStops(): void {
+    const state = useNavigationStore.getState();
+    for (const entry of this.registry.getEntries()) {
+      if (!entry.element.isConnected) continue;
+      const active =
+        entry.scopeId === state.activeScopeId &&
+        entry.focusId === state.activeFocusId;
+      entry.element.tabIndex = active ? 0 : -1;
+      entry.element.dataset.scopePaused =
+        entry.scopeId === state.activeScopeId ? "false" : "true";
     }
   }
 

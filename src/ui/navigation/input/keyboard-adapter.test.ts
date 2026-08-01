@@ -50,4 +50,26 @@ describe("KeyboardAdapter", () => {
     adapter.dispose();
     vi.useRealTimers();
   });
+
+  it("traps Tab only when the navigation engine consumes it", () => {
+    const onTab = vi.fn(() => true);
+    const adapter = new KeyboardAdapter({
+      target: window,
+      repeatController: new DirectionRepeatController(),
+      onAction: vi.fn(),
+      onTab,
+      onInputMode: vi.fn(),
+    });
+    const event = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      cancelable: true,
+    });
+
+    adapter.handleKeyDown(event);
+
+    expect(onTab).toHaveBeenCalledWith(true);
+    expect(event.defaultPrevented).toBe(true);
+    adapter.dispose();
+  });
 });

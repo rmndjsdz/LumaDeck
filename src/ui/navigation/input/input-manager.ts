@@ -19,6 +19,7 @@ export class InputManager {
     this.keyboardAdapter = new KeyboardAdapter({
       repeatController: this.repeatController,
       onAction: (action) => this.dispatch(action, "keyboard"),
+      onTab: (shiftKey) => this.engine.handleTab(shiftKey),
       onInputMode: () => this.setInputMode("keyboard"),
     });
     this.mouseAdapter = new MouseAdapter({

@@ -39,6 +39,7 @@ export function isEditableTarget(target: EventTarget | null): boolean {
 
 interface KeyboardAdapterOptions {
   onAction: (action: NavigationAction) => void;
+  onTab?: (shiftKey: boolean) => boolean;
   onInputMode: () => void;
   repeatController: DirectionRepeatController;
   target?: Window;
@@ -47,6 +48,7 @@ interface KeyboardAdapterOptions {
 export class KeyboardAdapter {
   private readonly target: Window | null;
   private readonly onAction: (action: NavigationAction) => void;
+  private readonly onTab?: (shiftKey: boolean) => boolean;
   private readonly onInputMode: () => void;
   private readonly repeatController: DirectionRepeatController;
   private activeKey: string | null = null;
@@ -55,6 +57,7 @@ export class KeyboardAdapter {
     this.target =
       options.target ?? (typeof window === "undefined" ? null : window);
     this.onAction = options.onAction;
+    this.onTab = options.onTab;
     this.onInputMode = options.onInputMode;
     this.repeatController = options.repeatController;
   }
@@ -78,6 +81,13 @@ export class KeyboardAdapter {
 
   public handleKeyDown = (event: KeyboardEvent): void => {
     if (isEditableTarget(event.target)) return;
+    if (event.key === "Tab") {
+      if (this.onTab?.(event.shiftKey)) {
+        this.onInputMode();
+        event.preventDefault();
+      }
+      return;
+    }
     const action = KEYBOARD_ACTION_MAP[event.key];
     if (!action || event.repeat) return;
     this.onInputMode();

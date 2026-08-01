@@ -59,6 +59,10 @@ export class FocusRegistry {
     return this.entries.get(focusId);
   }
 
+  public getEntries(): FocusEntry[] {
+    return [...this.entries.values()];
+  }
+
   public count(): number {
     return this.entries.size;
   }

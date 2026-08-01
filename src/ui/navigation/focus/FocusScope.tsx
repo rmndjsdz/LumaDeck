@@ -17,6 +17,7 @@ export interface FocusScopeProps extends PropsWithChildren {
   restoreFocus?: boolean;
   rememberScroll?: boolean;
   trapFocus?: boolean;
+  modal?: boolean;
   activateOnMount?: boolean;
   onBack?: () => boolean | void;
   className?: string;
@@ -30,6 +31,7 @@ export function FocusScope({
   restoreFocus = true,
   rememberScroll = true,
   trapFocus = false,
+  modal = false,
   activateOnMount = false,
   onBack,
   className,
@@ -45,6 +47,7 @@ export function FocusScope({
     restoreFocus,
     rememberScroll,
     trapFocus,
+    modal,
     activateOnMount,
     onBack,
   });
@@ -55,6 +58,7 @@ export function FocusScope({
     restoreFocus,
     rememberScroll,
     trapFocus,
+    modal,
     activateOnMount,
     onBack,
   };

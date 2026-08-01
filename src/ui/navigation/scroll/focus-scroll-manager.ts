@@ -41,4 +41,21 @@ export class FocusScrollManager {
   public clear(scopeId: string): void {
     this.positions.delete(scopeId);
   }
+
+  public rememberScope(scopeId: string): void {
+    const element = this.findScopeElement(scopeId);
+    if (element) this.remember(scopeId, element);
+  }
+
+  public restoreScope(scopeId: string): boolean {
+    const element = this.findScopeElement(scopeId);
+    return element ? this.restore(scopeId, element) : false;
+  }
+
+  private findScopeElement(scopeId: string): HTMLElement | undefined {
+    if (typeof document === "undefined") return undefined;
+    return [
+      ...document.querySelectorAll<HTMLElement>("[data-scroll-scope]"),
+    ].find((element) => element.dataset.scrollScope === scopeId);
+  }
 }

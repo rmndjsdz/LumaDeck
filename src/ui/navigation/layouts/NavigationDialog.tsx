@@ -32,6 +32,7 @@ export function NavigationDialog({
       restoreFocus={restoreFocus}
       rememberScroll={rememberScroll}
       trapFocus
+      modal
       onBack={onBack}
     >
       {content}

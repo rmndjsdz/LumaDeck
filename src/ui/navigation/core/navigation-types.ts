@@ -29,6 +29,12 @@ export interface FocusNavigationOverrides {
   right?: string;
 }
 
+export interface LinearNavigationConfig {
+  groupId: string;
+  axis: "horizontal" | "vertical";
+  wrap?: boolean;
+}
+
 export interface FocusEntry {
   focusId: string;
   element: HTMLElement;
@@ -37,6 +43,7 @@ export interface FocusEntry {
   disabled?: boolean;
   hidden?: boolean;
   navigation?: FocusNavigationOverrides;
+  linearNavigation?: LinearNavigationConfig;
   onFocus?: () => void;
   onBlur?: () => void;
   onConfirm?: () => void;
@@ -50,6 +57,7 @@ export interface ScopeRegistration {
   restoreFocus?: boolean;
   rememberScroll?: boolean;
   trapFocus?: boolean;
+  modal?: boolean;
   activateOnMount?: boolean;
   onBack?: () => boolean | void;
 }

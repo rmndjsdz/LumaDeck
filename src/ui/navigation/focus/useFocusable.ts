@@ -6,6 +6,7 @@ import type {
   FocusNavigationOverrides,
   InputMode,
 } from "../core/navigation-types";
+import { useLinearNavigation } from "../layouts/linear-navigation-context";
 
 export interface UseFocusableOptions {
   focusId: string;
@@ -38,6 +39,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
   optionsRef.current = options;
   const activeFocusId = useNavigationStore((state) => state.activeFocusId);
   const inputMode = useNavigationStore((state) => state.inputMode);
+  const linearNavigation = useLinearNavigation();
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -46,10 +48,11 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     return runtime.registry.register({
       focusId: options.focusId,
       scopeId: options.scopeId,
-      groupId: options.groupId,
+      groupId: options.groupId ?? linearNavigation?.groupId,
       disabled: options.disabled,
       hidden: options.hidden,
       navigation: current().navigation,
+      linearNavigation: linearNavigation ?? undefined,
       priority: options.priority,
       element,
       onFocus: () => current().onFocus?.(),
@@ -63,6 +66,10 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     options.hidden,
     options.priority,
     options.scopeId,
+    linearNavigation,
+    linearNavigation?.axis,
+    linearNavigation?.groupId,
+    linearNavigation?.wrap,
     runtime.registry,
   ]);
 
