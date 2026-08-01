@@ -39,7 +39,6 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
   const [sort, setSort] = useState<LibrarySort>("title");
   const [windowStart, setWindowStart] = useState(0);
   const windowStartRef = useRef(0);
-  const pendingRestoreIndex = useRef<number | null>(null);
   const anchorRef = useRef<VirtualScrollAnchor | null>(null);
   windowStartRef.current = windowStart;
   const filteredGames = useMemo(
@@ -100,19 +99,8 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
 
   useEffect(() => {
     setWindowStart(0);
-    pendingRestoreIndex.current = null;
     anchorRef.current = null;
   }, [query, sort, status]);
-
-  useEffect(() => {
-    const index = pendingRestoreIndex.current;
-    if (index === null || !filteredGames[index]) return;
-    const frame = window.requestAnimationFrame(() => {
-      pendingRestoreIndex.current = null;
-      engine.focus(`library-${filteredGames[index].id}`);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [engine, filteredGames, windowStart]);
 
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
@@ -135,9 +123,11 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
 
   useEffect(() => {
     if (activeView !== "library" || !filteredGames.length) return;
-    const selectedId = returnFocusId?.startsWith("library-")
-      ? returnFocusId
-      : `library-${selectedGameId ?? filteredGames[0].id}`;
+    const selectedId =
+      engine.getLastFocusedFocusId("library-content") ??
+      (returnFocusId?.startsWith("library-")
+        ? returnFocusId
+        : `library-${selectedGameId ?? filteredGames[0].id}`);
     const selectedIndex = filteredGames.findIndex(
       (game) => `library-${game.id}` === selectedId,
     );
@@ -164,15 +154,8 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
         },
       );
       setWindowStart(nextWindow.start);
-      pendingRestoreIndex.current = index;
       return;
     }
-    const frame = window.requestAnimationFrame(() => {
-      if (document.querySelector(`[data-focus-id="${selectedId}"]`)) {
-        engine.focus(selectedId);
-      }
-    });
-    return () => window.cancelAnimationFrame(frame);
   }, [activeView, engine, filteredGames, returnFocusId, selectedGameId]);
 
   return (
@@ -231,6 +214,10 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
           resolveFocusId={(index) =>
             `library-${filteredGames[index]?.id ?? ""}`
           }
+          regionId="library-content"
+          parentRegionId="main-navigation"
+          entryFocusId="main-nav-library"
+          exitFocusId="main-nav-library"
         >
           {visibleGames.map((game, index) => (
             <GameCard

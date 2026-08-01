@@ -643,4 +643,71 @@ describe("NavigationEngine", () => {
       }
     }
   });
+
+  it("reproduces the missing Home tab bridge from every first-row card", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "main-nav-home",
+      scopeId: "product-shell",
+      element: addElement(new DOMRect(0, 0, 80, 40)),
+      linearNavigation: {
+        groupId: "main-navigation",
+        axis: "horizontal",
+      },
+      navigationRegion: {
+        regionId: "main-navigation",
+        childRegionId: "home-content",
+        entryFocusId: "home-continue-0",
+      },
+    });
+    registry.register({
+      focusId: "main-nav-library",
+      scopeId: "product-shell",
+      element: addElement(new DOMRect(100, 0, 80, 40)),
+      linearNavigation: {
+        groupId: "main-navigation",
+        axis: "horizontal",
+      },
+      navigationRegion: {
+        regionId: "main-navigation",
+        childRegionId: "library-content",
+        entryFocusId: "library-0",
+      },
+    });
+    for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+      registry.register({
+        focusId: `home-continue-${itemIndex}`,
+        scopeId: "product-shell",
+        element: addElement(new DOMRect(itemIndex * 100, 100, 80, 40)),
+        rowNavigation: {
+          groupId: "home-rows",
+          rowId: "home-continue",
+          rowIndex: 0,
+          itemIndex,
+          preserveHorizontalIntent: true,
+        },
+        navigationRegion: {
+          regionId: "home-content",
+          parentRegionId: "main-navigation",
+          entryFocusId: "main-nav-home",
+          exitFocusId: "main-nav-home",
+        },
+      });
+    }
+    engine.registerScope({
+      scopeId: "product-shell",
+      initialFocusId: "main-nav-home",
+      activateOnMount: true,
+    });
+
+    for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+      expect(engine.focus(`home-continue-${itemIndex}`)).toBe(true);
+      expect(engine.dispatch("move-up")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe("main-nav-home");
+      expect(engine.dispatch("move-down")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`home-continue-${itemIndex}`);
+    }
+  });
 });

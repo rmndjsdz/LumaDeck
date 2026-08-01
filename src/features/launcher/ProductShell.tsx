@@ -5,6 +5,7 @@ import { useProductStore, type ProductView } from "../../stores/product-store";
 import { useNavigation } from "../../ui/navigation/navigation-context";
 import { FocusScope } from "../../ui/navigation/focus/FocusScope";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
+import { NavigationTabs } from "../../ui/navigation/layouts/NavigationTabs";
 import { NavigationDebugOverlay } from "../../ui/navigation/debug/NavigationDebugOverlay";
 import { PerformanceOverlay } from "../../ui/performance/PerformanceOverlay";
 import { BackgroundView } from "../../ui/background/BackgroundView";
@@ -26,6 +27,9 @@ export function ProductShell() {
   const setView = useProductStore((state) => state.setView);
   const openDetails = useProductStore((state) => state.openDetails);
   const selectedGame = games.find((game) => game.id === selectedGameId);
+  const homeEntryFocusId = `home-continue-${
+    games.find((game) => game.status === "playing")?.id ?? "empty"
+  }`;
   useEffect(() => {
     if (activeView === "details" && selectedGameId && !selectedGame)
       setView(returnView);
@@ -34,14 +38,27 @@ export function ProductShell() {
   useEffect(() => {
     if (activeView === "details") {
       engine.prepareScopeOpen("details", returnFocusId ?? undefined);
-      return;
     }
+  }, [activeView, engine, returnFocusId]);
+
+  useEffect(() => {
+    if (activeView === "details") return;
     if (
       returnFocusId &&
-      document.querySelector(`[data-focus-id="${returnFocusId}"]`)
+      ((activeView === "home" && returnFocusId.startsWith("home-")) ||
+        (activeView === "library" && returnFocusId.startsWith("library-")))
     ) {
-      engine.focus(returnFocusId);
+      engine.activateScope("product-shell", returnFocusId);
+      if (engine.getScopeLifecycleState("product-shell") !== "active") return;
     }
+    const activeFocusId = engine.getActiveFocusId();
+    const activeEntry = activeFocusId
+      ? engine.registry.get(activeFocusId)
+      : undefined;
+    if (activeEntry?.navigationRegion?.regionId !== "main-navigation") return;
+    const targetFocusId =
+      activeView === "home" ? "main-nav-home" : "main-nav-library";
+    if (activeFocusId !== targetFocusId) engine.focus(targetFocusId);
   }, [activeView, engine, returnFocusId]);
 
   useEffect(() => {
@@ -51,6 +68,7 @@ export function ProductShell() {
 
   const navigate = (view: ProductView) => {
     markPerformance("view-requested");
+    engine.cancelPendingHierarchyFocus();
     if (view !== "library") engine.cancelPendingVirtualFocus("view-change");
     setView(view);
   };
@@ -66,7 +84,7 @@ export function ProductShell() {
       <BackgroundView games={games} fallbackGameId={selectedGameId} />
       <FocusScope
         scopeId="product-shell"
-        initialFocusId="shell-home"
+        initialFocusId="main-nav-home"
         restoreFocus
         rememberScroll
         activateOnMount
@@ -76,26 +94,36 @@ export function ProductShell() {
             <span className="brand-mark">L</span>
             <span>LumaDeck</span>
           </div>
-          <nav className="primary-nav" aria-label="Primary navigation">
+          <NavigationTabs groupId="main-navigation" className="primary-nav">
             <Focusable
-              focusId="shell-home"
+              focusId="main-nav-home"
               scopeId="product-shell"
               className="shell-nav-button"
               ariaCurrent={activeView === "home" ? "page" : false}
+              navigationRegion={{
+                regionId: "main-navigation",
+                childRegionId: "home-content",
+                entryFocusId: homeEntryFocusId,
+              }}
               onConfirm={() => navigate("home")}
             >
               Home
             </Focusable>
             <Focusable
-              focusId="shell-library"
+              focusId="main-nav-library"
               scopeId="product-shell"
               className="shell-nav-button"
               ariaCurrent={activeView === "library" ? "page" : false}
+              navigationRegion={{
+                regionId: "main-navigation",
+                childRegionId: "library-content",
+                entryFocusId: "library-game-001",
+              }}
               onConfirm={() => navigate("library")}
             >
               Library
             </Focusable>
-          </nav>
+          </NavigationTabs>
           <span className="shell-status">LOCAL CATALOG · 200</span>
         </header>
         <main className="app-shell-main">

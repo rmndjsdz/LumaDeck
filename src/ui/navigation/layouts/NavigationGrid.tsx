@@ -3,7 +3,11 @@ import { useId, useMemo } from "react";
 import { FocusScope } from "../focus/FocusScope";
 import type { CSSProperties } from "react";
 import type { NavigationLayoutProps } from "./layout-types";
-import { GridNavigationContext } from "./linear-navigation-context";
+import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
+import {
+  GridNavigationContext,
+  NavigationRegionContext,
+} from "./linear-navigation-context";
 
 interface NavigationGridProps extends NavigationLayoutProps {
   columns?: number;
@@ -11,6 +15,10 @@ interface NavigationGridProps extends NavigationLayoutProps {
   itemCount?: number;
   onRequestIndex?: (index: number) => void;
   resolveFocusId?: (index: number) => string;
+  regionId?: string;
+  parentRegionId?: string;
+  entryFocusId?: string;
+  exitFocusId?: string;
   style?: CSSProperties;
 }
 
@@ -25,6 +33,10 @@ export function NavigationGrid({
   itemCount,
   onRequestIndex,
   resolveFocusId,
+  regionId,
+  parentRegionId,
+  entryFocusId,
+  exitFocusId,
   style,
   children,
 }: NavigationGridProps) {
@@ -47,23 +59,30 @@ export function NavigationGrid({
       scopeId,
     ],
   );
+  const regionValue = useMemo<NavigationRegionConfig | null>(
+    () =>
+      regionId ? { regionId, parentRegionId, entryFocusId, exitFocusId } : null,
+    [entryFocusId, exitFocusId, parentRegionId, regionId],
+  );
   const content = (
-    <GridNavigationContext.Provider value={gridNavigation}>
-      <div
-        className={`navigation-grid ${className ?? ""}`}
-        data-navigation-group="grid"
-        data-grid-columns={columns}
-        data-grid-navigation={gridNavigation.groupId}
-        style={
-          {
-            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-            ...style,
-          } satisfies CSSProperties
-        }
-      >
-        {children}
-      </div>
-    </GridNavigationContext.Provider>
+    <NavigationRegionContext.Provider value={regionValue}>
+      <GridNavigationContext.Provider value={gridNavigation}>
+        <div
+          className={`navigation-grid ${className ?? ""}`}
+          data-navigation-group="grid"
+          data-grid-columns={columns}
+          data-grid-navigation={gridNavigation.groupId}
+          style={
+            {
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              ...style,
+            } satisfies CSSProperties
+          }
+        >
+          {children}
+        </div>
+      </GridNavigationContext.Provider>
+    </NavigationRegionContext.Provider>
   );
   if (!scopeId) return content;
   return (

@@ -6,9 +6,11 @@ import type {
   FocusNavigationOverrides,
   InputMode,
 } from "../core/navigation-types";
+import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
 import {
   useGridNavigation,
   useLinearNavigation,
+  useNavigationRegion,
   useRowNavigation,
 } from "../layouts/linear-navigation-context";
 
@@ -16,6 +18,7 @@ export interface UseFocusableOptions {
   focusId: string;
   scopeId: string;
   groupId?: string;
+  navigationRegion?: NavigationRegionConfig;
   itemIndex?: number;
   gridIndex?: number;
   disabled?: boolean;
@@ -48,6 +51,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
   );
   const inputMode = useNavigationStore((state) => state.inputMode);
   const linearNavigation = useLinearNavigation();
+  const navigationRegionContext = useNavigationRegion();
   const rowNavigationContext = useRowNavigation();
   const rowGroupId = rowNavigationContext?.groupId;
   const rowId = rowNavigationContext?.rowId;
@@ -84,6 +88,8 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
       disabled: options.disabled,
       hidden: options.hidden,
       navigation: current().navigation,
+      navigationRegion:
+        options.navigationRegion ?? navigationRegionContext ?? undefined,
       linearNavigation: linearNavigation ?? undefined,
       rowNavigation,
       gridNavigation:
@@ -100,6 +106,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     options.disabled,
     options.focusId,
     options.groupId,
+    options.navigationRegion,
     options.itemIndex,
     options.gridIndex,
     options.hidden,
@@ -109,6 +116,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     linearNavigation?.axis,
     linearNavigation?.groupId,
     linearNavigation?.wrap,
+    navigationRegionContext,
     rowNavigation,
     rowNavigation?.groupId,
     rowNavigation?.itemIndex,

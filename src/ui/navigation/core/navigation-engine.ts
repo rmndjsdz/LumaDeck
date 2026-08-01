@@ -21,6 +21,10 @@ import {
   type HomeRowItem,
   type RowNavigationRegistration,
 } from "./row-navigation";
+import {
+  NavigationLevelCoordinator,
+  type NavigationRegionEntry,
+} from "./navigation-hierarchy";
 
 interface RegisteredScope extends Omit<ScopeRegistration, "parentScopeId"> {
   parentScopeId: string | null;
@@ -50,22 +54,33 @@ interface FocusChangeOptions {
   restored?: boolean;
 }
 
+interface PendingRegionFocusRequest {
+  requestId: number;
+  scopeId: string;
+  regionId: string;
+  targetFocusId: string;
+  direction: NavigationDirection;
+}
+
 export class NavigationEngine {
   private readonly scopes = new Map<string, RegisteredScope>();
   private readonly pendingOpeners = new Map<string, string | undefined>();
   private readonly focusHistory = new FocusHistory();
   private readonly logicalGridIndices = new Map<string, number>();
   private readonly rowNavigation = new NavigationRowCoordinator();
+  private readonly hierarchyNavigation = new NavigationLevelCoordinator();
   private readonly unregisterRegistryListener: () => void;
   private readonly scopeWatchdogFrames = new Map<string, number>();
   private readonly scopeWatchdogWarnings = new Set<string>();
   private pendingGridFocus: PendingGridFocusRequest | null = null;
+  private pendingRegionFocus: PendingRegionFocusRequest | null = null;
   private pendingScopeActivation: PendingScopeActivation | null = null;
   private pendingFrame: number | null = null;
   private pendingTimeout: number | null = null;
   private focusRetryFrame: number | null = null;
   private nextGridRequestId = 0;
   private nextScopeRequestId = 0;
+  private nextRegionRequestId = 0;
 
   public constructor(
     public readonly registry: FocusRegistry,
@@ -73,6 +88,7 @@ export class NavigationEngine {
   ) {
     this.unregisterRegistryListener = registry.subscribe(() => {
       this.tryCompletePendingGridFocus();
+      this.tryCompletePendingRegionFocus();
       this.tryCompletePendingScopeActivation();
       this.runScopeWatchdog();
     });
@@ -98,8 +114,10 @@ export class NavigationEngine {
     this.scopeWatchdogFrames.clear();
     this.scopeWatchdogWarnings.clear();
     this.pendingGridFocus = null;
+    this.clearPendingRegionFocus();
     this.pendingScopeActivation = null;
     this.rowNavigation.reset();
+    this.hierarchyNavigation.reset();
   }
 
   public registerScope(scope: ScopeRegistration): () => void {
@@ -397,8 +415,31 @@ export class NavigationEngine {
     if (pending?.scopeId === scopeId) {
       return this.moveGrid(scopeId, pending.targetFocusId, direction, pending);
     }
+    if (this.pendingRegionFocus?.scopeId === scopeId) return true;
     if (!current || current.scopeId !== scopeId) {
       return this.activateScope(scopeId);
+    }
+
+    if (current.navigationRegion && direction === "down") {
+      return this.moveToChildRegion(scopeId, current);
+    }
+
+    if (
+      current.navigationRegion &&
+      direction === "up" &&
+      current.navigationRegion.parentRegionId &&
+      !current.rowNavigation &&
+      !current.gridNavigation
+    ) {
+      return this.moveToParentRegion(scopeId, current);
+    }
+    if (
+      current.navigationRegion &&
+      direction === "up" &&
+      !current.rowNavigation &&
+      !current.gridNavigation
+    ) {
+      return false;
     }
 
     if (current.rowNavigation && (direction === "up" || direction === "down")) {
@@ -406,6 +447,13 @@ export class NavigationEngine {
     }
 
     if (current.gridNavigation) {
+      if (
+        current.navigationRegion &&
+        direction === "up" &&
+        this.isAtGridTop(current)
+      ) {
+        return this.moveToParentRegion(scopeId, current);
+      }
       return this.moveGrid(scopeId, current.focusId, direction);
     }
 
@@ -541,9 +589,203 @@ export class NavigationEngine {
       targetItems.map((item) => item.focusId),
       0,
     );
-    if (!target.item) return false;
+    if (!target.item) {
+      return direction === "up" && current.navigationRegion
+        ? this.moveToParentRegion(scopeId, current)
+        : false;
+    }
     return this.focus(target.item.focusId, true, {
       preservePreferredPosition: currentRow.preserveHorizontalIntent,
+    });
+  }
+
+  public getLastFocusedFocusId(regionId: string): string | null {
+    return this.hierarchyNavigation.getLastFocusedFocusId(regionId);
+  }
+
+  public getNavigationHierarchySnapshot() {
+    return this.hierarchyNavigation.getSnapshot();
+  }
+
+  public cancelPendingHierarchyFocus(): void {
+    this.clearPendingRegionFocus();
+  }
+
+  private getRegionEntries(scopeId: string): NavigationRegionEntry[] {
+    return this.registry
+      .getScopeEntries(scopeId, {
+        includeDisabled: true,
+        includeHidden: true,
+      })
+      .flatMap((entry) => {
+        const region = entry.navigationRegion;
+        if (!region) return [];
+        return [
+          {
+            ...region,
+            focusId: entry.focusId,
+            disabled: entry.disabled,
+            hidden: entry.hidden,
+          },
+        ];
+      });
+  }
+
+  private moveToChildRegion(scopeId: string, current: FocusEntry): boolean {
+    const region = current.navigationRegion;
+    if (!region?.childRegionId) return false;
+    const entries = this.getRegionEntries(scopeId);
+    const resolvedFocusId = this.hierarchyNavigation.resolveChild(
+      region,
+      entries,
+    );
+    const childEntries = entries.filter(
+      (entry) => entry.regionId === region.childRegionId,
+    );
+    const hasGridMaterializer = this.registry
+      .getScopeEntries(scopeId, {
+        includeDisabled: true,
+        includeHidden: true,
+      })
+      .some(
+        (entry) =>
+          entry.navigationRegion?.regionId === region.childRegionId &&
+          entry.gridNavigation?.onRequestIndex,
+      );
+    const rememberedFocusId = region.childRegionId
+      ? this.hierarchyNavigation.getLastFocusedFocusId(region.childRegionId)
+      : null;
+    const targetFocusId =
+      hasGridMaterializer &&
+      rememberedFocusId &&
+      !childEntries.some((entry) => entry.focusId === rememberedFocusId)
+        ? rememberedFocusId
+        : hasGridMaterializer &&
+            region.entryFocusId &&
+            !childEntries.some((entry) => entry.focusId === region.entryFocusId)
+          ? region.entryFocusId
+          : resolvedFocusId;
+    this.updateHierarchyDebug(
+      current,
+      targetFocusId ?? undefined,
+      "down",
+      "main-to-content",
+      "last-focus-or-entry",
+    );
+    if (!targetFocusId) return false;
+
+    const target = this.registry.get(targetFocusId);
+    if (target && this.isValidEntry(target, scopeId)) {
+      this.clearPendingRegionFocus();
+      return this.focus(targetFocusId);
+    }
+
+    return this.requestRegionFocus(
+      scopeId,
+      region.childRegionId,
+      targetFocusId,
+      "down",
+    );
+  }
+
+  private moveToParentRegion(scopeId: string, current: FocusEntry): boolean {
+    const region = current.navigationRegion;
+    if (!region) return false;
+    const entries = this.getRegionEntries(scopeId);
+    const targetFocusId = this.hierarchyNavigation.resolveParent(
+      region,
+      entries,
+    );
+    this.updateHierarchyDebug(
+      current,
+      targetFocusId ?? undefined,
+      "up",
+      targetFocusId ? "content-to-main" : "no-parent-region",
+      "explicit-exit-or-parent-focus",
+    );
+    if (!targetFocusId) {
+      if (import.meta.env.DEV) {
+        console.warn(
+          `[navigation] region ${region.regionId} has no valid parent focus`,
+        );
+      }
+      return false;
+    }
+    this.clearPendingRegionFocus();
+    return this.focus(targetFocusId);
+  }
+
+  private isAtGridTop(entry: FocusEntry): boolean {
+    const grid = entry.gridNavigation;
+    if (!grid) return false;
+    const index =
+      grid.index ?? this.logicalGridIndices.get(grid.groupId) ?? undefined;
+    return index !== undefined && getRow(index, grid.columns) === 0;
+  }
+
+  private requestRegionFocus(
+    scopeId: string,
+    regionId: string,
+    targetFocusId: string,
+    direction: NavigationDirection,
+  ): boolean {
+    const entries = this.registry.getScopeEntries(scopeId, {
+      includeDisabled: true,
+      includeHidden: true,
+    });
+    const targetIndex =
+      this.hierarchyNavigation.getPreferredItemIndex(regionId);
+    const materializer = entries.find(
+      (entry) =>
+        entry.navigationRegion?.regionId === regionId &&
+        entry.gridNavigation &&
+        entry.gridNavigation.onRequestIndex,
+    );
+    const grid = materializer?.gridNavigation;
+    if (!grid?.onRequestIndex) return false;
+    const index = targetIndex ?? 0;
+    const resolvedTargetFocusId = grid.resolveFocusId?.(index) ?? targetFocusId;
+    this.clearPendingRegionFocus();
+    this.pendingRegionFocus = {
+      requestId: ++this.nextRegionRequestId,
+      scopeId,
+      regionId,
+      targetFocusId: resolvedTargetFocusId,
+      direction,
+    };
+    useNavigationStore.getState().updateDebug({
+      pendingFocusId: resolvedTargetFocusId,
+      fallbackReason: "hierarchy-region-materialization",
+    });
+    grid.onRequestIndex(index);
+    this.tryCompletePendingRegionFocus();
+    return true;
+  }
+
+  private tryCompletePendingRegionFocus(): void {
+    const pending = this.pendingRegionFocus;
+    if (!pending) return;
+    const entry = this.registry.get(pending.targetFocusId);
+    if (
+      !entry ||
+      entry.scopeId !== pending.scopeId ||
+      entry.navigationRegion?.regionId !== pending.regionId ||
+      !this.isValidEntry(entry, pending.scopeId)
+    ) {
+      return;
+    }
+    this.pendingRegionFocus = null;
+    useNavigationStore.getState().updateDebug({
+      pendingFocusId: undefined,
+      hierarchyRestoreReason: "materialized-region-focus",
+    });
+    this.focus(entry.focusId);
+  }
+
+  private clearPendingRegionFocus(): void {
+    this.pendingRegionFocus = null;
+    useNavigationStore.getState().updateDebug({
+      pendingFocusId: undefined,
     });
   }
 
@@ -906,6 +1148,37 @@ export class NavigationEngine {
     });
   }
 
+  private updateHierarchyDebug(
+    current: FocusEntry,
+    targetFocusId?: string,
+    direction?: NavigationDirection,
+    transitionReason?: string,
+    restoreReason?: string,
+  ): void {
+    const region = current.navigationRegion;
+    if (!region) return;
+    const snapshot = this.hierarchyNavigation.getSnapshot();
+    useNavigationStore.getState().updateDebug({
+      activeNavigationLevel: region.regionId,
+      parentRegionId: region.parentRegionId,
+      childRegionId: region.childRegionId,
+      lastFocusedByRegion: snapshot.lastFocusedByRegion,
+      entryFocusId: region.entryFocusId,
+      exitFocusId: region.exitFocusId,
+      selectedMainTab:
+        region.regionId === "main-navigation" ? current.focusId : undefined,
+      hierarchyTransitionReason:
+        transitionReason ??
+        (direction === "up"
+          ? "content-navigation"
+          : direction === "down"
+            ? "main-navigation"
+            : undefined),
+      hierarchyRestoreReason: restoreReason,
+      resolvedCandidate: targetFocusId,
+    });
+  }
+
   private setFocus(
     entry: FocusEntry | null,
     options?: FocusChangeOptions,
@@ -948,6 +1221,24 @@ export class NavigationEngine {
         entry.gridNavigation.index,
       );
       this.updateGridDebug(entry.gridNavigation, entry.gridNavigation.index);
+    }
+    if (entry?.navigationRegion) {
+      const preferredItemIndex = entry.rowNavigation
+        ? this.rowNavigation.getState(entry.rowNavigation.groupId)
+            ?.preferredItemIndex
+        : entry.gridNavigation?.index;
+      this.hierarchyNavigation.recordFocus(
+        entry.navigationRegion,
+        entry.focusId,
+        preferredItemIndex,
+      );
+      this.updateHierarchyDebug(
+        entry,
+        undefined,
+        undefined,
+        options?.restored ? "scope-restored" : undefined,
+        options?.restored ? "restored-focus" : undefined,
+      );
     }
     const previousEntry = state.activeFocusId
       ? this.registry.get(state.activeFocusId)

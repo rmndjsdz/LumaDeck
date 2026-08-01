@@ -36,6 +36,26 @@ El índice es el del catálogo filtrado; la fila final es estricta y no sustituy
 columnas. Un destino no montado usa `pendingFocusRequest` con índice, columna y
 `requestId`; la invariantes de `virtual-grid.ts` no cambian.
 
+## Jerarquía Home / Library
+
+La barra principal es el nivel `main-navigation`. Cada vista de contenido
+declara un único nivel hijo (`home-content` o `library-content`) mediante
+`navigationRegion`; el engine resuelve la entrada y salida, sin que Home ni
+Library calculen vecinos globales.
+
+`ArrowDown` desde una pestaña entra al foco configurado o al último foco de su
+contenido. `ArrowUp` desde el primer nivel de Home o desde la primera fila de
+Library vuelve a la pestaña correspondiente. Cambiar de pestaña no entra
+automáticamente al contenido: la vista se monta y la siguiente acción Down
+realiza la entrada explícita. El coordinador conserva el último `focusId` y,
+para Library, el índice lógico necesario para materializar una tarjeta fuera
+de la ventana visible.
+
+Los ids de la barra son estables: `main-nav-home` y `main-nav-library`. El
+overlay de desarrollo muestra nivel, padre/hijo, transición, restauración y
+el último foco por región. La restauración desde Details conserva prioridad y
+solo usa `returnFocusId` cuando el opener pertenece a la vista de retorno.
+
 ## Scroll e input mode
 
 `FocusScrollManager` usa `nearest`; durante navegación rápida evita smooth scroll

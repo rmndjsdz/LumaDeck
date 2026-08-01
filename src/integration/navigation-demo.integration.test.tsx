@@ -26,12 +26,24 @@ async function waitForSelector(
   throw new Error(`Selector did not appear: ${selector}`);
 }
 
+async function dispatchKey(key: string): Promise<void> {
+  window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+  window.dispatchEvent(new KeyboardEvent("keyup", { key }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function renderProductApp() {
   useProductStore.setState({
     activeView: "home",
     selectedGameId: null,
     returnView: "home",
     returnFocusId: null,
+  });
+  useNavigationStore.setState({
+    activeScopeId: null,
+    activeFocusId: null,
+    previousFocusId: null,
+    lastNavigationAction: null,
   });
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -131,7 +143,9 @@ describe("LumaDeck product slice integration", () => {
     const { host, root } = await renderProductApp();
 
     expect(host.querySelector(".app-shell")).not.toBeNull();
-    expect(host.querySelector('[data-focus-id="shell-home"]')).not.toBeNull();
+    expect(
+      host.querySelector('[data-focus-id="main-nav-home"]'),
+    ).not.toBeNull();
     expect(
       host.querySelectorAll('[data-focusable="true"]').length,
     ).toBeGreaterThan(10);
@@ -140,11 +154,58 @@ describe("LumaDeck product slice integration", () => {
     await act(async () => root.unmount());
   });
 
+  it("bridges main tabs and remembers the last content focus", async () => {
+    const { host, root } = await renderProductApp();
+    const homeCard = host.querySelector<HTMLElement>(
+      '[data-focus-id^="home-continue-"]',
+    );
+    expect(homeCard).not.toBeNull();
+
+    await act(async () => dispatchKey("ArrowDown"));
+    expect(homeCard?.getAttribute("data-active")).toBe("true");
+
+    await act(async () => dispatchKey("ArrowUp"));
+    expect(
+      host
+        .querySelector('[data-focus-id="main-nav-home"]')
+        ?.getAttribute("data-active"),
+    ).toBe("true");
+
+    await act(async () => dispatchKey("ArrowDown"));
+    expect(homeCard?.getAttribute("data-active")).toBe("true");
+
+    await act(async () => dispatchKey("ArrowUp"));
+    await act(async () => dispatchKey("ArrowRight"));
+    expect(
+      host
+        .querySelector('[data-focus-id="main-nav-library"]')
+        ?.getAttribute("data-active"),
+    ).toBe("true");
+    await act(async () => dispatchKey("Enter"));
+    await act(async () => waitForSelector(host, "#library-heading"));
+    await act(async () => dispatchKey("ArrowDown"));
+    const libraryCard = host.querySelector<HTMLElement>(
+      '[data-focus-id="library-game-001"]',
+    );
+    expect(libraryCard).not.toBeNull();
+    expect(libraryCard?.getAttribute("data-active")).toBe("true");
+    await act(async () => dispatchKey("ArrowUp"));
+    expect(
+      host
+        .querySelector('[data-focus-id="main-nav-library"]')
+        ?.getAttribute("data-active"),
+    ).toBe("true");
+    await act(async () => dispatchKey("ArrowDown"));
+    expect(libraryCard?.getAttribute("data-active")).toBe("true");
+
+    await act(async () => root.unmount());
+  });
+
   it("switches to Library without unmounting the shell and opens Details", async () => {
     const { host, root } = await renderProductApp();
     const shell = host.querySelector(".app-shell");
     const libraryButton = host.querySelector<HTMLElement>(
-      '[data-focus-id="shell-library"]',
+      '[data-focus-id="main-nav-library"]',
     );
     expect(libraryButton).not.toBeNull();
 
@@ -152,6 +213,11 @@ describe("LumaDeck product slice integration", () => {
     await act(async () => waitForSelector(host, "#library-heading"));
     expect(host.querySelector(".app-shell")).toBe(shell);
     expect(host.querySelector("#library-heading")).not.toBeNull();
+    expect(
+      host
+        .querySelector('[data-focus-id="main-nav-library"]')
+        ?.getAttribute("data-active"),
+    ).toBe("true");
     expect(
       host.querySelectorAll('[data-focus-id^="library-game-"]').length,
     ).toBeLessThanOrEqual(60);

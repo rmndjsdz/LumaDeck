@@ -4,6 +4,7 @@ import type {
   GridNavigationConfig,
   LinearNavigationConfig,
 } from "../core/navigation-types";
+import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
 
 export interface RowNavigationContextValue {
   groupId: string;
@@ -24,6 +25,13 @@ export const RowNavigationContext =
 
 export function useRowNavigation(): RowNavigationContextValue | null {
   return useContext(RowNavigationContext);
+}
+
+export const NavigationRegionContext =
+  createContext<NavigationRegionConfig | null>(null);
+
+export function useNavigationRegion(): NavigationRegionConfig | null {
+  return useContext(NavigationRegionContext);
 }
 
 export const GridNavigationContext = createContext<GridNavigationConfig | null>(

@@ -55,6 +55,27 @@ export function NavigationDebugOverlay() {
         />
         <DebugRow label="active focus" value={activeFocusId ?? "—"} />
         <DebugRow
+          label="navigation level"
+          value={debug.activeNavigationLevel ?? "—"}
+        />
+        <DebugRow label="main tab" value={debug.selectedMainTab ?? "—"} />
+        <DebugRow
+          label="hierarchy parent/child"
+          value={`${debug.parentRegionId ?? "—"}/${debug.childRegionId ?? "—"}`}
+        />
+        <DebugRow
+          label="hierarchy transition"
+          value={debug.hierarchyTransitionReason ?? "—"}
+        />
+        <DebugRow
+          label="hierarchy restore"
+          value={debug.hierarchyRestoreReason ?? "—"}
+        />
+        <DebugRow
+          label="last region focus"
+          value={formatRegionFocus(debug.lastFocusedByRegion)}
+        />
+        <DebugRow
           label="active valid"
           value={
             debug.activeFocusValid === undefined
@@ -185,4 +206,12 @@ function DebugRow({ label, value }: { label: string; value: string }) {
 
 function formatNumber(value: number | undefined): string {
   return value === undefined ? "—" : String(value);
+}
+
+function formatRegionFocus(value: Record<string, string> | undefined): string {
+  if (!value) return "—";
+  const entries = Object.entries(value);
+  return entries.length
+    ? entries.map(([regionId, focusId]) => `${regionId}:${focusId}`).join(", ")
+    : "—";
 }

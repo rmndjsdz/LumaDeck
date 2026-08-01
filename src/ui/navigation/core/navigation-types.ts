@@ -1,3 +1,5 @@
+import type { NavigationRegionConfig } from "./navigation-hierarchy";
+
 export type NavigationAction =
   | "move-up"
   | "move-down"
@@ -77,6 +79,7 @@ export interface FocusEntry {
   disabled?: boolean;
   hidden?: boolean;
   navigation?: FocusNavigationOverrides;
+  navigationRegion?: NavigationRegionConfig;
   linearNavigation?: LinearNavigationConfig;
   rowNavigation?: RowNavigationConfig;
   gridNavigation?: GridNavigationConfig;
@@ -169,4 +172,13 @@ export interface NavigationDebugState {
   verticalFallbackReason?: string;
   restoredHomeRowIndex?: number;
   restoredHomeItemIndex?: number;
+  activeNavigationLevel?: string;
+  parentRegionId?: string;
+  childRegionId?: string;
+  lastFocusedByRegion?: Record<string, string>;
+  entryFocusId?: string;
+  exitFocusId?: string;
+  selectedMainTab?: string;
+  hierarchyTransitionReason?: string;
+  hierarchyRestoreReason?: string;
 }
