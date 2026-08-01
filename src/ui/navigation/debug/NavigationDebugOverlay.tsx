@@ -45,6 +45,43 @@ export function NavigationDebugOverlay() {
         <DebugRow label="scope" value={activeScopeId ?? "—"} />
         <DebugRow label="active focus" value={activeFocusId ?? "—"} />
         <DebugRow label="previous focus" value={previousFocusId ?? "—"} />
+        <DebugRow
+          label="active index"
+          value={formatNumber(debug.activeAbsoluteIndex)}
+        />
+        <DebugRow label="active row" value={formatNumber(debug.activeRow)} />
+        <DebugRow
+          label="active column"
+          value={formatNumber(debug.activeColumn)}
+        />
+        <DebugRow
+          label="target index"
+          value={formatNumber(debug.targetAbsoluteIndex)}
+        />
+        <DebugRow label="target row" value={formatNumber(debug.targetRow)} />
+        <DebugRow
+          label="target column"
+          value={formatNumber(debug.targetColumn)}
+        />
+        <DebugRow
+          label="window"
+          value={`${formatNumber(debug.windowStart)}–${formatNumber(debug.windowEnd)}`}
+        />
+        <DebugRow label="pending focus" value={debug.pendingFocusId ?? "—"} />
+        <DebugRow
+          label="pending request"
+          value={formatNumber(debug.pendingRequestId)}
+        />
+        <DebugRow label="anchor" value={debug.anchorFocusId ?? "—"} />
+        <DebugRow
+          label="scroll before/after"
+          value={`${formatNumber(debug.scrollTopBefore)}/${formatNumber(debug.scrollTopAfter)}`}
+        />
+        <DebugRow
+          label="scroll authority"
+          value={debug.scrollAuthority ?? "—"}
+        />
+        <DebugRow label="fallback" value={debug.fallbackReason ?? "—"} />
         <DebugRow label="registered" value={String(debug.registryCount)} />
         <DebugRow label="direction" value={debug.requestedDirection ?? "—"} />
         <DebugRow label="candidate" value={debug.resolvedCandidate ?? "—"} />
@@ -77,4 +114,8 @@ function DebugRow({ label, value }: { label: string; value: string }) {
       <dd title={value}>{value}</dd>
     </div>
   );
+}
+
+function formatNumber(value: number | undefined): string {
+  return value === undefined ? "—" : String(value);
 }

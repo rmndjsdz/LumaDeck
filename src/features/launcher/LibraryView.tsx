@@ -1,18 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Game, GameStatus } from "../catalog/game-types";
 import { useGames } from "../catalog/catalog-query";
 import { useProductStore } from "../../stores/product-store";
+import { useNavigationStore } from "../../stores/navigation-store";
 import { useNavigation } from "../../ui/navigation/navigation-context";
 import { NavigationGrid } from "../../ui/navigation/layouts/NavigationGrid";
 import { ScrollRestoration } from "../../ui/navigation/scroll/scroll-restoration";
+import { getWindowForTarget } from "../../ui/navigation/core/virtual-grid";
 import { GameCard } from "./GameCard";
 import { filterAndSortGames, type LibrarySort } from "./library-operations";
 
-const LIBRARY_WINDOW_SIZE = 60;
+const LIBRARY_COLUMNS = 5;
+const LIBRARY_VISIBLE_ROWS = 12;
+const LIBRARY_OVERSCAN_ROWS = 2;
+const LIBRARY_WINDOW_SIZE = LIBRARY_COLUMNS * LIBRARY_VISIBLE_ROWS;
+
+interface VirtualScrollAnchor {
+  focusId: string;
+  top: number;
+  scrollTop: number;
+}
 
 export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
   const { data: games = [] } = useGames();
-  const { engine } = useNavigation();
+  const { engine, registry } = useNavigation();
   const activeView = useProductStore((state) => state.activeView);
   const selectedGameId = useProductStore((state) => state.selectedGameId);
   const returnFocusId = useProductStore((state) => state.returnFocusId);
@@ -21,7 +39,8 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
   const [sort, setSort] = useState<LibrarySort>("title");
   const [windowStart, setWindowStart] = useState(0);
   const windowStartRef = useRef(0);
-  const pendingIndex = useRef<number | null>(null);
+  const pendingRestoreIndex = useRef<number | null>(null);
+  const anchorRef = useRef<VirtualScrollAnchor | null>(null);
   windowStartRef.current = windowStart;
   const filteredGames = useMemo(
     () => filterAndSortGames(games, query, status, sort),
@@ -34,34 +53,85 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
 
   const requestIndex = useCallback(
     (index: number) => {
-      pendingIndex.current = index;
-      setWindowStart(
-        Math.max(
-          0,
-          Math.min(
-            index - Math.floor(LIBRARY_WINDOW_SIZE / 2),
-            Math.max(0, filteredGames.length - LIBRARY_WINDOW_SIZE),
+      const currentStart = windowStartRef.current;
+      const nextWindow = getWindowForTarget(
+        index,
+        {
+          start: currentStart,
+          end: Math.min(
+            filteredGames.length,
+            currentStart + LIBRARY_WINDOW_SIZE,
           ),
-        ),
+        },
+        {
+          totalItems: filteredGames.length,
+          columns: LIBRARY_COLUMNS,
+          visibleRows: LIBRARY_VISIBLE_ROWS,
+          overscanRows: LIBRARY_OVERSCAN_ROWS,
+        },
       );
+      if (nextWindow.start === currentStart) return;
+
+      const activeFocusId = engine.getActiveFocusId();
+      const anchorElement = activeFocusId
+        ? registry.get(activeFocusId)?.element
+        : undefined;
+      const container = document.querySelector<HTMLElement>(
+        '[data-scroll-scope="library"]',
+      );
+      if (anchorElement && container) {
+        anchorRef.current = {
+          focusId: activeFocusId ?? "",
+          top: anchorElement.getBoundingClientRect().top,
+          scrollTop: container.scrollTop,
+        };
+      }
+      useNavigationStore.getState().updateDebug({
+        windowStart: nextWindow.start,
+        windowEnd: nextWindow.end,
+        anchorFocusId: activeFocusId ?? undefined,
+        scrollTopBefore: container?.scrollTop,
+        scrollAuthority: "virtualization",
+      });
+      setWindowStart(nextWindow.start);
     },
-    [filteredGames.length],
+    [engine, filteredGames.length, registry],
   );
 
   useEffect(() => {
     setWindowStart(0);
-    pendingIndex.current = null;
+    pendingRestoreIndex.current = null;
+    anchorRef.current = null;
   }, [query, sort, status]);
 
   useEffect(() => {
-    const index = pendingIndex.current;
+    const index = pendingRestoreIndex.current;
     if (index === null || !filteredGames[index]) return;
-    pendingIndex.current = null;
     const frame = window.requestAnimationFrame(() => {
+      pendingRestoreIndex.current = null;
       engine.focus(`library-${filteredGames[index].id}`);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [engine, filteredGames, windowStart]);
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const container = document.querySelector<HTMLElement>(
+      '[data-scroll-scope="library"]',
+    );
+    const anchorElement = registry.get(anchor.focusId)?.element;
+    if (container && anchorElement) {
+      const nextTop = anchorElement.getBoundingClientRect().top;
+      container.scrollTop += nextTop - anchor.top;
+      useNavigationStore.getState().updateDebug({
+        scrollTopAfter: container.scrollTop,
+        scrollAuthority: "virtualization",
+      });
+    }
+    registry.invalidateAll();
+    anchorRef.current = null;
+  }, [registry, windowStart]);
 
   useEffect(() => {
     if (activeView !== "library" || !filteredGames.length) return;
@@ -77,16 +147,24 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
       index < currentWindowStart ||
       index >= currentWindowStart + LIBRARY_WINDOW_SIZE
     ) {
-      setWindowStart(
-        Math.max(
-          0,
-          Math.min(
-            index - Math.floor(LIBRARY_WINDOW_SIZE / 2),
-            Math.max(0, filteredGames.length - LIBRARY_WINDOW_SIZE),
+      const nextWindow = getWindowForTarget(
+        index,
+        {
+          start: currentWindowStart,
+          end: Math.min(
+            filteredGames.length,
+            currentWindowStart + LIBRARY_WINDOW_SIZE,
           ),
-        ),
+        },
+        {
+          totalItems: filteredGames.length,
+          columns: LIBRARY_COLUMNS,
+          visibleRows: LIBRARY_VISIBLE_ROWS,
+          overscanRows: LIBRARY_OVERSCAN_ROWS,
+        },
       );
-      pendingIndex.current = index;
+      setWindowStart(nextWindow.start);
+      pendingRestoreIndex.current = index;
       return;
     }
     const frame = window.requestAnimationFrame(() => {
@@ -147,7 +225,7 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
       <ScrollRestoration scopeId="library" className="library-scroll-area">
         <NavigationGrid
           groupId="library-grid"
-          columns={5}
+          columns={LIBRARY_COLUMNS}
           itemCount={filteredGames.length}
           onRequestIndex={requestIndex}
           resolveFocusId={(index) =>

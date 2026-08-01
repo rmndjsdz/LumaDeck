@@ -7,24 +7,60 @@ import { useNavigationStore } from "../../../stores/navigation-store";
 import type {
   FocusEntry,
   NavigationAction,
+  NavigationDirection,
   ScopeRegistration,
 } from "./navigation-types";
 import type { FocusScrollManager } from "../scroll/focus-scroll-manager";
+import { getColumn, getDirectionalTarget, getRow } from "./virtual-grid";
 
 interface RegisteredScope extends Omit<ScopeRegistration, "parentScopeId"> {
   parentScopeId: string | null;
   openerFocusId?: string;
 }
 
+interface PendingGridFocusRequest {
+  requestId: number;
+  scopeId: string;
+  groupId: string;
+  targetAbsoluteIndex: number;
+  targetFocusId: string;
+  direction: NavigationDirection;
+  column: number;
+  grid: NonNullable<FocusEntry["gridNavigation"]>;
+}
+
 export class NavigationEngine {
   private readonly scopes = new Map<string, RegisteredScope>();
   private readonly pendingOpeners = new Map<string, string | undefined>();
   private readonly focusHistory = new FocusHistory();
+  private readonly logicalGridIndices = new Map<string, number>();
+  private readonly unregisterRegistryListener: () => void;
+  private pendingGridFocus: PendingGridFocusRequest | null = null;
+  private pendingFrame: number | null = null;
+  private pendingTimeout: number | null = null;
+  private nextGridRequestId = 0;
 
   public constructor(
     public readonly registry: FocusRegistry,
     private readonly scrollManager: FocusScrollManager,
-  ) {}
+  ) {
+    this.unregisterRegistryListener = registry.subscribe(() => {
+      this.tryCompletePendingGridFocus();
+    });
+  }
+
+  public dispose(): void {
+    this.unregisterRegistryListener();
+    if (this.pendingFrame !== null) {
+      window.cancelAnimationFrame(this.pendingFrame);
+      this.pendingFrame = null;
+    }
+    if (this.pendingTimeout !== null) {
+      window.clearTimeout(this.pendingTimeout);
+      this.pendingTimeout = null;
+    }
+    this.pendingGridFocus = null;
+  }
 
   public registerScope(scope: ScopeRegistration): () => void {
     const parentScopeId =
@@ -179,10 +215,14 @@ export class NavigationEngine {
   private move(direction: "up" | "down" | "left" | "right"): boolean {
     const state = useNavigationStore.getState();
     const scopeId = state.activeScopeId;
+    const pending = this.pendingGridFocus;
     const current = state.activeFocusId
       ? this.registry.get(state.activeFocusId)
       : undefined;
     if (!scopeId) return false;
+    if (pending?.scopeId === scopeId) {
+      return this.moveGrid(scopeId, pending.targetFocusId, direction, pending);
+    }
     if (!current || current.scopeId !== scopeId) {
       return this.activateScope(scopeId);
     }
@@ -279,71 +319,220 @@ export class NavigationEngine {
     scopeId: string,
     currentFocusId: string,
     direction: "up" | "down" | "left" | "right",
+    pending?: PendingGridFocusRequest,
   ): boolean {
     const current = this.registry.get(currentFocusId);
-    const grid = current?.gridNavigation;
-    if (!current || !grid) return false;
+    const grid = pending?.grid ?? current?.gridNavigation;
+    if (!grid) return false;
     const entries = this.registry
       .getScopeEntries(scopeId, { includeDisabled: true, includeHidden: true })
       .filter((entry) => entry.gridNavigation?.groupId === grid.groupId);
-    const registryIndex = entries.findIndex(
-      (entry) => entry.focusId === currentFocusId,
-    );
-    if (registryIndex < 0 || grid.columns < 1) return false;
-    const currentIndex = grid.index ?? registryIndex;
+    const registryIndex = current
+      ? entries.findIndex((entry) => entry.focusId === currentFocusId)
+      : -1;
+    if (!pending && registryIndex < 0) return false;
+    if (grid.columns < 1) return false;
+    const currentIndex =
+      pending?.targetAbsoluteIndex ??
+      this.logicalGridIndices.get(grid.groupId) ??
+      grid.index ??
+      registryIndex;
     const itemCount = grid.itemCount ?? entries.length;
 
-    const row = Math.floor(currentIndex / grid.columns);
-    const column = currentIndex % grid.columns;
-    const rowDelta = direction === "up" ? -1 : direction === "down" ? 1 : 0;
-    const columnDelta =
-      direction === "left" ? -1 : direction === "right" ? 1 : 0;
-    const targetRow = row + rowDelta;
-    const targetColumn = column + columnDelta;
-    const firstTargetIndex =
-      currentIndex + (rowDelta === 0 ? columnDelta : rowDelta * grid.columns);
-    if (
-      targetRow < 0 ||
-      targetColumn < 0 ||
-      targetColumn >= grid.columns ||
-      firstTargetIndex < 0 ||
-      firstTargetIndex >= itemCount
-    ) {
+    const column = getColumn(currentIndex, grid.columns);
+    const targetIndex = getDirectionalTarget(
+      currentIndex,
+      direction,
+      itemCount,
+      grid.columns,
+    );
+    if (targetIndex === null) {
       this.recordResolution(direction, undefined, [], 0);
       return false;
     }
 
-    const step = rowDelta === 0 ? columnDelta : rowDelta * grid.columns;
-    let targetIndex = firstTargetIndex;
-    while (targetIndex >= 0 && targetIndex < itemCount) {
-      const candidateRow = Math.floor(targetIndex / grid.columns);
-      const candidateColumn = targetIndex % grid.columns;
-      if (
-        (rowDelta === 0 && candidateRow !== row) ||
-        (columnDelta === 0 && candidateColumn !== column)
-      ) {
-        break;
-      }
+    const step =
+      direction === "up"
+        ? -grid.columns
+        : direction === "down"
+          ? grid.columns
+          : direction === "left"
+            ? -1
+            : 1;
+    const row = getRow(currentIndex, grid.columns);
+    let candidateIndex = targetIndex;
+    while (candidateIndex >= 0 && candidateIndex < itemCount) {
       const candidate = entries.find(
         (entry, entryIndex) =>
-          (entry.gridNavigation?.index ?? entryIndex) === targetIndex,
+          (entry.gridNavigation?.index ?? entryIndex) === candidateIndex,
       );
       if (!candidate && grid.resolveFocusId && grid.onRequestIndex) {
-        const focusId = grid.resolveFocusId(targetIndex);
+        const focusId = grid.resolveFocusId(candidateIndex);
+        this.logicalGridIndices.set(grid.groupId, candidateIndex);
         this.recordResolution(direction, focusId, [], 0);
-        grid.onRequestIndex(targetIndex);
+        this.requestGridFocus(
+          scopeId,
+          grid,
+          candidateIndex,
+          focusId,
+          direction,
+          column,
+        );
         return true;
       }
-      if (!candidate) break;
-      if (!candidate.disabled && !candidate.hidden) {
+      if (candidate && !candidate.disabled && !candidate.hidden) {
+        this.logicalGridIndices.set(grid.groupId, candidateIndex);
+        this.updateGridDebug(grid, candidateIndex, undefined, direction);
+        this.clearPendingGridFocus();
         this.recordResolution(direction, candidate.focusId, [], 0);
         return this.focus(candidate.focusId);
       }
-      targetIndex += step;
+      candidateIndex += step;
+      if (candidateIndex < 0 || candidateIndex >= itemCount) break;
+      if (
+        (direction === "left" || direction === "right") &&
+        getRow(candidateIndex, grid.columns) !== row
+      ) {
+        break;
+      }
+      if (
+        (direction === "up" || direction === "down") &&
+        getColumn(candidateIndex, grid.columns) !== column
+      ) {
+        break;
+      }
     }
 
     this.recordResolution(direction, undefined, [], 0);
     return false;
+  }
+
+  public getActiveAbsoluteIndex(groupId?: string): number | null {
+    if (groupId) return this.logicalGridIndices.get(groupId) ?? null;
+    const activeFocusId = useNavigationStore.getState().activeFocusId;
+    const entry = activeFocusId ? this.registry.get(activeFocusId) : undefined;
+    const activeGroupId = entry?.gridNavigation?.groupId;
+    return activeGroupId
+      ? (this.logicalGridIndices.get(activeGroupId) ??
+          entry?.gridNavigation?.index ??
+          null)
+      : null;
+  }
+
+  private requestGridFocus(
+    scopeId: string,
+    grid: NonNullable<FocusEntry["gridNavigation"]>,
+    targetAbsoluteIndex: number,
+    targetFocusId: string,
+    direction: NavigationDirection,
+    column: number,
+  ): void {
+    this.clearPendingGridFocus();
+    const request: PendingGridFocusRequest = {
+      requestId: ++this.nextGridRequestId,
+      scopeId,
+      groupId: grid.groupId,
+      targetAbsoluteIndex,
+      targetFocusId,
+      direction,
+      column,
+      grid,
+    };
+    this.pendingGridFocus = request;
+    this.updateGridDebug(grid, targetAbsoluteIndex, request, direction);
+    grid.onRequestIndex?.(targetAbsoluteIndex);
+    this.tryCompletePendingGridFocus();
+  }
+
+  private tryCompletePendingGridFocus(): void {
+    const pending = this.pendingGridFocus;
+    if (!pending || this.pendingFrame !== null) return;
+    const entry = this.registry.get(pending.targetFocusId);
+    if (
+      !entry ||
+      entry.scopeId !== pending.scopeId ||
+      entry.gridNavigation?.groupId !== pending.groupId ||
+      entry.gridNavigation.index !== pending.targetAbsoluteIndex ||
+      entry.disabled ||
+      entry.hidden ||
+      !entry.element.isConnected
+    ) {
+      return;
+    }
+
+    const requestId = pending.requestId;
+    this.pendingFrame = window.requestAnimationFrame(() => {
+      this.pendingFrame = null;
+      const current = this.pendingGridFocus;
+      if (!current || current.requestId !== requestId) return;
+      const target = this.registry.get(current.targetFocusId);
+      if (!target || !target.element.isConnected) return;
+      this.pendingGridFocus = null;
+      if (this.pendingTimeout !== null) {
+        window.clearTimeout(this.pendingTimeout);
+        this.pendingTimeout = null;
+      }
+      this.updateGridDebug(current.grid, current.targetAbsoluteIndex);
+      this.focus(target.focusId);
+    });
+
+    this.pendingTimeout = window.setTimeout(() => {
+      const current = this.pendingGridFocus;
+      if (!current || current.requestId !== requestId) return;
+      this.pendingTimeout = null;
+      if (import.meta.env.DEV) {
+        console.warn(
+          `[navigation] virtual focus request ${requestId} did not materialize`,
+        );
+      }
+      useNavigationStore.getState().updateDebug({
+        fallbackReason: "virtual-focus-timeout",
+      });
+    }, 1000);
+  }
+
+  private clearPendingGridFocus(): void {
+    this.pendingGridFocus = null;
+    if (this.pendingFrame !== null) {
+      window.cancelAnimationFrame(this.pendingFrame);
+      this.pendingFrame = null;
+    }
+    if (this.pendingTimeout !== null) {
+      window.clearTimeout(this.pendingTimeout);
+      this.pendingTimeout = null;
+    }
+    useNavigationStore.getState().updateDebug({
+      pendingFocusId: undefined,
+      pendingRequestId: undefined,
+    });
+  }
+
+  private updateGridDebug(
+    grid: NonNullable<FocusEntry["gridNavigation"]>,
+    activeAbsoluteIndex: number,
+    pending?: PendingGridFocusRequest,
+    direction?: NavigationDirection,
+  ): void {
+    const activeRow = getRow(activeAbsoluteIndex, grid.columns);
+    const activeColumn = getColumn(activeAbsoluteIndex, grid.columns);
+    const targetAbsoluteIndex = pending?.targetAbsoluteIndex;
+    useNavigationStore.getState().updateDebug({
+      activeAbsoluteIndex,
+      activeRow,
+      activeColumn,
+      targetAbsoluteIndex,
+      targetRow:
+        targetAbsoluteIndex === undefined
+          ? undefined
+          : getRow(targetAbsoluteIndex, grid.columns),
+      targetColumn:
+        targetAbsoluteIndex === undefined
+          ? undefined
+          : getColumn(targetAbsoluteIndex, grid.columns),
+      pendingFocusId: pending?.targetFocusId,
+      pendingRequestId: pending?.requestId,
+      requestedDirection: direction,
+    });
   }
 
   private back(): boolean {
@@ -356,6 +545,13 @@ export class NavigationEngine {
   private setFocus(entry: FocusEntry | null): void {
     const state = useNavigationStore.getState();
     if (state.activeFocusId === entry?.focusId) return;
+    if (entry?.gridNavigation?.index !== undefined) {
+      this.logicalGridIndices.set(
+        entry.gridNavigation.groupId,
+        entry.gridNavigation.index,
+      );
+      this.updateGridDebug(entry.gridNavigation, entry.gridNavigation.index);
+    }
     const previousEntry = state.activeFocusId
       ? this.registry.get(state.activeFocusId)
       : undefined;
@@ -380,6 +576,7 @@ export class NavigationEngine {
       if (scrollResult.scrolled) {
         useNavigationStore.getState().updateDebug({
           lastScroll: scrollResult.focusId,
+          scrollAuthority: "focus",
         });
       }
     }

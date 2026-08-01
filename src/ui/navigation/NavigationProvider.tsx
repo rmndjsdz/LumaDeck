@@ -47,6 +47,7 @@ export function NavigationProvider({ children }: PropsWithChildren) {
       unsubscribe();
       window.removeEventListener("resize", invalidate);
       window.removeEventListener("scroll", invalidate, true);
+      runtime.engine.dispose();
       runtime.inputManager.dispose();
     };
   }, [runtime]);

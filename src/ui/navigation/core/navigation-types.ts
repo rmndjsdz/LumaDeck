@@ -106,4 +106,19 @@ export interface NavigationDebugState {
   actionsPerSecond: number;
   focusLosses: number;
   duplicateFocusIds: string[];
+  activeAbsoluteIndex?: number;
+  activeRow?: number;
+  activeColumn?: number;
+  targetAbsoluteIndex?: number;
+  targetRow?: number;
+  targetColumn?: number;
+  windowStart?: number;
+  windowEnd?: number;
+  pendingFocusId?: string;
+  pendingRequestId?: number;
+  anchorFocusId?: string;
+  scrollTopBefore?: number;
+  scrollTopAfter?: number;
+  scrollAuthority?: "focus" | "virtualization" | "restoration";
+  fallbackReason?: string;
 }
