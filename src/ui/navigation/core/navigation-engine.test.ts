@@ -205,4 +205,42 @@ describe("NavigationEngine", () => {
     expect(scrollScope.scrollTop).toBe(120);
     expect(scrollScope.scrollLeft).toBe(33);
   });
+
+  it("re-activates a modal after a strict-mode mount cycle", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "open",
+      scopeId: "root",
+      element: addElement(new DOMRect()),
+    });
+    registry.register({
+      focusId: "modal-action",
+      scopeId: "modal",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "open",
+      activateOnMount: true,
+    });
+    engine.prepareScopeOpen("modal", "open");
+    engine.registerScope({
+      scopeId: "modal",
+      initialFocusId: "modal-action",
+      modal: true,
+      activateOnMount: true,
+    });
+    engine.unregisterScope("modal");
+    engine.registerScope({
+      scopeId: "modal",
+      initialFocusId: "modal-action",
+      modal: true,
+      activateOnMount: true,
+    });
+
+    expect(engine.getActiveScopeId()).toBe("modal");
+    expect(engine.getActiveFocusId()).toBe("modal-action");
+  });
 });

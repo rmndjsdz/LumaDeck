@@ -26,7 +26,6 @@ export function NavigationDemo() {
   const [modalOpen, setModalOpen] = useState(false);
   const [confirmedAction, setConfirmedAction] = useState("None yet");
   const previousSection = useRef(section);
-  const modalOpener = useRef<string | null>(null);
   const inputMode = useNavigationStore((state) => state.inputMode);
 
   useEffect(() => {
@@ -41,16 +40,9 @@ export function NavigationDemo() {
     engine.focus(initialFocusId);
   }, [engine, section]);
 
-  useEffect(() => {
-    if (modalOpen || !modalOpener.current) return;
-    const focusId = modalOpener.current;
-    modalOpener.current = null;
-    engine.focus(focusId);
-  }, [engine, modalOpen]);
-
   const openModal = () => {
-    modalOpener.current = engine.getActiveFocusId();
-    engine.prepareScopeOpen("demo-modal", modalOpener.current ?? undefined);
+    const openerFocusId = engine.getActiveFocusId();
+    engine.prepareScopeOpen("demo-modal", openerFocusId ?? undefined);
     setModalOpen(true);
   };
 

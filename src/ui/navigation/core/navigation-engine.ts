@@ -56,6 +56,9 @@ export class NavigationEngine {
       scopeId,
       useNavigationStore.getState().activeFocusId,
     );
+    if (scope.openerFocusId) {
+      this.pendingOpeners.set(scopeId, scope.openerFocusId);
+    }
     this.scopes.delete(scopeId);
 
     if (wasActive && scope.parentScopeId) {
