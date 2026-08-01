@@ -9,13 +9,13 @@ export interface FocusableProps extends UseFocusableOptions {
   ariaLabel?: string;
 }
 
-export const Focusable = forwardRef<HTMLDivElement, FocusableProps>(
+export const Focusable = forwardRef<HTMLButtonElement, FocusableProps>(
   function Focusable(
     { children, className, style, ariaLabel, ...focusOptions },
     forwardedRef,
   ) {
-    const focusable = useFocusable<HTMLDivElement>(focusOptions);
-    const setRef = (element: HTMLDivElement | null) => {
+    const focusable = useFocusable<HTMLButtonElement>(focusOptions);
+    const setRef = (element: HTMLButtonElement | null) => {
       focusable.ref.current = element;
       if (typeof forwardedRef === "function") {
         forwardedRef(element);
@@ -25,11 +25,12 @@ export const Focusable = forwardRef<HTMLDivElement, FocusableProps>(
     };
 
     return (
-      <div
+      <button
         ref={setRef}
         className={className}
         style={style}
-        role="button"
+        type="button"
+        disabled={focusOptions.disabled}
         tabIndex={focusable.tabIndex}
         aria-label={ariaLabel}
         aria-disabled={focusOptions.disabled || undefined}
@@ -40,7 +41,7 @@ export const Focusable = forwardRef<HTMLDivElement, FocusableProps>(
         onClick={focusable.onClick}
       >
         {children}
-      </div>
+      </button>
     );
   },
 );

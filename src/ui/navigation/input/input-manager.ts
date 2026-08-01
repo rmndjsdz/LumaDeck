@@ -61,7 +61,7 @@ export class InputManager {
 
   public handlePointerConfirm(focusId: string): void {
     this.mouseAdapter.markClick();
-    this.engine.focus(focusId);
+    if (!this.engine.focus(focusId)) return;
     this.dispatch("confirm", "mouse");
   }
 
