@@ -15,6 +15,7 @@ export interface UseFocusableOptions {
   focusId: string;
   scopeId: string;
   groupId?: string;
+  gridIndex?: number;
   disabled?: boolean;
   hidden?: boolean;
   navigation?: FocusNavigationOverrides;
@@ -58,7 +59,10 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
       hidden: options.hidden,
       navigation: current().navigation,
       linearNavigation: linearNavigation ?? undefined,
-      gridNavigation: gridNavigation ?? undefined,
+      gridNavigation:
+        gridNavigation && options.gridIndex !== undefined
+          ? { ...gridNavigation, index: options.gridIndex }
+          : (gridNavigation ?? undefined),
       priority: options.priority,
       element,
       onFocus: () => current().onFocus?.(),
@@ -69,6 +73,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     options.disabled,
     options.focusId,
     options.groupId,
+    options.gridIndex,
     options.hidden,
     options.priority,
     options.scopeId,

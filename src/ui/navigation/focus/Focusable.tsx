@@ -7,11 +7,21 @@ export interface FocusableProps extends UseFocusableOptions {
   className?: string;
   style?: CSSProperties;
   ariaLabel?: string;
+  ariaCurrent?: "page" | "step" | "location" | "date" | "time" | true | false;
+  ariaSelected?: boolean;
 }
 
 export const Focusable = forwardRef<HTMLButtonElement, FocusableProps>(
   function Focusable(
-    { children, className, style, ariaLabel, ...focusOptions },
+    {
+      children,
+      className,
+      style,
+      ariaLabel,
+      ariaCurrent,
+      ariaSelected,
+      ...focusOptions
+    },
     forwardedRef,
   ) {
     const focusable = useFocusable<HTMLButtonElement>(focusOptions);
@@ -33,6 +43,8 @@ export const Focusable = forwardRef<HTMLButtonElement, FocusableProps>(
         disabled={focusOptions.disabled}
         tabIndex={focusable.tabIndex}
         aria-label={ariaLabel}
+        aria-current={ariaCurrent}
+        aria-selected={ariaSelected}
         aria-disabled={focusOptions.disabled || undefined}
         data-focusable="true"
         data-focus-id={focusOptions.focusId}

@@ -13,6 +13,12 @@ export type NavigationDirection = "up" | "down" | "left" | "right";
 
 export type InputMode = "mouse" | "keyboard" | "gamepad";
 
+export interface GamepadDiagnostic {
+  id: string;
+  direction: NavigationDirection | null;
+  pressedButtons: number[];
+}
+
 export interface Rect {
   top: number;
   right: number;
@@ -38,6 +44,10 @@ export interface LinearNavigationConfig {
 export interface GridNavigationConfig {
   groupId: string;
   columns: number;
+  index?: number;
+  itemCount?: number;
+  resolveFocusId?: (index: number) => string;
+  onRequestIndex?: (index: number) => void;
 }
 
 export interface FocusEntry {
@@ -92,6 +102,7 @@ export interface NavigationDebugState {
   lastRestoredFocus?: string;
   lastScroll?: string;
   gamepadConnected: boolean;
+  gamepad?: GamepadDiagnostic;
   actionsPerSecond: number;
   focusLosses: number;
   duplicateFocusIds: string[];

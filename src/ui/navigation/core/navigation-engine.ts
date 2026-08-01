@@ -286,10 +286,12 @@ export class NavigationEngine {
     const entries = this.registry
       .getScopeEntries(scopeId, { includeDisabled: true, includeHidden: true })
       .filter((entry) => entry.gridNavigation?.groupId === grid.groupId);
-    const currentIndex = entries.findIndex(
+    const registryIndex = entries.findIndex(
       (entry) => entry.focusId === currentFocusId,
     );
-    if (currentIndex < 0 || grid.columns < 1) return false;
+    if (registryIndex < 0 || grid.columns < 1) return false;
+    const currentIndex = grid.index ?? registryIndex;
+    const itemCount = grid.itemCount ?? entries.length;
 
     const row = Math.floor(currentIndex / grid.columns);
     const column = currentIndex % grid.columns;
@@ -298,14 +300,22 @@ export class NavigationEngine {
       direction === "left" ? -1 : direction === "right" ? 1 : 0;
     const targetRow = row + rowDelta;
     const targetColumn = column + columnDelta;
-    if (targetRow < 0 || targetColumn < 0 || targetColumn >= grid.columns) {
+    const firstTargetIndex =
+      currentIndex + (rowDelta === 0 ? columnDelta : rowDelta * grid.columns);
+    if (
+      targetRow < 0 ||
+      targetColumn < 0 ||
+      targetColumn >= grid.columns ||
+      firstTargetIndex < 0 ||
+      firstTargetIndex >= itemCount
+    ) {
       this.recordResolution(direction, undefined, [], 0);
       return false;
     }
 
     const step = rowDelta === 0 ? columnDelta : rowDelta * grid.columns;
-    let targetIndex = currentIndex + step;
-    while (targetIndex >= 0 && targetIndex < entries.length) {
+    let targetIndex = firstTargetIndex;
+    while (targetIndex >= 0 && targetIndex < itemCount) {
       const candidateRow = Math.floor(targetIndex / grid.columns);
       const candidateColumn = targetIndex % grid.columns;
       if (
@@ -314,7 +324,17 @@ export class NavigationEngine {
       ) {
         break;
       }
-      const candidate = entries[targetIndex];
+      const candidate = entries.find(
+        (entry, entryIndex) =>
+          (entry.gridNavigation?.index ?? entryIndex) === targetIndex,
+      );
+      if (!candidate && grid.resolveFocusId && grid.onRequestIndex) {
+        const focusId = grid.resolveFocusId(targetIndex);
+        this.recordResolution(direction, focusId, [], 0);
+        grid.onRequestIndex(targetIndex);
+        return true;
+      }
+      if (!candidate) break;
       if (!candidate.disabled && !candidate.hidden) {
         this.recordResolution(direction, candidate.focusId, [], 0);
         return this.focus(candidate.focusId);
