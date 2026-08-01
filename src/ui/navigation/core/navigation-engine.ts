@@ -420,7 +420,12 @@ export class NavigationEngine {
       return this.activateScope(scopeId);
     }
 
-    if (current.navigationRegion && direction === "down") {
+    if (
+      current.navigationRegion?.childRegionId &&
+      direction === "down" &&
+      !current.rowNavigation &&
+      !current.gridNavigation
+    ) {
       return this.moveToChildRegion(scopeId, current);
     }
 

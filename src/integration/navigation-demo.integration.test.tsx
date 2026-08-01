@@ -164,6 +164,14 @@ describe("LumaDeck product slice integration", () => {
     await act(async () => dispatchKey("ArrowDown"));
     expect(homeCard?.getAttribute("data-active")).toBe("true");
 
+    const recentCard = host.querySelector<HTMLElement>(
+      '[data-focus-id^="home-recent-"]',
+    );
+    expect(recentCard).not.toBeNull();
+    await act(async () => dispatchKey("ArrowDown"));
+    expect(recentCard?.getAttribute("data-active")).toBe("true");
+    await act(async () => dispatchKey("ArrowUp"));
+    expect(homeCard?.getAttribute("data-active")).toBe("true");
     await act(async () => dispatchKey("ArrowUp"));
     expect(
       host
