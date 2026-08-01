@@ -62,4 +62,46 @@ describe("BackgroundManager", () => {
     });
     manager.dispose();
   });
+
+  it("defers rapid navigation and crossfades only the final destination", () => {
+    const images: HTMLImageElement[] = [];
+    const manager = new BackgroundManager({
+      imageFactory: () => {
+        const image = document.createElement("img");
+        images.push(image);
+        return image;
+      },
+      reducedMotion: () => true,
+    });
+
+    manager.request("a", "navigating");
+    manager.request("b", "fast-navigating");
+    manager.request("c", "fast-navigating");
+    expect(images).toHaveLength(0);
+    manager.request("c", "settling");
+    expect(images).toHaveLength(1);
+    images[0].onload?.(new Event("load"));
+    expect(manager.getSnapshot().currentUrl).toBe("c");
+    manager.dispose();
+  });
+
+  it("reuses a ready resource instead of duplicating a request", () => {
+    const images: HTMLImageElement[] = [];
+    const manager = new BackgroundManager({
+      imageFactory: () => {
+        const image = document.createElement("img");
+        images.push(image);
+        return image;
+      },
+      reducedMotion: () => true,
+    });
+
+    manager.request("a");
+    images[0].onload?.(new Event("load"));
+    manager.request("b");
+    images[1].onload?.(new Event("load"));
+    manager.request("a");
+    expect(images).toHaveLength(2);
+    manager.dispose();
+  });
 });
