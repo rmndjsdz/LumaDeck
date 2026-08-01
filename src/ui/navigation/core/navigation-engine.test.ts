@@ -455,4 +455,192 @@ describe("NavigationEngine", () => {
     expect(engine.dispatch("move-right")).toBe(true);
     expect(engine.getActiveFocusId()).toBe("cell-68");
   });
+
+  it("reproduces Home row gaps when vertical navigation relies on geometry", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const rowIds = ["home-row-0", "home-row-1", "home-row-2"];
+
+    for (let rowIndex = 0; rowIndex < rowIds.length; rowIndex += 1) {
+      for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+        const visualColumn = rowIndex === 1 ? 4 - itemIndex : itemIndex;
+        registry.register({
+          focusId: `${rowIds[rowIndex]}-${itemIndex}`,
+          scopeId: "home",
+          element: addElement(
+            new DOMRect(visualColumn * 100, rowIndex * 100, 80, 40),
+          ),
+          linearNavigation: {
+            groupId: rowIds[rowIndex],
+            axis: "horizontal",
+            wrap: false,
+          },
+          rowNavigation: {
+            groupId: "home-rows",
+            rowId: rowIds[rowIndex],
+            rowIndex,
+            itemIndex,
+            preserveHorizontalIntent: true,
+          },
+        });
+      }
+    }
+
+    engine.registerScope({
+      scopeId: "home",
+      initialFocusId: "home-row-0-0",
+      activateOnMount: true,
+    });
+
+    for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+      expect(engine.focus(`home-row-0-${itemIndex}`)).toBe(true);
+      expect(engine.dispatch("move-down")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`home-row-1-${itemIndex}`);
+    }
+  });
+
+  it("resolves every Home column in both vertical directions", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    for (let rowIndex = 0; rowIndex < 3; rowIndex += 1) {
+      for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+        registry.register({
+          focusId: `home-${rowIndex}-${itemIndex}`,
+          scopeId: "home",
+          element: addElement(
+            new DOMRect(itemIndex * 100, rowIndex * 100, 80, 40),
+          ),
+          rowNavigation: {
+            groupId: "home-rows",
+            rowId: `home-row-${rowIndex}`,
+            rowIndex,
+            itemIndex,
+            preserveHorizontalIntent: true,
+          },
+          linearNavigation: {
+            groupId: `home-row-${rowIndex}`,
+            axis: "horizontal",
+          },
+        });
+      }
+    }
+    engine.registerScope({
+      scopeId: "home",
+      initialFocusId: "home-0-0",
+      activateOnMount: true,
+    });
+
+    for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+      expect(engine.focus(`home-0-${itemIndex}`)).toBe(true);
+      expect(engine.dispatch("move-down")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`home-1-${itemIndex}`);
+      expect(engine.dispatch("move-down")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`home-2-${itemIndex}`);
+      expect(engine.dispatch("move-up")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`home-1-${itemIndex}`);
+      expect(engine.dispatch("move-up")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`home-0-${itemIndex}`);
+    }
+  });
+
+  it("keeps preferred horizontal intent across short rows", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const lengths = [5, 5, 4];
+
+    lengths.forEach((length, rowIndex) => {
+      for (let itemIndex = 0; itemIndex < length; itemIndex += 1) {
+        registry.register({
+          focusId: `row-${rowIndex}-${itemIndex}`,
+          scopeId: "home",
+          element: addElement(
+            new DOMRect(itemIndex * 100, rowIndex * 100, 80, 40),
+          ),
+          rowNavigation: {
+            groupId: "home-rows",
+            rowId: `row-${rowIndex}`,
+            rowIndex,
+            itemIndex,
+            preserveHorizontalIntent: true,
+          },
+          linearNavigation: {
+            groupId: `row-${rowIndex}`,
+            axis: "horizontal",
+          },
+        });
+      }
+    });
+    engine.registerScope({
+      scopeId: "home",
+      initialFocusId: "row-0-4",
+      activateOnMount: true,
+    });
+
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("row-1-4");
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("row-2-3");
+    expect(engine.dispatch("move-up")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("row-1-4");
+    expect(engine.dispatch("move-up")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("row-0-4");
+  });
+
+  it("restores Home row state from Details and navigates vertically immediately", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    for (let rowIndex = 0; rowIndex < 3; rowIndex += 1) {
+      for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+        registry.register({
+          focusId: `home-${rowIndex}-${itemIndex}`,
+          scopeId: "home",
+          element: addElement(
+            new DOMRect(itemIndex * 100, rowIndex * 100, 80, 40),
+          ),
+          rowNavigation: {
+            groupId: "home-rows",
+            rowId: `home-row-${rowIndex}`,
+            rowIndex,
+            itemIndex,
+            preserveHorizontalIntent: true,
+          },
+        });
+      }
+    }
+    registry.register({
+      focusId: "details-play",
+      scopeId: "details",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "home",
+      initialFocusId: "home-0-0",
+      activateOnMount: true,
+    });
+
+    for (const rowIndex of [0, 1, 2]) {
+      const opener = `home-${rowIndex}-2`;
+      expect(engine.focus(opener)).toBe(true);
+      engine.prepareScopeOpen("details", opener);
+      engine.registerScope({
+        scopeId: "details",
+        parentScopeId: "home",
+        initialFocusId: "details-play",
+        modal: true,
+        activateOnMount: true,
+        restoreFocus: true,
+      });
+      expect(engine.getActiveFocusId()).toBe("details-play");
+      engine.unregisterScope("details");
+      expect(engine.getActiveFocusId()).toBe(opener);
+      if (rowIndex < 2) {
+        expect(engine.dispatch("move-down")).toBe(true);
+        expect(engine.getActiveFocusId()).toBe(`home-${rowIndex + 1}-2`);
+      }
+    }
+  });
 });
