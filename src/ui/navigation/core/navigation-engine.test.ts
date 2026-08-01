@@ -305,4 +305,65 @@ describe("NavigationEngine", () => {
     expect(requested).toEqual([5]);
     expect(engine.getActiveFocusId()).toBe("cell-0");
   });
+
+  it("reproduces focus loss while a non-first-column target is rematerialized", async () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const registered = new Map<number, () => void>();
+    const requestedTargets: number[] = [];
+    let windowStart = 0;
+
+    const materialize = (start: number) => {
+      for (const unregister of registered.values()) unregister();
+      registered.clear();
+      windowStart = start;
+      for (let index = start; index < Math.min(start + 60, 200); index += 1) {
+        const node = addElement(
+          new DOMRect((index % 5) * 100, Math.floor(index / 5) * 60, 80, 40),
+        );
+        const unregister = registry.register({
+          focusId: `cell-${index}`,
+          scopeId: "root",
+          element: node,
+          gridNavigation: {
+            groupId: "grid",
+            columns: 5,
+            index,
+            itemCount: 200,
+            resolveFocusId: (targetIndex) => `cell-${targetIndex}`,
+            onRequestIndex: (targetIndex) => {
+              requestedTargets.push(targetIndex);
+              materialize(Math.max(0, Math.min(targetIndex - 55, 140)));
+            },
+          },
+        });
+        registered.set(index, unregister);
+      }
+    };
+
+    materialize(0);
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "cell-2",
+      activateOnMount: true,
+    });
+
+    for (let step = 0; step < 11; step += 1) {
+      expect(engine.dispatch("move-down")).toBe(true);
+    }
+    expect(engine.getActiveFocusId()).toBe("cell-57");
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(windowStart).toBe(7);
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(requestedTargets).toEqual([62, 67]);
+
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => resolve());
+    });
+
+    expect(engine.getActiveFocusId()).toBe("cell-67");
+    expect(engine.dispatch("move-right")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("cell-68");
+  });
 });
