@@ -7,6 +7,7 @@ interface GameCardProps {
   focusId: string;
   onOpen: (game: Game) => void;
   compact?: boolean;
+  itemIndex?: number;
   gridIndex?: number;
 }
 
@@ -15,6 +16,7 @@ export function GameCard({
   focusId,
   onOpen,
   compact = false,
+  itemIndex,
   gridIndex,
 }: GameCardProps) {
   recordRender("game-card");
@@ -22,6 +24,7 @@ export function GameCard({
     <Focusable
       focusId={focusId}
       scopeId="product-shell"
+      itemIndex={itemIndex}
       gridIndex={gridIndex}
       className={`game-card${compact ? " game-card-compact" : ""}`}
       ariaLabel={`${game.title}, ${game.platform}, ${game.status}`}

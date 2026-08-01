@@ -52,6 +52,14 @@ export interface LinearNavigationConfig {
   wrap?: boolean;
 }
 
+export interface RowNavigationConfig {
+  groupId: string;
+  rowId: string;
+  rowIndex: number;
+  itemIndex: number;
+  preserveHorizontalIntent?: boolean;
+}
+
 export interface GridNavigationConfig {
   groupId: string;
   columns: number;
@@ -70,6 +78,7 @@ export interface FocusEntry {
   hidden?: boolean;
   navigation?: FocusNavigationOverrides;
   linearNavigation?: LinearNavigationConfig;
+  rowNavigation?: RowNavigationConfig;
   gridNavigation?: GridNavigationConfig;
   onFocus?: () => void;
   onBlur?: () => void;
@@ -148,4 +157,16 @@ export interface NavigationDebugState {
   backgroundPending?: boolean;
   backgroundDecodeTimeMs?: number;
   transitionActive?: boolean;
+  activeHomeRowId?: string;
+  activeHomeRowIndex?: number;
+  activeHomeItemIndex?: number;
+  preferredHomeItemIndex?: number;
+  preferredHomeCenterX?: number;
+  targetHomeRowId?: string;
+  targetHomeItemIndex?: number;
+  selectedVerticalStrategy?: string;
+  availableTargetRowItems?: string[];
+  verticalFallbackReason?: string;
+  restoredHomeRowIndex?: number;
+  restoredHomeItemIndex?: number;
 }

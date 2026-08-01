@@ -16,6 +16,11 @@ import {
   markPerformance,
   measurePerformance,
 } from "../../performance/performance-marks";
+import {
+  NavigationRowCoordinator,
+  type HomeRowItem,
+  type RowNavigationRegistration,
+} from "./row-navigation";
 
 interface RegisteredScope extends Omit<ScopeRegistration, "parentScopeId"> {
   parentScopeId: string | null;
@@ -40,11 +45,17 @@ interface PendingScopeActivation {
   preferredFocusId?: string;
 }
 
+interface FocusChangeOptions {
+  preservePreferredPosition?: boolean;
+  restored?: boolean;
+}
+
 export class NavigationEngine {
   private readonly scopes = new Map<string, RegisteredScope>();
   private readonly pendingOpeners = new Map<string, string | undefined>();
   private readonly focusHistory = new FocusHistory();
   private readonly logicalGridIndices = new Map<string, number>();
+  private readonly rowNavigation = new NavigationRowCoordinator();
   private readonly unregisterRegistryListener: () => void;
   private readonly scopeWatchdogFrames = new Map<string, number>();
   private readonly scopeWatchdogWarnings = new Set<string>();
@@ -88,6 +99,7 @@ export class NavigationEngine {
     this.scopeWatchdogWarnings.clear();
     this.pendingGridFocus = null;
     this.pendingScopeActivation = null;
+    this.rowNavigation.reset();
   }
 
   public registerScope(scope: ScopeRegistration): () => void {
@@ -282,7 +294,7 @@ export class NavigationEngine {
       pendingScopeActivationRequestId: undefined,
       scopeLifecycleState: scope.lifecycleState,
     });
-    this.setFocus(entry);
+    this.setFocus(entry, { restored: Boolean(pending.preferredFocusId) });
     this.updateScopeDebug(scope);
     return useNavigationStore.getState().activeFocusId === focusId;
   }
@@ -322,7 +334,11 @@ export class NavigationEngine {
     return useNavigationStore.getState().activeFocusId;
   }
 
-  public focus(focusId: string, activateScope = true): boolean {
+  public focus(
+    focusId: string,
+    activateScope = true,
+    options?: FocusChangeOptions,
+  ): boolean {
     const entry = this.registry.get(focusId);
     if (
       !entry ||
@@ -343,7 +359,7 @@ export class NavigationEngine {
     if (activateScope && activeScopeId !== entry.scopeId) {
       return this.activateScope(entry.scopeId, focusId);
     }
-    this.setFocus(entry);
+    this.setFocus(entry, options);
     return true;
   }
 
@@ -383,6 +399,10 @@ export class NavigationEngine {
     }
     if (!current || current.scopeId !== scopeId) {
       return this.activateScope(scopeId);
+    }
+
+    if (current.rowNavigation && (direction === "up" || direction === "down")) {
+      return this.moveRowVertically(scopeId, current, direction);
     }
 
     if (current.gridNavigation) {
@@ -471,6 +491,60 @@ export class NavigationEngine {
       return fallback ? this.focus(fallback.focusId) : false;
     }
     return false;
+  }
+
+  private moveRowVertically(
+    scopeId: string,
+    current: FocusEntry,
+    direction: "up" | "down",
+  ): boolean {
+    const currentRow = current.rowNavigation;
+    if (!currentRow) return false;
+    const currentRect = this.registry.getRect(current);
+    const rowItems = this.registry
+      .getScopeEntries(scopeId, {
+        includeDisabled: true,
+        includeHidden: true,
+      })
+      .flatMap((entry) => {
+        if (!entry.rowNavigation) return [];
+        const rect = this.registry.getRect(entry);
+        return [
+          {
+            ...entry.rowNavigation,
+            disabled: Boolean(entry.disabled),
+            hidden: Boolean(entry.hidden),
+            centerX: rect.left + rect.width / 2,
+            focusId: entry.focusId,
+          } satisfies RowNavigationRegistration,
+        ];
+      });
+    const target = this.rowNavigation.resolveVertical(
+      currentRow.groupId,
+      {
+        ...currentRow,
+        disabled: Boolean(current.disabled),
+        hidden: Boolean(current.hidden),
+        centerX: currentRect.left + currentRect.width / 2,
+        focusId: current.focusId,
+      },
+      direction,
+      rowItems,
+    );
+    const targetItems = rowItems.filter(
+      (item) => item.rowIndex === target.item?.rowIndex,
+    );
+    this.updateRowDebug(currentRow, target, targetItems);
+    this.recordResolution(
+      direction,
+      target.item?.focusId,
+      targetItems.map((item) => item.focusId),
+      0,
+    );
+    if (!target.item) return false;
+    return this.focus(target.item.focusId, true, {
+      preservePreferredPosition: currentRow.preserveHorizontalIntent,
+    });
   }
 
   private isInputBlockedForPendingScope(): boolean {
@@ -807,11 +881,66 @@ export class NavigationEngine {
     return false;
   }
 
-  private setFocus(entry: FocusEntry | null): void {
+  private updateRowDebug(
+    current: NonNullable<FocusEntry["rowNavigation"]>,
+    target: {
+      item: HomeRowItem | null;
+      strategy: string;
+      fallbackReason?: string;
+      targetRowId?: string;
+    },
+    targetItems: readonly RowNavigationRegistration[],
+  ): void {
+    const state = this.rowNavigation.getState(current.groupId);
+    useNavigationStore.getState().updateDebug({
+      activeHomeRowId: current.rowId,
+      activeHomeRowIndex: state?.activeRowIndex ?? current.rowIndex,
+      activeHomeItemIndex: state?.activeItemIndex ?? current.itemIndex,
+      preferredHomeItemIndex: state?.preferredItemIndex ?? current.itemIndex,
+      preferredHomeCenterX: state?.preferredCenterX,
+      targetHomeRowId: target.targetRowId,
+      targetHomeItemIndex: target.item?.itemIndex,
+      selectedVerticalStrategy: target.strategy,
+      availableTargetRowItems: targetItems.map((item) => item.focusId),
+      verticalFallbackReason: target.fallbackReason,
+    });
+  }
+
+  private setFocus(
+    entry: FocusEntry | null,
+    options?: FocusChangeOptions,
+  ): void {
     const state = useNavigationStore.getState();
     if (state.activeFocusId === entry?.focusId) {
       if (entry) this.focusDomElement(entry, true);
       return;
+    }
+    if (entry?.rowNavigation) {
+      const rect = this.registry.getRect(entry);
+      this.rowNavigation.recordFocus(
+        {
+          ...entry.rowNavigation,
+          disabled: Boolean(entry.disabled),
+          hidden: Boolean(entry.hidden),
+          centerX: rect.left + rect.width / 2,
+          focusId: entry.focusId,
+        },
+        options,
+      );
+      const rowState = this.rowNavigation.getState(entry.rowNavigation.groupId);
+      useNavigationStore.getState().updateDebug({
+        activeHomeRowId: entry.rowNavigation.rowId,
+        activeHomeRowIndex: rowState?.activeRowIndex,
+        activeHomeItemIndex: rowState?.activeItemIndex,
+        preferredHomeItemIndex: rowState?.preferredItemIndex,
+        preferredHomeCenterX: rowState?.preferredCenterX,
+        restoredHomeRowIndex: options?.restored
+          ? entry.rowNavigation.rowIndex
+          : undefined,
+        restoredHomeItemIndex: options?.restored
+          ? entry.rowNavigation.itemIndex
+          : undefined,
+      });
     }
     if (entry?.gridNavigation?.index !== undefined) {
       this.logicalGridIndices.set(

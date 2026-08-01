@@ -3,6 +3,7 @@ import type { Game } from "../catalog/game-types";
 import { useProductStore } from "../../stores/product-store";
 import { useNavigation } from "../../ui/navigation/navigation-context";
 import { NavigationRow } from "../../ui/navigation/layouts/NavigationRow";
+import { NavigationRowGroup } from "../../ui/navigation/layouts/NavigationRowGroup";
 import { GameCard } from "./GameCard";
 
 interface HomeViewProps {
@@ -39,24 +40,34 @@ export function HomeView({ games, onOpen }: HomeViewProps) {
         </div>
         <span className="page-hint">A calm library for quick sessions</span>
       </div>
-      <GameRow
-        title="Continue Playing"
-        games={continuePlaying}
-        prefix="home-continue"
-        onOpen={onOpen}
-      />
-      <GameRow
-        title="Recently Played"
-        games={recentlyPlayed}
-        prefix="home-recent"
-        onOpen={onOpen}
-      />
-      <GameRow
-        title="Favorites"
-        games={favorites}
-        prefix="home-favorite"
-        onOpen={onOpen}
-      />
+      <NavigationRowGroup
+        scopeId="product-shell"
+        groupId="home-rows"
+        orientation="vertical"
+        preserveHorizontalIntent
+      >
+        <GameRow
+          title="Continue Playing"
+          games={continuePlaying}
+          prefix="home-continue"
+          rowIndex={0}
+          onOpen={onOpen}
+        />
+        <GameRow
+          title="Recently Played"
+          games={recentlyPlayed}
+          prefix="home-recent"
+          rowIndex={1}
+          onOpen={onOpen}
+        />
+        <GameRow
+          title="Favorites"
+          games={favorites}
+          prefix="home-favorite"
+          rowIndex={2}
+          onOpen={onOpen}
+        />
+      </NavigationRowGroup>
     </section>
   );
 }
@@ -65,11 +76,13 @@ function GameRow({
   title,
   games,
   prefix,
+  rowIndex,
   onOpen,
 }: {
   title: string;
   games: Game[];
   prefix: string;
+  rowIndex: number;
   onOpen: (game: Game) => void;
 }) {
   return (
@@ -79,12 +92,13 @@ function GameRow({
         <span>{games.length} shown</span>
       </div>
       {games.length ? (
-        <NavigationRow groupId={prefix}>
-          {games.map((game) => (
+        <NavigationRow rowId={prefix} rowIndex={rowIndex}>
+          {games.map((game, itemIndex) => (
             <GameCard
               key={game.id}
               game={game}
               focusId={`${prefix}-${game.id}`}
+              itemIndex={itemIndex}
               onOpen={onOpen}
               compact
             />

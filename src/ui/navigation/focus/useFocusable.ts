@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type MutableRefObject } from "react";
+import { useLayoutEffect, useMemo, useRef, type MutableRefObject } from "react";
 
 import { useNavigation } from "../navigation-context";
 import { useNavigationStore } from "../../../stores/navigation-store";
@@ -9,12 +9,14 @@ import type {
 import {
   useGridNavigation,
   useLinearNavigation,
+  useRowNavigation,
 } from "../layouts/linear-navigation-context";
 
 export interface UseFocusableOptions {
   focusId: string;
   scopeId: string;
   groupId?: string;
+  itemIndex?: number;
   gridIndex?: number;
   disabled?: boolean;
   hidden?: boolean;
@@ -46,7 +48,29 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
   );
   const inputMode = useNavigationStore((state) => state.inputMode);
   const linearNavigation = useLinearNavigation();
+  const rowNavigationContext = useRowNavigation();
+  const rowGroupId = rowNavigationContext?.groupId;
+  const rowId = rowNavigationContext?.rowId;
+  const rowIndex = rowNavigationContext?.rowIndex;
+  const preserveHorizontalIntent =
+    rowNavigationContext?.preserveHorizontalIntent;
   const gridNavigation = useGridNavigation();
+  const rowNavigation = useMemo(
+    () =>
+      rowGroupId &&
+      rowId &&
+      rowIndex !== undefined &&
+      options.itemIndex !== undefined
+        ? {
+            groupId: rowGroupId,
+            rowId,
+            rowIndex,
+            itemIndex: options.itemIndex,
+            preserveHorizontalIntent: preserveHorizontalIntent ?? false,
+          }
+        : undefined,
+    [options.itemIndex, preserveHorizontalIntent, rowGroupId, rowId, rowIndex],
+  );
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -61,6 +85,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
       hidden: options.hidden,
       navigation: current().navigation,
       linearNavigation: linearNavigation ?? undefined,
+      rowNavigation,
       gridNavigation:
         gridNavigation && options.gridIndex !== undefined
           ? { ...gridNavigation, index: options.gridIndex }
@@ -75,6 +100,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     options.disabled,
     options.focusId,
     options.groupId,
+    options.itemIndex,
     options.gridIndex,
     options.hidden,
     options.priority,
@@ -83,6 +109,12 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     linearNavigation?.axis,
     linearNavigation?.groupId,
     linearNavigation?.wrap,
+    rowNavigation,
+    rowNavigation?.groupId,
+    rowNavigation?.itemIndex,
+    rowNavigation?.rowId,
+    rowNavigation?.rowIndex,
+    rowNavigation?.preserveHorizontalIntent,
     gridNavigation,
     gridNavigation?.columns,
     gridNavigation?.groupId,

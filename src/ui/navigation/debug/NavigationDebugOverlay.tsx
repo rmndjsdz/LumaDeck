@@ -116,6 +116,35 @@ export function NavigationDebugOverlay() {
           value={debug.scrollAuthority ?? "—"}
         />
         <DebugRow label="fallback" value={debug.fallbackReason ?? "—"} />
+        <DebugRow label="Home row" value={debug.activeHomeRowId ?? "â€”"} />
+        <DebugRow
+          label="Home row/index"
+          value={`${formatNumber(debug.activeHomeRowIndex)}/${formatNumber(debug.activeHomeItemIndex)}`}
+        />
+        <DebugRow
+          label="Home preferred"
+          value={`${formatNumber(debug.preferredHomeItemIndex)} @ ${formatNumber(debug.preferredHomeCenterX)}`}
+        />
+        <DebugRow
+          label="Home target"
+          value={`${debug.targetHomeRowId ?? "â€”"}/${formatNumber(debug.targetHomeItemIndex)}`}
+        />
+        <DebugRow
+          label="vertical strategy"
+          value={debug.selectedVerticalStrategy ?? "â€”"}
+        />
+        <DebugRow
+          label="target items"
+          value={debug.availableTargetRowItems?.join(", ") ?? "â€”"}
+        />
+        <DebugRow
+          label="vertical fallback"
+          value={debug.verticalFallbackReason ?? "â€”"}
+        />
+        <DebugRow
+          label="restored row/index"
+          value={`${formatNumber(debug.restoredHomeRowIndex)}/${formatNumber(debug.restoredHomeItemIndex)}`}
+        />
         <DebugRow
           label="focus failure"
           value={debug.lastFocusFailureReason ?? "—"}
