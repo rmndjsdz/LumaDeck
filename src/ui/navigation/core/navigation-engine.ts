@@ -12,6 +12,10 @@ import type {
 } from "./navigation-types";
 import type { FocusScrollManager } from "../scroll/focus-scroll-manager";
 import { getColumn, getDirectionalTarget, getRow } from "./virtual-grid";
+import {
+  markPerformance,
+  measurePerformance,
+} from "../../performance/performance-marks";
 
 interface RegisteredScope extends Omit<ScopeRegistration, "parentScopeId"> {
   parentScopeId: string | null;
@@ -610,12 +614,6 @@ export class NavigationEngine {
       return;
     }
 
-    if (import.meta.env.DEV && !this.scopeWatchdogWarnings.has(scope.scopeId)) {
-      this.scopeWatchdogWarnings.add(scope.scopeId);
-      console.warn(
-        `[navigation] active scope ${scope.scopeId} has invalid focus`,
-      );
-    }
     if (this.scopeWatchdogFrames.has(scope.scopeId)) return;
     const frame = window.requestAnimationFrame(() => {
       this.scopeWatchdogFrames.delete(scope.scopeId);
@@ -636,6 +634,15 @@ export class NavigationEngine {
         this.setFocus(this.registry.get(recoveryId) ?? null);
         this.updateScopeDebug(scope);
         return;
+      }
+      if (
+        import.meta.env.DEV &&
+        !this.scopeWatchdogWarnings.has(scope.scopeId)
+      ) {
+        this.scopeWatchdogWarnings.add(scope.scopeId);
+        console.warn(
+          `[navigation] active scope ${scope.scopeId} has invalid focus`,
+        );
       }
       scope.lifecycleState = "waiting-for-focusable";
       useNavigationStore.getState().setActiveFocusId(null);
@@ -822,6 +829,14 @@ export class NavigationEngine {
       previousEntry.onBlur?.();
     }
     useNavigationStore.getState().setActiveFocusId(entry?.focusId ?? null);
+    if (entry) {
+      markPerformance("logical-focus-updated");
+      measurePerformance(
+        "input-to-focus",
+        "input-received",
+        "logical-focus-updated",
+      );
+    }
     this.syncTabStops();
     if (entry) {
       entry.element.dataset.active = "true";
@@ -840,6 +855,7 @@ export class NavigationEngine {
           scrollAuthority: "focus",
         });
       }
+      markPerformance("scroll-completed");
     }
     const scope = useNavigationStore.getState().activeScopeId
       ? this.scopes.get(useNavigationStore.getState().activeScopeId ?? "")
@@ -861,6 +877,12 @@ export class NavigationEngine {
       domActiveElementFocusId: domFocusId,
     });
     if (inputMode === "mouse" || document.activeElement === entry.element) {
+      markPerformance("dom-focus-confirmed");
+      measurePerformance(
+        "focus-to-dom",
+        "logical-focus-updated",
+        "dom-focus-confirmed",
+      );
       useNavigationStore.getState().updateDebug({
         lastFocusFailureReason: undefined,
       });

@@ -7,6 +7,7 @@ interface ProductState {
   selectedGameId: string | null;
   returnView: ProductView;
   returnFocusId: string | null;
+  viewTransitionId: number;
   setView: (view: ProductView) => void;
   openDetails: (
     gameId: string,
@@ -21,12 +22,24 @@ export const useProductStore = create<ProductState>((set) => ({
   selectedGameId: null,
   returnView: "home",
   returnFocusId: null,
-  setView: (activeView) => set({ activeView }),
+  viewTransitionId: 0,
+  setView: (activeView) =>
+    set((state) => ({
+      activeView,
+      viewTransitionId: state.viewTransitionId + 1,
+    })),
   openDetails: (selectedGameId, returnView, returnFocusId) =>
-    set({ activeView: "details", selectedGameId, returnView, returnFocusId }),
+    set((state) => ({
+      activeView: "details",
+      selectedGameId,
+      returnView,
+      returnFocusId,
+      viewTransitionId: state.viewTransitionId + 1,
+    })),
   closeDetails: () =>
     set((state) => ({
       activeView: state.returnView,
       returnFocusId: state.returnFocusId,
+      viewTransitionId: state.viewTransitionId + 1,
     })),
 }));

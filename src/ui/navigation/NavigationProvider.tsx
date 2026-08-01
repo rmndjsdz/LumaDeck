@@ -56,6 +56,11 @@ export function NavigationProvider({ children }: PropsWithChildren) {
     document.documentElement.dataset.inputMode = inputMode;
   }, [inputMode]);
 
+  const navigationPhase = useNavigationStore((state) => state.navigationPhase);
+  useEffect(() => {
+    document.documentElement.dataset.navigationPhase = navigationPhase;
+  }, [navigationPhase]);
+
   return (
     <NavigationContext.Provider value={runtime}>
       <div className="navigation-root" data-input-mode={inputMode}>

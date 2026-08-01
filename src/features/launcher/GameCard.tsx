@@ -1,5 +1,6 @@
 import type { Game } from "../catalog/game-types";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
+import { recordRender } from "../../ui/performance/performance-counters";
 
 interface GameCardProps {
   game: Game;
@@ -16,6 +17,7 @@ export function GameCard({
   compact = false,
   gridIndex,
 }: GameCardProps) {
+  recordRender("game-card");
   return (
     <Focusable
       focusId={focusId}

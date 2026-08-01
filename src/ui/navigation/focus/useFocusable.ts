@@ -41,7 +41,9 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
   const ref = useRef<T | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  const activeFocusId = useNavigationStore((state) => state.activeFocusId);
+  const isActive = useNavigationStore(
+    (state) => state.activeFocusId === options.focusId,
+  );
   const inputMode = useNavigationStore((state) => state.inputMode);
   const linearNavigation = useLinearNavigation();
   const gridNavigation = useGridNavigation();
@@ -89,9 +91,9 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
 
   return {
     ref,
-    isActive: activeFocusId === options.focusId,
+    isActive,
     inputMode,
-    tabIndex: options.disabled || activeFocusId !== options.focusId ? -1 : 0,
+    tabIndex: options.disabled || !isActive ? -1 : 0,
     onMouseEnter: () =>
       runtime.inputManager.handlePointerHover(options.focusId),
     onClick: () => runtime.inputManager.handlePointerConfirm(options.focusId),

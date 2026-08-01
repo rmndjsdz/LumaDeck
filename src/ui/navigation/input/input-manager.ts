@@ -5,6 +5,8 @@ import { DirectionRepeatController } from "./direction-repeat-controller";
 import { GamepadAdapter } from "./gamepad-adapter";
 import { KeyboardAdapter } from "./keyboard-adapter";
 import { MouseAdapter } from "./mouse-adapter";
+import { NavigationSettlingController } from "./navigation-settling";
+import { markPerformance } from "../../performance/performance-marks";
 
 export class InputManager {
   private readonly repeatController = new DirectionRepeatController();
@@ -14,6 +16,7 @@ export class InputManager {
   private started = false;
   private lastDiscreteAction: { action: NavigationAction; at: number } | null =
     null;
+  private readonly settlingController: NavigationSettlingController;
 
   public constructor(private readonly engine: NavigationEngine) {
     this.keyboardAdapter = new KeyboardAdapter({
@@ -33,6 +36,11 @@ export class InputManager {
         useNavigationStore.getState().setGamepadConnected(connected),
       onDiagnostic: (diagnostic) =>
         useNavigationStore.getState().setGamepadDiagnostic(diagnostic),
+    });
+    this.settlingController = new NavigationSettlingController({
+      onPhaseChange: (phase) => {
+        useNavigationStore.getState().setNavigationPhase(phase);
+      },
     });
   }
 
@@ -55,6 +63,7 @@ export class InputManager {
   public dispose(): void {
     this.stop();
     this.repeatController.dispose();
+    this.settlingController.dispose();
   }
 
   public handlePointerHover(focusId: string): void {
@@ -74,6 +83,10 @@ export class InputManager {
 
   public dispatch(action: NavigationAction, inputMode: InputMode): boolean {
     this.setInputMode(inputMode);
+    markPerformance("input-received");
+    if (action.startsWith("move-")) {
+      this.settlingController.notifyNavigation();
+    }
     const now = performance.now();
     if (
       (action === "confirm" || action === "back") &&

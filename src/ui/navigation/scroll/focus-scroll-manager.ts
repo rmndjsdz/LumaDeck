@@ -17,7 +17,15 @@ export class FocusScrollManager {
       rect.right <= viewportWidth;
 
     if (!visible && typeof element.scrollIntoView === "function") {
-      element.scrollIntoView({ block: "nearest", inline: "nearest" });
+      const phase =
+        typeof document !== "undefined"
+          ? document.documentElement.dataset.navigationPhase
+          : undefined;
+      element.scrollIntoView({
+        block: "nearest",
+        inline: "nearest",
+        behavior: phase === "fast-navigating" ? "auto" : "smooth",
+      });
     }
 
     return { scrolled: !visible, focusId };

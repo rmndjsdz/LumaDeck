@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useGames } from "../catalog/catalog-query";
 import type { Game } from "../catalog/game-types";
 import { useProductStore, type ProductView } from "../../stores/product-store";
@@ -11,34 +11,51 @@ import { BackgroundView } from "../../ui/background/BackgroundView";
 import { DetailsView } from "./DetailsView";
 import { HomeView } from "./HomeView";
 import { LibraryView } from "./LibraryView";
+import { ViewTransition } from "../../ui/motion/ViewTransition";
+import { recordRender } from "../../ui/performance/performance-counters";
+import { markPerformance } from "../../ui/performance/performance-marks";
 
 export function ProductShell() {
+  recordRender("app-shell");
   const { engine } = useNavigation();
   const { data: games = [], isPending, isError } = useGames();
   const activeView = useProductStore((state) => state.activeView);
   const selectedGameId = useProductStore((state) => state.selectedGameId);
   const returnView = useProductStore((state) => state.returnView);
+  const returnFocusId = useProductStore((state) => state.returnFocusId);
   const setView = useProductStore((state) => state.setView);
   const openDetails = useProductStore((state) => state.openDetails);
   const selectedGame = games.find((game) => game.id === selectedGameId);
-  const backgroundGame =
-    selectedGame ?? games.find((game) => game.status === "playing") ?? games[0];
-  const backgroundUrls = useMemo(() => {
-    if (!backgroundGame) return [];
-    const index = games.findIndex((game) => game.id === backgroundGame.id);
-    return [games[index - 1]?.backgroundUrl, games[index + 1]?.backgroundUrl];
-  }, [backgroundGame, games]);
-
   useEffect(() => {
     if (activeView === "details" && selectedGameId && !selectedGame)
       setView(returnView);
   }, [activeView, returnView, selectedGame, selectedGameId, setView]);
 
+  useEffect(() => {
+    if (activeView === "details") {
+      engine.prepareScopeOpen("details", returnFocusId ?? undefined);
+      return;
+    }
+    if (
+      returnFocusId &&
+      document.querySelector(`[data-focus-id="${returnFocusId}"]`)
+    ) {
+      engine.focus(returnFocusId);
+    }
+  }, [activeView, engine, returnFocusId]);
+
+  useEffect(() => {
+    markPerformance("view-active");
+    markPerformance("main-content-updated");
+  }, [activeView]);
+
   const navigate = (view: ProductView) => {
+    markPerformance("view-requested");
     if (view !== "library") engine.cancelPendingVirtualFocus("view-change");
     setView(view);
   };
   const handleOpen = (game: Game) => {
+    markPerformance("view-requested");
     const openerFocusId = engine.getActiveFocusId();
     engine.prepareScopeOpen("details", openerFocusId ?? undefined);
     openDetails(game.id, activeView, openerFocusId);
@@ -46,10 +63,7 @@ export function ProductShell() {
 
   return (
     <div className="app-shell">
-      <BackgroundView
-        url={backgroundGame?.backgroundUrl ?? null}
-        preloadUrls={backgroundUrls}
-      />
+      <BackgroundView games={games} fallbackGameId={selectedGameId} />
       <FocusScope
         scopeId="product-shell"
         initialFocusId="shell-home"
@@ -91,14 +105,14 @@ export function ProductShell() {
           {isError && (
             <p className="empty-state">Could not load the local catalog.</p>
           )}
-          {!isPending && !isError && activeView === "home" && (
-            <HomeView games={games} onOpen={handleOpen} />
-          )}
-          {!isPending && !isError && activeView === "library" && (
-            <LibraryView onOpen={handleOpen} />
-          )}
-          {!isPending && !isError && activeView === "details" && (
-            <DetailsView game={selectedGame} />
+          {!isPending && !isError && (
+            <ViewTransition view={activeView}>
+              {activeView === "home" && (
+                <HomeView games={games} onOpen={handleOpen} />
+              )}
+              {activeView === "library" && <LibraryView onOpen={handleOpen} />}
+              {activeView === "details" && <DetailsView game={selectedGame} />}
+            </ViewTransition>
           )}
         </main>
         <footer className="app-footer">

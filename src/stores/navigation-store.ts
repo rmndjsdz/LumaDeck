@@ -4,6 +4,7 @@ import type {
   InputMode,
   NavigationAction,
   NavigationDebugState,
+  NavigationPhase,
 } from "../ui/navigation/core/navigation-types";
 
 const initialDebug: NavigationDebugState = {
@@ -14,6 +15,7 @@ const initialDebug: NavigationDebugState = {
   actionsPerSecond: 0,
   focusLosses: 0,
   duplicateFocusIds: [],
+  navigationPhase: "idle",
 };
 
 let actionTimes: number[] = [];
@@ -24,11 +26,13 @@ interface NavigationState {
   activeFocusId: string | null;
   previousFocusId: string | null;
   lastNavigationAction: NavigationAction | null;
+  navigationPhase: NavigationPhase;
   debug: NavigationDebugState;
   setInputMode: (inputMode: InputMode) => void;
   setActiveScopeId: (scopeId: string | null) => void;
   setActiveFocusId: (focusId: string | null) => void;
   recordAction: (action: NavigationAction) => void;
+  setNavigationPhase: (phase: NavigationPhase) => void;
   updateDebug: (debug: Partial<NavigationDebugState>) => void;
   setGamepadConnected: (connected: boolean) => void;
   setGamepadDiagnostic: (gamepad?: NavigationDebugState["gamepad"]) => void;
@@ -40,6 +44,7 @@ export const useNavigationStore = create<NavigationState>((set) => ({
   activeFocusId: null,
   previousFocusId: null,
   lastNavigationAction: null,
+  navigationPhase: "idle",
   debug: initialDebug,
   setInputMode: (inputMode) =>
     set((state) => (state.inputMode === inputMode ? state : { inputMode })),
@@ -73,6 +78,15 @@ export const useNavigationStore = create<NavigationState>((set) => ({
         },
       };
     }),
+  setNavigationPhase: (navigationPhase) =>
+    set((state) =>
+      state.navigationPhase === navigationPhase
+        ? state
+        : {
+            navigationPhase,
+            debug: { ...state.debug, navigationPhase },
+          },
+    ),
   updateDebug: (debug) =>
     set((state) => ({ debug: { ...state.debug, ...debug } })),
   setGamepadConnected: (gamepadConnected) =>

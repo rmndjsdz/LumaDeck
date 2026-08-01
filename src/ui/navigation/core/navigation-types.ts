@@ -13,6 +13,9 @@ export type NavigationDirection = "up" | "down" | "left" | "right";
 
 export type InputMode = "mouse" | "keyboard" | "gamepad";
 
+export type NavigationPhase =
+  "idle" | "navigating" | "fast-navigating" | "settling";
+
 export type ScopeLifecycleState =
   | "mounting"
   | "waiting-for-focusable"
@@ -137,4 +140,12 @@ export interface NavigationDebugState {
   pendingScopeActivationRequestId?: number;
   canceledLibraryRequestId?: number;
   lastFocusFailureReason?: string;
+  navigationPhase?: NavigationPhase;
+  backgroundRequestId?: number;
+  backgroundStatus?: string;
+  backgroundCacheHits?: number;
+  backgroundCacheMisses?: number;
+  backgroundPending?: boolean;
+  backgroundDecodeTimeMs?: number;
+  transitionActive?: boolean;
 }

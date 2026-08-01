@@ -2,6 +2,7 @@ import { useNavigationStore } from "../../../stores/navigation-store";
 
 export function NavigationDebugOverlay() {
   const inputMode = useNavigationStore((state) => state.inputMode);
+  const navigationPhase = useNavigationStore((state) => state.navigationPhase);
   const activeScopeId = useNavigationStore((state) => state.activeScopeId);
   const activeFocusId = useNavigationStore((state) => state.activeFocusId);
   const previousFocusId = useNavigationStore((state) => state.previousFocusId);
@@ -20,6 +21,7 @@ export function NavigationDebugOverlay() {
       </div>
       <dl>
         <DebugRow label="inputMode" value={inputMode} />
+        <DebugRow label="navigation phase" value={navigationPhase} />
         <DebugRow
           label="gamepad"
           value={debug.gamepadConnected ? "connected" : "none"}
