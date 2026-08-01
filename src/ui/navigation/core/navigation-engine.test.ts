@@ -243,4 +243,35 @@ describe("NavigationEngine", () => {
     expect(engine.getActiveScopeId()).toBe("modal");
     expect(engine.getActiveFocusId()).toBe("modal-action");
   });
+
+  it("keeps grid navigation in the current row and column", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    for (let index = 0; index < 10; index += 1) {
+      registry.register({
+        focusId: `cell-${index}`,
+        scopeId: "root",
+        element: addElement(
+          new DOMRect((index % 5) * 100, Math.floor(index / 5) * 60, 80, 40),
+        ),
+        disabled: index === 0,
+        gridNavigation: { groupId: "grid", columns: 5 },
+      });
+    }
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "cell-1",
+      activateOnMount: true,
+    });
+
+    expect(engine.dispatch("move-left")).toBe(false);
+    expect(engine.getActiveFocusId()).toBe("cell-1");
+    expect(engine.dispatch("move-right")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("cell-2");
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("cell-7");
+    expect(engine.dispatch("move-up")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("cell-2");
+  });
 });

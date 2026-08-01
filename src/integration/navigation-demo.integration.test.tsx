@@ -104,4 +104,55 @@ describe("navigation demo integration", () => {
       root.unmount();
     });
   });
+
+  it("keeps Grid Lab movement aligned to the grid", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+
+    await act(async () => {
+      root.render(<App />);
+    });
+    const gridTab = host.querySelector<HTMLElement>(
+      '[data-focus-id="tab-library"]',
+    );
+    expect(gridTab).not.toBeNull();
+    await act(async () => {
+      gridTab?.click();
+    });
+
+    const item02 = host.querySelector<HTMLElement>(
+      '[data-focus-id="library-item-1"]',
+    );
+    expect(item02?.getAttribute("data-active")).toBe("true");
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowLeft",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(item02?.getAttribute("data-active")).toBe("true");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "ArrowRight",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(
+      host
+        .querySelector('[data-focus-id="library-item-2"]')
+        ?.getAttribute("data-active"),
+    ).toBe("true");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
 });

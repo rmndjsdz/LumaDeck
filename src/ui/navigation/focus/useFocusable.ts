@@ -6,7 +6,10 @@ import type {
   FocusNavigationOverrides,
   InputMode,
 } from "../core/navigation-types";
-import { useLinearNavigation } from "../layouts/linear-navigation-context";
+import {
+  useGridNavigation,
+  useLinearNavigation,
+} from "../layouts/linear-navigation-context";
 
 export interface UseFocusableOptions {
   focusId: string;
@@ -40,6 +43,7 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
   const activeFocusId = useNavigationStore((state) => state.activeFocusId);
   const inputMode = useNavigationStore((state) => state.inputMode);
   const linearNavigation = useLinearNavigation();
+  const gridNavigation = useGridNavigation();
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -48,11 +52,13 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     return runtime.registry.register({
       focusId: options.focusId,
       scopeId: options.scopeId,
-      groupId: options.groupId ?? linearNavigation?.groupId,
+      groupId:
+        options.groupId ?? linearNavigation?.groupId ?? gridNavigation?.groupId,
       disabled: options.disabled,
       hidden: options.hidden,
       navigation: current().navigation,
       linearNavigation: linearNavigation ?? undefined,
+      gridNavigation: gridNavigation ?? undefined,
       priority: options.priority,
       element,
       onFocus: () => current().onFocus?.(),
@@ -70,6 +76,9 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     linearNavigation?.axis,
     linearNavigation?.groupId,
     linearNavigation?.wrap,
+    gridNavigation,
+    gridNavigation?.columns,
+    gridNavigation?.groupId,
     runtime.registry,
   ]);
 

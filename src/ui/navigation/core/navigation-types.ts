@@ -35,6 +35,11 @@ export interface LinearNavigationConfig {
   wrap?: boolean;
 }
 
+export interface GridNavigationConfig {
+  groupId: string;
+  columns: number;
+}
+
 export interface FocusEntry {
   focusId: string;
   element: HTMLElement;
@@ -44,6 +49,7 @@ export interface FocusEntry {
   hidden?: boolean;
   navigation?: FocusNavigationOverrides;
   linearNavigation?: LinearNavigationConfig;
+  gridNavigation?: GridNavigationConfig;
   onFocus?: () => void;
   onBlur?: () => void;
   onConfirm?: () => void;

@@ -67,12 +67,15 @@ export class FocusRegistry {
     return this.entries.size;
   }
 
-  public getScopeEntries(scopeId: string): FocusEntry[] {
+  public getScopeEntries(
+    scopeId: string,
+    options?: { includeDisabled?: boolean; includeHidden?: boolean },
+  ): FocusEntry[] {
     return [...this.entries.values()].filter(
       (entry) =>
         entry.scopeId === scopeId &&
-        !entry.disabled &&
-        !entry.hidden &&
+        (options?.includeDisabled || !entry.disabled) &&
+        (options?.includeHidden || !entry.hidden) &&
         entry.element.isConnected,
     );
   }

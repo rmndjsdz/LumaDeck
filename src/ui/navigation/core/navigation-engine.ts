@@ -187,6 +187,10 @@ export class NavigationEngine {
       return this.activateScope(scopeId);
     }
 
+    if (current.gridNavigation) {
+      return this.moveGrid(scopeId, current.focusId, direction);
+    }
+
     const linear = current.linearNavigation;
     const isLinearDirection =
       linear &&
@@ -268,6 +272,57 @@ export class NavigationEngine {
           : undefined;
       return fallback ? this.focus(fallback.focusId) : false;
     }
+    return false;
+  }
+
+  private moveGrid(
+    scopeId: string,
+    currentFocusId: string,
+    direction: "up" | "down" | "left" | "right",
+  ): boolean {
+    const current = this.registry.get(currentFocusId);
+    const grid = current?.gridNavigation;
+    if (!current || !grid) return false;
+    const entries = this.registry
+      .getScopeEntries(scopeId, { includeDisabled: true, includeHidden: true })
+      .filter((entry) => entry.gridNavigation?.groupId === grid.groupId);
+    const currentIndex = entries.findIndex(
+      (entry) => entry.focusId === currentFocusId,
+    );
+    if (currentIndex < 0 || grid.columns < 1) return false;
+
+    const row = Math.floor(currentIndex / grid.columns);
+    const column = currentIndex % grid.columns;
+    const rowDelta = direction === "up" ? -1 : direction === "down" ? 1 : 0;
+    const columnDelta =
+      direction === "left" ? -1 : direction === "right" ? 1 : 0;
+    const targetRow = row + rowDelta;
+    const targetColumn = column + columnDelta;
+    if (targetRow < 0 || targetColumn < 0 || targetColumn >= grid.columns) {
+      this.recordResolution(direction, undefined, [], 0);
+      return false;
+    }
+
+    const step = rowDelta === 0 ? columnDelta : rowDelta * grid.columns;
+    let targetIndex = currentIndex + step;
+    while (targetIndex >= 0 && targetIndex < entries.length) {
+      const candidateRow = Math.floor(targetIndex / grid.columns);
+      const candidateColumn = targetIndex % grid.columns;
+      if (
+        (rowDelta === 0 && candidateRow !== row) ||
+        (columnDelta === 0 && candidateColumn !== column)
+      ) {
+        break;
+      }
+      const candidate = entries[targetIndex];
+      if (!candidate.disabled && !candidate.hidden) {
+        this.recordResolution(direction, candidate.focusId, [], 0);
+        return this.focus(candidate.focusId);
+      }
+      targetIndex += step;
+    }
+
+    this.recordResolution(direction, undefined, [], 0);
     return false;
   }
 
