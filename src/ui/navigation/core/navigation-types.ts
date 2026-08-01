@@ -13,6 +13,14 @@ export type NavigationDirection = "up" | "down" | "left" | "right";
 
 export type InputMode = "mouse" | "keyboard" | "gamepad";
 
+export type ScopeLifecycleState =
+  | "mounting"
+  | "waiting-for-focusable"
+  | "activating"
+  | "active"
+  | "suspended"
+  | "unmounting";
+
 export interface GamepadDiagnostic {
   id: string;
   direction: NavigationDirection | null;
@@ -121,4 +129,12 @@ export interface NavigationDebugState {
   scrollTopAfter?: number;
   scrollAuthority?: "focus" | "virtualization" | "restoration";
   fallbackReason?: string;
+  scopeLifecycleState?: ScopeLifecycleState;
+  requestedInitialFocusId?: string;
+  registeredActiveScopeFocusables?: number;
+  activeFocusValid?: boolean;
+  domActiveElementFocusId?: string;
+  pendingScopeActivationRequestId?: number;
+  canceledLibraryRequestId?: number;
+  lastFocusFailureReason?: string;
 }

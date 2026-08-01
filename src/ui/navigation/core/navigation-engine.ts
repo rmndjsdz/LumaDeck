@@ -1,5 +1,4 @@
 import { ACTION_TO_DIRECTION, isDirectionAction } from "./navigation-actions";
-import { canRestoreFocus } from "./focus-restoration";
 import { FocusHistory } from "./focus-history";
 import { FocusRegistry } from "./focus-registry";
 import { findSpatialCandidate } from "./spatial-navigation";
@@ -9,6 +8,7 @@ import type {
   NavigationAction,
   NavigationDirection,
   ScopeRegistration,
+  ScopeLifecycleState,
 } from "./navigation-types";
 import type { FocusScrollManager } from "../scroll/focus-scroll-manager";
 import { getColumn, getDirectionalTarget, getRow } from "./virtual-grid";
@@ -16,6 +16,7 @@ import { getColumn, getDirectionalTarget, getRow } from "./virtual-grid";
 interface RegisteredScope extends Omit<ScopeRegistration, "parentScopeId"> {
   parentScopeId: string | null;
   openerFocusId?: string;
+  lifecycleState: ScopeLifecycleState;
 }
 
 interface PendingGridFocusRequest {
@@ -29,16 +30,27 @@ interface PendingGridFocusRequest {
   grid: NonNullable<FocusEntry["gridNavigation"]>;
 }
 
+interface PendingScopeActivation {
+  requestId: number;
+  scopeId: string;
+  preferredFocusId?: string;
+}
+
 export class NavigationEngine {
   private readonly scopes = new Map<string, RegisteredScope>();
   private readonly pendingOpeners = new Map<string, string | undefined>();
   private readonly focusHistory = new FocusHistory();
   private readonly logicalGridIndices = new Map<string, number>();
   private readonly unregisterRegistryListener: () => void;
+  private readonly scopeWatchdogFrames = new Map<string, number>();
+  private readonly scopeWatchdogWarnings = new Set<string>();
   private pendingGridFocus: PendingGridFocusRequest | null = null;
+  private pendingScopeActivation: PendingScopeActivation | null = null;
   private pendingFrame: number | null = null;
   private pendingTimeout: number | null = null;
+  private focusRetryFrame: number | null = null;
   private nextGridRequestId = 0;
+  private nextScopeRequestId = 0;
 
   public constructor(
     public readonly registry: FocusRegistry,
@@ -46,6 +58,8 @@ export class NavigationEngine {
   ) {
     this.unregisterRegistryListener = registry.subscribe(() => {
       this.tryCompletePendingGridFocus();
+      this.tryCompletePendingScopeActivation();
+      this.runScopeWatchdog();
     });
   }
 
@@ -59,7 +73,17 @@ export class NavigationEngine {
       window.clearTimeout(this.pendingTimeout);
       this.pendingTimeout = null;
     }
+    if (this.focusRetryFrame !== null) {
+      window.cancelAnimationFrame(this.focusRetryFrame);
+      this.focusRetryFrame = null;
+    }
+    for (const frame of this.scopeWatchdogFrames.values()) {
+      window.cancelAnimationFrame(frame);
+    }
+    this.scopeWatchdogFrames.clear();
+    this.scopeWatchdogWarnings.clear();
     this.pendingGridFocus = null;
+    this.pendingScopeActivation = null;
   }
 
   public registerScope(scope: ScopeRegistration): () => void {
@@ -69,6 +93,7 @@ export class NavigationEngine {
       ...scope,
       parentScopeId,
       openerFocusId: this.pendingOpeners.get(scope.scopeId),
+      lifecycleState: "mounting",
     };
     this.pendingOpeners.delete(scope.scopeId);
     this.scopes.set(scope.scopeId, registered);
@@ -78,7 +103,7 @@ export class NavigationEngine {
       registered.openerFocusId ||
       useNavigationStore.getState().activeScopeId === null
     ) {
-      this.activateScope(scope.scopeId, registered.initialFocusId);
+      this.requestScopeActivation(scope.scopeId);
     }
 
     return () => this.unregisterScope(scope.scopeId);
@@ -87,6 +112,8 @@ export class NavigationEngine {
   public unregisterScope(scopeId: string): void {
     const scope = this.scopes.get(scopeId);
     if (!scope) return;
+    this.cancelPendingScopeActivation(scopeId);
+    scope.lifecycleState = "unmounting";
     const wasActive = useNavigationStore.getState().activeScopeId === scopeId;
     this.focusHistory.remember(
       scopeId,
@@ -99,7 +126,9 @@ export class NavigationEngine {
 
     if (wasActive && scope.parentScopeId) {
       const restoreId = scope.restoreFocus ? scope.openerFocusId : undefined;
-      this.activateScope(scope.parentScopeId, restoreId);
+      useNavigationStore.getState().setActiveScopeId(null);
+      this.setFocus(null);
+      this.requestScopeActivation(scope.parentScopeId, restoreId);
       if (restoreId) {
         useNavigationStore.getState().updateDebug({
           lastRestoredFocus: restoreId,
@@ -120,8 +149,9 @@ export class NavigationEngine {
     ) {
       return;
     }
+    this.cancelPendingVirtualFocus("scope-open");
     this.pendingOpeners.set(scopeId, openerFocusId);
-    if (this.scopes.has(scopeId)) this.activateScope(scopeId, openerFocusId);
+    if (this.scopes.has(scopeId)) this.requestScopeActivation(scopeId);
   }
 
   public activateScope(scopeId: string, preferredFocusId?: string): boolean {
@@ -135,28 +165,149 @@ export class NavigationEngine {
     }
     const scope = this.scopes.get(scopeId);
     if (!scope) return false;
-    if (activeScopeId && activeScopeId !== scopeId) {
-      this.scrollManager.rememberScope(activeScopeId);
+    return this.requestScopeActivation(scopeId, preferredFocusId);
+  }
+
+  public getScopeLifecycleState(
+    scopeId: string,
+  ): ScopeLifecycleState | undefined {
+    return this.scopes.get(scopeId)?.lifecycleState;
+  }
+
+  public cancelPendingVirtualFocus(reason = "canceled"): void {
+    const canceledRequestId = this.pendingGridFocus?.requestId;
+    this.clearPendingGridFocus();
+    if (canceledRequestId !== undefined) {
+      useNavigationStore.getState().updateDebug({
+        canceledLibraryRequestId: canceledRequestId,
+        fallbackReason: `virtual-focus-${reason}`,
+      });
     }
-    useNavigationStore.getState().setActiveScopeId(scopeId);
-    this.syncTabStops();
-    this.scrollManager.restoreScope(scopeId);
+  }
+
+  private requestScopeActivation(
+    scopeId: string,
+    preferredFocusId?: string,
+  ): boolean {
+    const scope = this.scopes.get(scopeId);
+    if (!scope) return false;
+    this.cancelPendingScopeActivation();
+    const request: PendingScopeActivation = {
+      requestId: ++this.nextScopeRequestId,
+      scopeId,
+      preferredFocusId,
+    };
+    this.pendingScopeActivation = request;
+    scope.lifecycleState = "mounting";
+    useNavigationStore.getState().updateDebug({
+      pendingScopeActivationRequestId: request.requestId,
+      requestedInitialFocusId: scope.initialFocusId,
+      scopeLifecycleState: scope.lifecycleState,
+    });
+    return this.tryCompletePendingScopeActivation();
+  }
+
+  private tryCompletePendingScopeActivation(): boolean {
+    const pending = this.pendingScopeActivation;
+    if (!pending) return false;
+    const scope = this.scopes.get(pending.scopeId);
+    if (!scope) {
+      this.cancelPendingScopeActivation(pending.scopeId);
+      return false;
+    }
+    const activeScopeId = useNavigationStore.getState().activeScopeId;
+    if (
+      activeScopeId &&
+      activeScopeId !== pending.scopeId &&
+      this.scopes.get(activeScopeId)?.modal
+    ) {
+      return false;
+    }
 
     const remembered = scope.rememberScroll
-      ? this.focusHistory.get(scopeId)
+      ? this.focusHistory.get(pending.scopeId)
       : undefined;
     const preferredInScope =
-      preferredFocusId &&
-      this.registry.get(preferredFocusId)?.scopeId === scopeId
-        ? preferredFocusId
+      pending.preferredFocusId &&
+      this.isValidFocusId(pending.preferredFocusId, pending.scopeId)
+        ? pending.preferredFocusId
+        : undefined;
+    const rememberedInScope =
+      remembered && this.isValidFocusId(remembered, pending.scopeId)
+        ? remembered
+        : undefined;
+    const initialFocus =
+      scope.initialFocusId &&
+      this.isValidFocusId(scope.initialFocusId, pending.scopeId)
+        ? scope.initialFocusId
         : undefined;
     const focusId =
       preferredInScope ??
-      (canRestoreFocus(this.registry, remembered) ? remembered : undefined) ??
-      scope.initialFocusId ??
-      this.registry.getScopeEntries(scopeId)[0]?.focusId;
-    if (focusId) this.focus(focusId, false);
-    return Boolean(focusId);
+      rememberedInScope ??
+      initialFocus ??
+      (pending.preferredFocusId
+        ? undefined
+        : this.registry.getScopeEntries(pending.scopeId)[0]?.focusId);
+
+    if (!focusId) {
+      scope.lifecycleState = "waiting-for-focusable";
+      this.updateScopeDebug(scope, pending.requestId);
+      return false;
+    }
+
+    scope.lifecycleState = "activating";
+    this.updateScopeDebug(scope, pending.requestId);
+    if (activeScopeId && activeScopeId !== pending.scopeId) {
+      const previousScope = this.scopes.get(activeScopeId);
+      if (previousScope) previousScope.lifecycleState = "suspended";
+      this.scrollManager.rememberScope(activeScopeId);
+    }
+    useNavigationStore.getState().setActiveScopeId(pending.scopeId);
+    this.syncTabStops();
+    this.scrollManager.restoreScope(pending.scopeId);
+    const entry = this.registry.get(focusId);
+    if (!entry || !this.isValidEntry(entry, pending.scopeId)) {
+      scope.lifecycleState = "waiting-for-focusable";
+      this.updateScopeDebug(scope, pending.requestId);
+      return false;
+    }
+
+    this.pendingScopeActivation = null;
+    scope.lifecycleState = "active";
+    useNavigationStore.getState().updateDebug({
+      pendingScopeActivationRequestId: undefined,
+      scopeLifecycleState: scope.lifecycleState,
+    });
+    this.setFocus(entry);
+    this.updateScopeDebug(scope);
+    return useNavigationStore.getState().activeFocusId === focusId;
+  }
+
+  private cancelPendingScopeActivation(scopeId?: string): void {
+    const pending = this.pendingScopeActivation;
+    if (!pending || (scopeId && pending.scopeId !== scopeId)) return;
+    const scope = this.scopes.get(pending.scopeId);
+    if (scope && scope.lifecycleState !== "unmounting") {
+      scope.lifecycleState = "suspended";
+    }
+    this.pendingScopeActivation = null;
+    useNavigationStore.getState().updateDebug({
+      pendingScopeActivationRequestId: undefined,
+    });
+  }
+
+  private isValidFocusId(focusId: string, scopeId: string): boolean {
+    const entry = this.registry.get(focusId);
+    return Boolean(entry && this.isValidEntry(entry, scopeId));
+  }
+
+  private isValidEntry(entry: FocusEntry, scopeId: string): boolean {
+    return (
+      entry.scopeId === scopeId &&
+      !entry.disabled &&
+      !entry.hidden &&
+      entry.element.isConnected
+    );
   }
 
   public getActiveScopeId(): string | null {
@@ -194,6 +345,7 @@ export class NavigationEngine {
 
   public dispatch(action: NavigationAction): boolean {
     useNavigationStore.getState().recordAction(action);
+    if (this.isInputBlockedForPendingScope()) return false;
     if (isDirectionAction(action)) {
       return this.move(ACTION_TO_DIRECTION[action] ?? "down");
     }
@@ -220,6 +372,8 @@ export class NavigationEngine {
       ? this.registry.get(state.activeFocusId)
       : undefined;
     if (!scopeId) return false;
+    const activeScope = this.scopes.get(scopeId);
+    if (activeScope?.lifecycleState !== "active") return false;
     if (pending?.scopeId === scopeId) {
       return this.moveGrid(scopeId, pending.targetFocusId, direction, pending);
     }
@@ -313,6 +467,12 @@ export class NavigationEngine {
       return fallback ? this.focus(fallback.focusId) : false;
     }
     return false;
+  }
+
+  private isInputBlockedForPendingScope(): boolean {
+    const pending = this.pendingScopeActivation;
+    if (!pending) return false;
+    return useNavigationStore.getState().activeScopeId !== pending.scopeId;
   }
 
   private moveGrid(
@@ -419,6 +579,103 @@ export class NavigationEngine {
       : null;
   }
 
+  private runScopeWatchdog(): void {
+    const state = useNavigationStore.getState();
+    if (!state.activeScopeId) return;
+    if (this.pendingGridFocus?.scopeId === state.activeScopeId) return;
+    if (
+      this.pendingScopeActivation &&
+      this.pendingScopeActivation.scopeId !== state.activeScopeId
+    ) {
+      return;
+    }
+    if (this.pendingOpeners.size > 0) return;
+    const scope = this.scopes.get(state.activeScopeId);
+    if (!scope || scope.lifecycleState !== "active") return;
+    const entries = this.registry.getScopeEntries(state.activeScopeId);
+    const activeEntry = state.activeFocusId
+      ? this.registry.get(state.activeFocusId)
+      : undefined;
+    const activeFocusValid = Boolean(
+      activeEntry && this.isValidEntry(activeEntry, state.activeScopeId),
+    );
+    this.updateScopeDebug(scope);
+    if (entries.length > 0 && activeFocusValid) {
+      this.scopeWatchdogWarnings.delete(scope.scopeId);
+      const frame = this.scopeWatchdogFrames.get(scope.scopeId);
+      if (frame !== undefined) {
+        window.cancelAnimationFrame(frame);
+        this.scopeWatchdogFrames.delete(scope.scopeId);
+      }
+      return;
+    }
+
+    if (import.meta.env.DEV && !this.scopeWatchdogWarnings.has(scope.scopeId)) {
+      this.scopeWatchdogWarnings.add(scope.scopeId);
+      console.warn(
+        `[navigation] active scope ${scope.scopeId} has invalid focus`,
+      );
+    }
+    if (this.scopeWatchdogFrames.has(scope.scopeId)) return;
+    const frame = window.requestAnimationFrame(() => {
+      this.scopeWatchdogFrames.delete(scope.scopeId);
+      const currentState = useNavigationStore.getState();
+      if (
+        currentState.activeScopeId !== scope.scopeId ||
+        scope.lifecycleState !== "active"
+      ) {
+        return;
+      }
+      const currentEntries = this.registry.getScopeEntries(scope.scopeId);
+      const recoveryId =
+        scope.initialFocusId &&
+        this.isValidFocusId(scope.initialFocusId, scope.scopeId)
+          ? scope.initialFocusId
+          : currentEntries[0]?.focusId;
+      if (recoveryId) {
+        this.setFocus(this.registry.get(recoveryId) ?? null);
+        this.updateScopeDebug(scope);
+        return;
+      }
+      scope.lifecycleState = "waiting-for-focusable";
+      useNavigationStore.getState().setActiveFocusId(null);
+      useNavigationStore.getState().updateDebug({
+        scopeLifecycleState: scope.lifecycleState,
+        lastFocusFailureReason: "scope-watchdog-no-focusable",
+      });
+      this.pendingScopeActivation = {
+        requestId: ++this.nextScopeRequestId,
+        scopeId: scope.scopeId,
+      };
+      useNavigationStore.getState().updateDebug({
+        pendingScopeActivationRequestId: this.pendingScopeActivation.requestId,
+      });
+    });
+    this.scopeWatchdogFrames.set(scope.scopeId, frame);
+  }
+
+  private updateScopeDebug(scope: RegisteredScope, requestId?: number): void {
+    const state = useNavigationStore.getState();
+    const entries = this.registry.getScopeEntries(scope.scopeId);
+    const activeEntry = state.activeFocusId
+      ? this.registry.get(state.activeFocusId)
+      : undefined;
+    const activeFocusValid = Boolean(
+      activeEntry && this.isValidEntry(activeEntry, scope.scopeId),
+    );
+    useNavigationStore.getState().updateDebug({
+      scopeLifecycleState: scope.lifecycleState,
+      requestedInitialFocusId: scope.initialFocusId,
+      registeredActiveScopeFocusables:
+        state.activeScopeId === scope.scopeId ? entries.length : undefined,
+      activeFocusValid:
+        state.activeScopeId === scope.scopeId ? activeFocusValid : undefined,
+      domActiveElementFocusId:
+        document.activeElement?.getAttribute("data-focus-id") ?? undefined,
+      pendingScopeActivationRequestId: requestId,
+    });
+  }
+
   private requestGridFocus(
     scopeId: string,
     grid: NonNullable<FocusEntry["gridNavigation"]>,
@@ -492,6 +749,7 @@ export class NavigationEngine {
   }
 
   private clearPendingGridFocus(): void {
+    if (this.pendingGridFocus) this.nextGridRequestId += 1;
     this.pendingGridFocus = null;
     if (this.pendingFrame !== null) {
       window.cancelAnimationFrame(this.pendingFrame);
@@ -544,7 +802,10 @@ export class NavigationEngine {
 
   private setFocus(entry: FocusEntry | null): void {
     const state = useNavigationStore.getState();
-    if (state.activeFocusId === entry?.focusId) return;
+    if (state.activeFocusId === entry?.focusId) {
+      if (entry) this.focusDomElement(entry, true);
+      return;
+    }
     if (entry?.gridNavigation?.index !== undefined) {
       this.logicalGridIndices.set(
         entry.gridNavigation.groupId,
@@ -568,7 +829,7 @@ export class NavigationEngine {
     }
     entry?.onFocus?.();
     if (entry) {
-      entry.element.focus({ preventScroll: true });
+      this.focusDomElement(entry, true);
       const scrollResult = this.scrollManager.ensureVisible(
         entry.element,
         entry.focusId,
@@ -580,6 +841,63 @@ export class NavigationEngine {
         });
       }
     }
+    const scope = useNavigationStore.getState().activeScopeId
+      ? this.scopes.get(useNavigationStore.getState().activeScopeId ?? "")
+      : undefined;
+    if (scope) this.updateScopeDebug(scope);
+  }
+
+  private focusDomElement(entry: FocusEntry, allowRetry: boolean): void {
+    try {
+      entry.element.focus({ preventScroll: true });
+    } catch {
+      this.recordFocusFailure(entry, "focus-threw", allowRetry);
+      return;
+    }
+    const inputMode = useNavigationStore.getState().inputMode;
+    const domFocusId =
+      document.activeElement?.getAttribute("data-focus-id") ?? undefined;
+    useNavigationStore.getState().updateDebug({
+      domActiveElementFocusId: domFocusId,
+    });
+    if (inputMode === "mouse" || document.activeElement === entry.element) {
+      useNavigationStore.getState().updateDebug({
+        lastFocusFailureReason: undefined,
+      });
+      return;
+    }
+    this.recordFocusFailure(entry, "dom-focus-mismatch", allowRetry);
+  }
+
+  private recordFocusFailure(
+    entry: FocusEntry,
+    reason: string,
+    allowRetry: boolean,
+  ): void {
+    useNavigationStore.getState().updateDebug({
+      lastFocusFailureReason: reason,
+      domActiveElementFocusId:
+        document.activeElement?.getAttribute("data-focus-id") ?? undefined,
+    });
+    if (import.meta.env.DEV) {
+      console.warn(`[navigation] failed to focus ${entry.focusId}: ${reason}`);
+    }
+    if (!allowRetry || this.focusRetryFrame !== null) return;
+    const focusId = entry.focusId;
+    this.focusRetryFrame = window.requestAnimationFrame(() => {
+      this.focusRetryFrame = null;
+      const current = this.registry.get(focusId);
+      const state = useNavigationStore.getState();
+      if (
+        !current ||
+        state.activeFocusId !== focusId ||
+        state.activeScopeId !== current.scopeId ||
+        !this.isValidEntry(current, current.scopeId)
+      ) {
+        return;
+      }
+      this.focusDomElement(current, false);
+    });
   }
 
   public handleTab(shiftKey: boolean): boolean {

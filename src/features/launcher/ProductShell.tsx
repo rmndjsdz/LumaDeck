@@ -34,9 +34,15 @@ export function ProductShell() {
       setView(returnView);
   }, [activeView, returnView, selectedGame, selectedGameId, setView]);
 
-  const navigate = (view: ProductView) => setView(view);
-  const handleOpen = (game: Game) =>
-    openDetails(game.id, activeView, engine.getActiveFocusId());
+  const navigate = (view: ProductView) => {
+    if (view !== "library") engine.cancelPendingVirtualFocus("view-change");
+    setView(view);
+  };
+  const handleOpen = (game: Game) => {
+    const openerFocusId = engine.getActiveFocusId();
+    engine.prepareScopeOpen("details", openerFocusId ?? undefined);
+    openDetails(game.id, activeView, openerFocusId);
+  };
 
   return (
     <div className="app-shell">

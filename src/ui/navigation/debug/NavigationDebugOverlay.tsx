@@ -43,7 +43,31 @@ export function NavigationDebugOverlay() {
         )}
         <DebugRow label="last action" value={lastNavigationAction ?? "—"} />
         <DebugRow label="scope" value={activeScopeId ?? "—"} />
+        <DebugRow
+          label="scope lifecycle"
+          value={debug.scopeLifecycleState ?? "—"}
+        />
+        <DebugRow
+          label="requested initial"
+          value={debug.requestedInitialFocusId ?? "—"}
+        />
         <DebugRow label="active focus" value={activeFocusId ?? "—"} />
+        <DebugRow
+          label="active valid"
+          value={
+            debug.activeFocusValid === undefined
+              ? "—"
+              : String(debug.activeFocusValid)
+          }
+        />
+        <DebugRow
+          label="DOM focus"
+          value={debug.domActiveElementFocusId ?? "—"}
+        />
+        <DebugRow
+          label="scope registered"
+          value={formatNumber(debug.registeredActiveScopeFocusables)}
+        />
         <DebugRow label="previous focus" value={previousFocusId ?? "—"} />
         <DebugRow
           label="active index"
@@ -72,6 +96,14 @@ export function NavigationDebugOverlay() {
           label="pending request"
           value={formatNumber(debug.pendingRequestId)}
         />
+        <DebugRow
+          label="scope request"
+          value={formatNumber(debug.pendingScopeActivationRequestId)}
+        />
+        <DebugRow
+          label="canceled Library"
+          value={formatNumber(debug.canceledLibraryRequestId)}
+        />
         <DebugRow label="anchor" value={debug.anchorFocusId ?? "—"} />
         <DebugRow
           label="scroll before/after"
@@ -82,6 +114,10 @@ export function NavigationDebugOverlay() {
           value={debug.scrollAuthority ?? "—"}
         />
         <DebugRow label="fallback" value={debug.fallbackReason ?? "—"} />
+        <DebugRow
+          label="focus failure"
+          value={debug.lastFocusFailureReason ?? "—"}
+        />
         <DebugRow label="registered" value={String(debug.registryCount)} />
         <DebugRow label="direction" value={debug.requestedDirection ?? "—"} />
         <DebugRow label="candidate" value={debug.resolvedCandidate ?? "—"} />
