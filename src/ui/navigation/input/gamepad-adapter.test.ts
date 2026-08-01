@@ -29,6 +29,8 @@ describe("GamepadAdapter", () => {
     let rightPressed = false;
     const frameCallbacks: FrameRequestCallback[] = [];
     const actions: string[] = [];
+    const diagnostics: Array<{ direction: string | null; buttons: number[] }> =
+      [];
     const adapter = new GamepadAdapter({
       source: () => [makeGamepad(rightPressed)],
       requestFrame: (callback) => {
@@ -40,6 +42,14 @@ describe("GamepadAdapter", () => {
       onAction: (action) => actions.push(action),
       onInputMode: vi.fn(),
       onConnectionChange: vi.fn(),
+      onDiagnostic: (diagnostic) => {
+        if (diagnostic) {
+          diagnostics.push({
+            direction: diagnostic.direction,
+            buttons: diagnostic.pressedButtons,
+          });
+        }
+      },
     });
 
     adapter.start();
@@ -47,6 +57,10 @@ describe("GamepadAdapter", () => {
     rightPressed = true;
     frameCallbacks[0]?.(performance.now());
     expect(actions).toEqual(["move-right"]);
+    expect(diagnostics[diagnostics.length - 1]).toEqual({
+      direction: "right",
+      buttons: [15],
+    });
     adapter.stop();
     expect(frameCallbacks).toHaveLength(2);
   });

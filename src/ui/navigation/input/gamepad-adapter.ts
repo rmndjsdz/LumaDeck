@@ -1,5 +1,6 @@
 import { DIRECTION_TO_ACTION } from "../core/navigation-actions";
 import type {
+  GamepadDiagnostic,
   NavigationAction,
   NavigationDirection,
 } from "../core/navigation-types";
@@ -11,6 +12,7 @@ interface GamepadAdapterOptions {
   onAction: (action: NavigationAction) => void;
   onInputMode: () => void;
   onConnectionChange: (connected: boolean) => void;
+  onDiagnostic?: (diagnostic: GamepadDiagnostic | undefined) => void;
   repeatController: DirectionRepeatController;
   deadzone?: number;
   source?: GamepadStateSource;
@@ -24,6 +26,9 @@ export class GamepadAdapter {
   private readonly onAction: (action: NavigationAction) => void;
   private readonly onInputMode: () => void;
   private readonly onConnectionChange: (connected: boolean) => void;
+  private readonly onDiagnostic?: (
+    diagnostic: GamepadDiagnostic | undefined,
+  ) => void;
   private readonly repeatController: DirectionRepeatController;
   private readonly deadzone: number;
   private readonly source: GamepadStateSource;
@@ -34,6 +39,7 @@ export class GamepadAdapter {
   private running = false;
   private connected = false;
   private currentDirection: NavigationDirection | null = null;
+  private lastDiagnosticKey = "";
 
   public constructor(options: GamepadAdapterOptions) {
     this.target =
@@ -41,6 +47,7 @@ export class GamepadAdapter {
     this.onAction = options.onAction;
     this.onInputMode = options.onInputMode;
     this.onConnectionChange = options.onConnectionChange;
+    this.onDiagnostic = options.onDiagnostic;
     this.repeatController = options.repeatController;
     this.deadzone = options.deadzone ?? 0.35;
     this.source =
@@ -77,6 +84,7 @@ export class GamepadAdapter {
     this.frameHandle = null;
     this.repeatController.stop();
     this.currentDirection = null;
+    this.lastDiagnosticKey = "";
     this.previousButtons.clear();
     this.target?.removeEventListener("gamepadconnected", this.handleConnection);
     this.target?.removeEventListener(
@@ -84,6 +92,7 @@ export class GamepadAdapter {
       this.handleConnection,
     );
     if (this.connected) this.onConnectionChange(false);
+    this.onDiagnostic?.(undefined);
     this.connected = false;
   }
 
@@ -103,8 +112,10 @@ export class GamepadAdapter {
     if (!gamepad) return;
 
     this.onInputMode();
+    const direction = this.readDirection(gamepad);
     this.handleButtons(gamepad);
-    this.handleDirection(gamepad);
+    this.handleDirection(direction);
+    this.publishDiagnostic(gamepad, direction);
     this.frameHandle = this.requestFrame(this.poll);
   };
 
@@ -124,8 +135,7 @@ export class GamepadAdapter {
     }
   }
 
-  private handleDirection(gamepad: Gamepad): void {
-    const direction = this.readDirection(gamepad);
+  private handleDirection(direction: NavigationDirection | null): void {
     if (direction === this.currentDirection) return;
     this.currentDirection = direction;
     this.repeatController.stop();
@@ -134,6 +144,24 @@ export class GamepadAdapter {
     this.repeatController.start(direction, () => {
       this.onAction(DIRECTION_TO_ACTION[direction]);
     });
+  }
+
+  private publishDiagnostic(
+    gamepad: Gamepad,
+    direction: NavigationDirection | null,
+  ): void {
+    if (!this.onDiagnostic) return;
+    const pressedButtons = Array.from(gamepad.buttons).reduce<number[]>(
+      (pressed, button, index) => {
+        if (button?.pressed) pressed.push(index);
+        return pressed;
+      },
+      [],
+    );
+    const key = `${gamepad.id}|${direction ?? "none"}|${pressedButtons.join(",")}`;
+    if (key === this.lastDiagnosticKey) return;
+    this.lastDiagnosticKey = key;
+    this.onDiagnostic({ id: gamepad.id, direction, pressedButtons });
   }
 
   private readDirection(gamepad: Gamepad): NavigationDirection | null {

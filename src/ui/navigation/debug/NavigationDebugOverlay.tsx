@@ -24,6 +24,23 @@ export function NavigationDebugOverlay() {
           label="gamepad"
           value={debug.gamepadConnected ? "connected" : "none"}
         />
+        {debug.gamepad && (
+          <>
+            <DebugRow label="pad id" value={debug.gamepad.id} />
+            <DebugRow
+              label="pad input"
+              value={debug.gamepad.direction ?? "neutral"}
+            />
+            <DebugRow
+              label="buttons"
+              value={
+                debug.gamepad.pressedButtons.length
+                  ? debug.gamepad.pressedButtons.join(", ")
+                  : "none"
+              }
+            />
+          </>
+        )}
         <DebugRow label="last action" value={lastNavigationAction ?? "—"} />
         <DebugRow label="scope" value={activeScopeId ?? "—"} />
         <DebugRow label="active focus" value={activeFocusId ?? "—"} />

@@ -31,6 +31,7 @@ interface NavigationState {
   recordAction: (action: NavigationAction) => void;
   updateDebug: (debug: Partial<NavigationDebugState>) => void;
   setGamepadConnected: (connected: boolean) => void;
+  setGamepadDiagnostic: (gamepad?: NavigationDebugState["gamepad"]) => void;
 }
 
 export const useNavigationStore = create<NavigationState>((set) => ({
@@ -40,7 +41,8 @@ export const useNavigationStore = create<NavigationState>((set) => ({
   previousFocusId: null,
   lastNavigationAction: null,
   debug: initialDebug,
-  setInputMode: (inputMode) => set({ inputMode }),
+  setInputMode: (inputMode) =>
+    set((state) => (state.inputMode === inputMode ? state : { inputMode })),
   setActiveScopeId: (activeScopeId) => set({ activeScopeId }),
   setActiveFocusId: (activeFocusId) =>
     set((state) => ({
@@ -76,5 +78,9 @@ export const useNavigationStore = create<NavigationState>((set) => ({
   setGamepadConnected: (gamepadConnected) =>
     set((state) => ({
       debug: { ...state.debug, gamepadConnected },
+    })),
+  setGamepadDiagnostic: (gamepad) =>
+    set((state) => ({
+      debug: { ...state.debug, gamepad },
     })),
 }));

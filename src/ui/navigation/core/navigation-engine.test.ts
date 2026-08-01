@@ -274,4 +274,35 @@ describe("NavigationEngine", () => {
     expect(engine.dispatch("move-up")).toBe(true);
     expect(engine.getActiveFocusId()).toBe("cell-2");
   });
+
+  it("requests an off-window grid index instead of falling back spatially", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const requested: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      registry.register({
+        focusId: `cell-${index}`,
+        scopeId: "root",
+        element: addElement(new DOMRect((index % 5) * 100, 0, 80, 40)),
+        gridNavigation: {
+          groupId: "grid",
+          columns: 5,
+          index,
+          itemCount: 10,
+          resolveFocusId: (targetIndex) => `cell-${targetIndex}`,
+          onRequestIndex: (targetIndex) => requested.push(targetIndex),
+        },
+      });
+    }
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "cell-0",
+      activateOnMount: true,
+    });
+
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(requested).toEqual([5]);
+    expect(engine.getActiveFocusId()).toBe("cell-0");
+  });
 });

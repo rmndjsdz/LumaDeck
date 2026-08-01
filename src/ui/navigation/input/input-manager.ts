@@ -31,6 +31,8 @@ export class InputManager {
       onInputMode: () => this.setInputMode("gamepad"),
       onConnectionChange: (connected) =>
         useNavigationStore.getState().setGamepadConnected(connected),
+      onDiagnostic: (diagnostic) =>
+        useNavigationStore.getState().setGamepadDiagnostic(diagnostic),
     });
   }
 
