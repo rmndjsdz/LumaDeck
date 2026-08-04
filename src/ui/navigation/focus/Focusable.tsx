@@ -10,7 +10,7 @@ export interface FocusableProps extends UseFocusableOptions {
   ariaCurrent?: "page" | "step" | "location" | "date" | "time" | true | false;
   ariaSelected?: boolean;
   ariaPressed?: boolean;
-  role?: "button" | "menuitem";
+  role?: "button" | "menuitem" | "tab";
   ariaHaspopup?: boolean | "menu";
   ariaExpanded?: boolean;
 }

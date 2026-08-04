@@ -1084,6 +1084,8 @@ export function DetailsView({
           className="details-tabs"
           selectedId={`details-tab-${activeSection}`}
           onSelect={selectDetailsSection}
+          activationMode="automatic"
+          upTargetId="details-play"
           ariaLabel="Game sections"
         >
           <NavigationTab
@@ -1100,24 +1102,49 @@ export function DetailsView({
           >
             Actividad
           </NavigationTab>
-          <button className="details-tab" type="button" role="tab" disabled>
+          <NavigationTab
+            focusId="details-tab-achievements"
+            scopeId="details"
+            className="details-tab"
+            disabled
+          >
             Logros
             <span className="details-tab-badge">
               {achievementUnlocked ?? "-"} / {achievementTotal ?? "-"}
             </span>
-          </button>
-          <button className="details-tab" type="button" role="tab" disabled>
+          </NavigationTab>
+          <NavigationTab
+            focusId="details-tab-news"
+            scopeId="details"
+            className="details-tab"
+            disabled
+          >
             Noticias
-          </button>
-          <button className="details-tab" type="button" role="tab" disabled>
+          </NavigationTab>
+          <NavigationTab
+            focusId="details-tab-dlc"
+            scopeId="details"
+            className="details-tab"
+            disabled
+          >
             DLC
-          </button>
-          <button className="details-tab" type="button" role="tab" disabled>
+          </NavigationTab>
+          <NavigationTab
+            focusId="details-tab-related"
+            scopeId="details"
+            className="details-tab"
+            disabled
+          >
             Relacionados
-          </button>
-          <button className="details-tab" type="button" role="tab" disabled>
+          </NavigationTab>
+          <NavigationTab
+            focusId="details-tab-reviews"
+            scopeId="details"
+            className="details-tab"
+            disabled
+          >
             Reseñas
-          </button>
+          </NavigationTab>
         </NavigationTabs>
         {activeSection === "activity" ? (
           <ActivityView game={game} />

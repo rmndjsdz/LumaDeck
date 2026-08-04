@@ -12,17 +12,23 @@ import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
 interface NavigationTabsContextValue {
   selectedId?: string;
   onSelect?: (focusId: string) => void;
+  activationMode: NavigationTabsActivationMode;
+  upTargetId?: string;
 }
 
 const NavigationTabsContext = createContext<NavigationTabsContextValue | null>(
   null,
 );
 
+export type NavigationTabsActivationMode = "automatic" | "manual";
+
 interface NavigationTabsProps extends NavigationLayoutProps {
   groupId?: string;
   wrap?: boolean;
   selectedId?: string;
   onSelect?: (focusId: string) => void;
+  activationMode?: NavigationTabsActivationMode;
+  upTargetId?: string;
   navigationRegion?: NavigationRegionConfig;
   ariaLabel?: string;
 }
@@ -38,6 +44,8 @@ export function NavigationTabs({
   wrap = false,
   selectedId,
   onSelect,
+  activationMode = "manual",
+  upTargetId,
   navigationRegion,
   ariaLabel = "Sections",
 }: NavigationTabsProps) {
@@ -51,12 +59,16 @@ export function NavigationTabs({
     [generatedGroupId, groupId, scopeId, wrap],
   );
   const content = (
-    <NavigationTabsContext.Provider value={{ selectedId, onSelect }}>
+    <NavigationTabsContext.Provider
+      value={{ selectedId, onSelect, activationMode, upTargetId }}
+    >
       <NavigationRegionContext.Provider value={navigationRegion ?? null}>
         <LinearNavigationContext.Provider value={linearNavigation}>
           <nav
             className={`navigation-tabs ${className ?? ""}`}
             aria-label={ariaLabel}
+            role="tablist"
+            aria-orientation="horizontal"
             data-linear-navigation={linearNavigation.groupId}
           >
             {children}
@@ -86,12 +98,28 @@ export interface NavigationTabProps extends Omit<
   onConfirm?: () => void;
 }
 
-export function NavigationTab({ onConfirm, ...props }: NavigationTabProps) {
+export function NavigationTab({
+  onConfirm,
+  onFocus,
+  navigation,
+  ...props
+}: NavigationTabProps) {
   const context = useContext(NavigationTabsContext);
+  const tabNavigation = context?.upTargetId
+    ? { up: context.upTargetId, ...navigation }
+    : navigation;
   return (
     <Focusable
       {...props}
+      role="tab"
+      navigation={tabNavigation}
       ariaSelected={context?.selectedId === props.focusId}
+      onFocus={() => {
+        if (context?.activationMode === "automatic") {
+          context.onSelect?.(props.focusId);
+        }
+        onFocus?.();
+      }}
       onConfirm={() => {
         context?.onSelect?.(props.focusId);
         onConfirm?.();
