@@ -7,6 +7,7 @@ interface GameCardProps {
   focusId: string;
   onOpen: (game: Game) => void;
   compact?: boolean;
+  vertical?: boolean;
   itemIndex?: number;
   gridIndex?: number;
 }
@@ -16,6 +17,7 @@ export function GameCard({
   focusId,
   onOpen,
   compact = false,
+  vertical = false,
   itemIndex,
   gridIndex,
 }: GameCardProps) {
@@ -32,14 +34,26 @@ export function GameCard({
     >
       <img
         className="game-card-cover"
-        src={game.coverUrl}
+        src={
+          compact && !vertical
+            ? game.coverUrl
+            : game.verticalCoverUrl || game.coverUrl
+        }
         alt=""
         draggable={false}
       />
+      {compact && (
+        <span className="game-card-overlay" aria-hidden="true">
+          <span className="game-card-badge">PC</span>
+          <span className="game-card-playtime">
+            <span>{"\u25f7"}</span> {formatCardPlaytime(game.playtimeMinutes)}
+          </span>
+        </span>
+      )}
       <span className="game-card-body">
         <strong>{game.title}</strong>
         <span className="game-card-meta">
-          {game.platform} ·{" "}
+          {game.platform} {"\u00b7"}{" "}
           {game.status === "not-started" ? "New" : `${game.progress}%`}
         </span>
         {!compact && (
@@ -50,4 +64,10 @@ export function GameCard({
       </span>
     </Focusable>
   );
+}
+
+function formatCardPlaytime(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return hours > 0 ? `${hours}h ${remainingMinutes}m` : `${minutes}m`;
 }

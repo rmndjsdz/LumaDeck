@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type ProductView = "home" | "library" | "details";
+export type ProductView = "home" | "library" | "settings" | "details";
 
 interface ProductState {
   activeView: ProductView;

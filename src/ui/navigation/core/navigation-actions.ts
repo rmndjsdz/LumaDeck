@@ -10,6 +10,13 @@ export const NAVIGATION_ACTIONS: readonly NavigationAction[] = [
   "menu",
   "page-next",
   "page-previous",
+  "previous-primary-screen",
+  "next-primary-screen",
+  "delete-character",
+  "insert-space",
+  "toggle-caps-lock",
+  "shift-release",
+  "accept-text",
 ];
 
 export const DIRECTION_TO_ACTION: Record<

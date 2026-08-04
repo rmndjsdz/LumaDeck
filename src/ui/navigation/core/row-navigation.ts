@@ -19,6 +19,12 @@ export interface RowNavigationRegistration extends HomeRowItem {
   rowId: string;
 }
 
+export interface RowFocusMemory {
+  focusId: string;
+  itemIndex: number;
+  generationId: number;
+}
+
 export type VerticalSelectionStrategy =
   | "last-restored"
   | "same-index"
@@ -31,6 +37,9 @@ export interface VerticalTarget {
   item: HomeRowItem | null;
   strategy: VerticalSelectionStrategy;
   fallbackReason?: string;
+  memoryGenerationId?: number;
+  memoryDecision?: "accepted" | "rejected";
+  memoryRejectionReason?: string;
 }
 
 export function getValidRowItems(
@@ -121,6 +130,8 @@ export function getVerticalTarget(
   targetRowItems: readonly HomeRowItem[],
   state: HomeNavigationState,
   lastFocusedFocusId?: string,
+  lastFocusedMemory?: RowFocusMemory,
+  generationId?: number,
 ): VerticalTarget {
   const validItems = targetRowItems.filter(
     (item) => !item.disabled && !item.hidden,
@@ -129,17 +140,72 @@ export function getVerticalTarget(
     return { item: null, strategy: "no-target", fallbackReason: "empty-row" };
   }
 
-  if (lastFocusedFocusId) {
-    const restored = validItems.find(
-      (item) => item.focusId === lastFocusedFocusId,
+  const memory =
+    lastFocusedMemory ??
+    (lastFocusedFocusId
+      ? {
+          focusId: lastFocusedFocusId,
+          itemIndex: -1,
+          generationId: generationId ?? 0,
+        }
+      : undefined);
+  const memoryIsCurrent =
+    memory !== undefined &&
+    (generationId === undefined || memory.generationId === generationId);
+
+  if (memory && !memoryIsCurrent) {
+    const sameIndex = validItems.find(
+      (item) => item.itemIndex === state.preferredItemIndex,
     );
-    if (restored) return { item: restored, strategy: "last-restored" };
+    if (sameIndex) {
+      return {
+        item: sameIndex,
+        strategy: "same-index",
+        memoryGenerationId: memory.generationId,
+        memoryDecision: "rejected",
+        memoryRejectionReason: "generation-mismatch",
+      };
+    }
+    const fallback = getNearestHorizontalItem(
+      validItems,
+      state.preferredItemIndex,
+      state.preferredCenterX,
+    );
+    if (fallback) {
+      return {
+        item: fallback,
+        strategy: "nearest-horizontal",
+        fallbackReason: "equivalent-item-unavailable",
+        memoryGenerationId: memory.generationId,
+        memoryDecision: "rejected",
+        memoryRejectionReason: "generation-mismatch",
+      };
+    }
+  }
+
+  if (memoryIsCurrent && memory) {
+    const restored = validItems.find((item) => item.focusId === memory.focusId);
+    if (restored) {
+      return {
+        item: restored,
+        strategy: "last-restored",
+        memoryGenerationId: memory.generationId,
+        memoryDecision: "accepted",
+      };
+    }
   }
 
   const sameIndex = validItems.find(
     (item) => item.itemIndex === state.preferredItemIndex,
   );
-  if (sameIndex) return { item: sameIndex, strategy: "same-index" };
+  if (sameIndex) {
+    return {
+      item: sameIndex,
+      strategy: "same-index",
+      memoryGenerationId: memory?.generationId,
+      memoryDecision: memory ? "accepted" : undefined,
+    };
+  }
 
   const nearest = getNearestHorizontalItem(
     validItems,
@@ -156,12 +222,16 @@ export function getVerticalTarget(
         item: nearest,
         strategy: "last-available",
         fallbackReason: "preferred-index-out-of-range",
+        memoryGenerationId: memory?.generationId,
+        memoryDecision: memory ? "accepted" : undefined,
       };
     }
     return {
       item: nearest,
       strategy: "nearest-horizontal",
       fallbackReason: "equivalent-item-unavailable",
+      memoryGenerationId: memory?.generationId,
+      memoryDecision: memory ? "accepted" : undefined,
     };
   }
 
@@ -169,13 +239,18 @@ export function getVerticalTarget(
     item: validItems[0] ?? null,
     strategy: "first-valid",
     fallbackReason: "no-secondary-candidate",
+    memoryGenerationId: memory?.generationId,
+    memoryDecision: memory ? "accepted" : undefined,
   };
 }
 
 export class NavigationRowCoordinator {
   private readonly states = new Map<string, HomeNavigationState>();
-  private readonly lastFocusedByRow = new Map<string, Map<number, string>>();
-  private readonly restoredGroups = new Set<string>();
+  private readonly lastFocusedByRow = new Map<
+    string,
+    Map<number, RowFocusMemory>
+  >();
+  private readonly restoredGroups = new Map<string, number>();
 
   public reset(): void {
     this.states.clear();
@@ -185,7 +260,11 @@ export class NavigationRowCoordinator {
 
   public recordFocus(
     item: RowNavigationRegistration,
-    options?: { preservePreferredPosition?: boolean; restored?: boolean },
+    options?: {
+      preservePreferredPosition?: boolean;
+      restored?: boolean;
+      generationId?: number;
+    },
   ): void {
     const previous = this.states.get(item.groupId) ?? {
       activeRowIndex: item.rowIndex,
@@ -202,9 +281,39 @@ export class NavigationRowCoordinator {
       ),
     );
     const rowFocus = this.lastFocusedByRow.get(item.groupId) ?? new Map();
-    rowFocus.set(item.rowIndex, item.focusId);
+    rowFocus.set(item.rowIndex, {
+      focusId: item.focusId,
+      itemIndex: item.itemIndex,
+      generationId: options?.generationId ?? 0,
+    });
     this.lastFocusedByRow.set(item.groupId, rowFocus);
-    if (options?.restored) this.restoredGroups.add(item.groupId);
+    if (options?.restored) {
+      this.restoredGroups.set(item.groupId, options?.generationId ?? 0);
+    }
+  }
+
+  public restoreContext(
+    item: RowNavigationRegistration,
+    context: {
+      generationId: number;
+      preferredItemIndex?: number;
+      horizontalCenter?: number;
+    },
+  ): void {
+    this.states.set(item.groupId, {
+      activeRowIndex: item.rowIndex,
+      activeItemIndex: item.itemIndex,
+      preferredItemIndex: context.preferredItemIndex ?? item.itemIndex,
+      preferredCenterX: context.horizontalCenter ?? item.centerX,
+    });
+    const rowFocus = this.lastFocusedByRow.get(item.groupId) ?? new Map();
+    rowFocus.set(item.rowIndex, {
+      focusId: item.focusId,
+      itemIndex: item.itemIndex,
+      generationId: context.generationId,
+    });
+    this.lastFocusedByRow.set(item.groupId, rowFocus);
+    this.restoredGroups.set(item.groupId, context.generationId);
   }
 
   public getState(groupId: string): HomeNavigationState | undefined {
@@ -217,8 +326,11 @@ export class NavigationRowCoordinator {
     current: RowNavigationRegistration,
     direction: "up" | "down",
     items: readonly RowNavigationRegistration[],
+    contextState?: HomeNavigationState,
+    generationId?: number,
   ): VerticalTarget & { targetRowId?: string } {
     const state =
+      contextState ??
       this.states.get(groupId) ??
       preservePreferredPosition(
         {
@@ -246,13 +358,18 @@ export class NavigationRowCoordinator {
       const targetItems = getValidRowItems(items, targetRowIndex);
       if (targetItems.length > 0) {
         const rowFocus = this.lastFocusedByRow.get(groupId);
-        const lastFocusedFocusId = this.restoredGroups.has(groupId)
-          ? rowFocus?.get(targetRowIndex)
-          : undefined;
+        const restoredGeneration = this.restoredGroups.get(groupId);
+        const lastFocusedMemory =
+          restoredGeneration !== undefined &&
+          (generationId === undefined || restoredGeneration === generationId)
+            ? rowFocus?.get(targetRowIndex)
+            : undefined;
         const target = getVerticalTarget(
           targetItems,
           state,
-          lastFocusedFocusId,
+          lastFocusedMemory?.focusId,
+          lastFocusedMemory,
+          generationId,
         );
         this.restoredGroups.delete(groupId);
         const targetRegistration = target.item

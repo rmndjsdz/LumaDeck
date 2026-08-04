@@ -1,12 +1,30 @@
-import { useId, useMemo } from "react";
+import { createContext, useContext, useId, useMemo } from "react";
 
 import { FocusScope } from "../focus/FocusScope";
+import { Focusable, type FocusableProps } from "../focus/Focusable";
+import {
+  LinearNavigationContext,
+  NavigationRegionContext,
+} from "./linear-navigation-context";
 import type { NavigationLayoutProps } from "./layout-types";
-import { LinearNavigationContext } from "./linear-navigation-context";
+import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
+
+interface NavigationTabsContextValue {
+  selectedId?: string;
+  onSelect?: (focusId: string) => void;
+}
+
+const NavigationTabsContext = createContext<NavigationTabsContextValue | null>(
+  null,
+);
 
 interface NavigationTabsProps extends NavigationLayoutProps {
   groupId?: string;
   wrap?: boolean;
+  selectedId?: string;
+  onSelect?: (focusId: string) => void;
+  navigationRegion?: NavigationRegionConfig;
+  ariaLabel?: string;
 }
 
 export function NavigationTabs({
@@ -18,6 +36,10 @@ export function NavigationTabs({
   children,
   groupId,
   wrap = false,
+  selectedId,
+  onSelect,
+  navigationRegion,
+  ariaLabel = "Sections",
 }: NavigationTabsProps) {
   const generatedGroupId = useId();
   const linearNavigation = useMemo(
@@ -29,15 +51,19 @@ export function NavigationTabs({
     [generatedGroupId, groupId, scopeId, wrap],
   );
   const content = (
-    <LinearNavigationContext.Provider value={linearNavigation}>
-      <nav
-        className={`navigation-tabs ${className ?? ""}`}
-        aria-label="Sections"
-        data-linear-navigation={linearNavigation.groupId}
-      >
-        {children}
-      </nav>
-    </LinearNavigationContext.Provider>
+    <NavigationTabsContext.Provider value={{ selectedId, onSelect }}>
+      <NavigationRegionContext.Provider value={navigationRegion ?? null}>
+        <LinearNavigationContext.Provider value={linearNavigation}>
+          <nav
+            className={`navigation-tabs ${className ?? ""}`}
+            aria-label={ariaLabel}
+            data-linear-navigation={linearNavigation.groupId}
+          >
+            {children}
+          </nav>
+        </LinearNavigationContext.Provider>
+      </NavigationRegionContext.Provider>
+    </NavigationTabsContext.Provider>
   );
   if (!scopeId) return content;
   return (
@@ -50,5 +76,26 @@ export function NavigationTabs({
     >
       {content}
     </FocusScope>
+  );
+}
+
+export interface NavigationTabProps extends Omit<
+  FocusableProps,
+  "ariaSelected" | "onConfirm"
+> {
+  onConfirm?: () => void;
+}
+
+export function NavigationTab({ onConfirm, ...props }: NavigationTabProps) {
+  const context = useContext(NavigationTabsContext);
+  return (
+    <Focusable
+      {...props}
+      ariaSelected={context?.selectedId === props.focusId}
+      onConfirm={() => {
+        context?.onSelect?.(props.focusId);
+        onConfirm?.();
+      }}
+    />
   );
 }

@@ -1,4 +1,5 @@
 import type { FocusEntry, Rect } from "./navigation-types";
+import { navigationRuntimeTrace } from "../debug/navigation-runtime-trace";
 
 type RegistryListener = () => void;
 
@@ -13,7 +14,12 @@ export class FocusRegistry {
     this.resizeObserver =
       typeof ResizeObserver === "undefined"
         ? null
-        : new ResizeObserver(() => this.invalidateAll());
+        : new ResizeObserver(() => {
+            navigationRuntimeTrace.record("resize_observer", {
+              details: { action: "invalidate-rect-cache" },
+            });
+            this.invalidateAll();
+          });
   }
 
   public register(entry: FocusEntry): () => void {
@@ -27,6 +33,13 @@ export class FocusRegistry {
     this.entries.set(entry.focusId, entry);
     this.rectCache.delete(entry.focusId);
     this.resizeObserver?.observe(entry.element);
+    navigationRuntimeTrace.record("registerFocusable", {
+      details: {
+        focusId: entry.focusId,
+        scopeId: entry.scopeId,
+        connected: entry.element.isConnected,
+      },
+    });
     this.notify();
 
     return () => {
@@ -42,6 +55,12 @@ export class FocusRegistry {
     this.resizeObserver?.unobserve(entry.element);
     this.entries.delete(focusId);
     this.rectCache.delete(focusId);
+    navigationRuntimeTrace.record("unregisterFocusable", {
+      details: {
+        focusId,
+        scopeId: entry.scopeId,
+      },
+    });
     this.notify();
   }
 

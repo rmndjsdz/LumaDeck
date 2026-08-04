@@ -25,6 +25,40 @@ function resetStore(): void {
 }
 
 describe("NavigationEngine", () => {
+  it("protects primary navigation through generic modal and trapping scope state", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "root-focus",
+      scopeId: "root",
+      element: addElement(new DOMRect(0, 0, 80, 40)),
+    });
+    registry.register({
+      focusId: "dialog-focus",
+      scopeId: "dialog",
+      element: addElement(new DOMRect(0, 0, 80, 40)),
+    });
+
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "root-focus",
+      activateOnMount: true,
+    });
+    expect(engine.getPrimaryNavigationBlockReason()).toBeNull();
+
+    engine.registerScope({
+      scopeId: "dialog",
+      parentScopeId: "root",
+      initialFocusId: "dialog-focus",
+      modal: true,
+      trapFocus: true,
+      activateOnMount: true,
+    });
+    expect(engine.getPrimaryNavigationBlockReason()).toBe("modal");
+    engine.dispose();
+  });
+
   it("uses overrides, spatial navigation, disabled omission, and confirmation", () => {
     resetStore();
     const registry = new FocusRegistry();
@@ -58,6 +92,48 @@ describe("NavigationEngine", () => {
     expect(engine.dispatch("move-right")).toBe(false);
   });
 
+  it("records the physical source for directional and pointer selection", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "one",
+      scopeId: "root",
+      element: addElement(new DOMRect(0, 0, 80, 40)),
+    });
+    registry.register({
+      focusId: "two",
+      scopeId: "root",
+      element: addElement(new DOMRect(100, 0, 80, 40)),
+    });
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "one",
+      activateOnMount: true,
+    });
+
+    expect(engine.dispatch("move-right", "gamepad")).toBe(true);
+    expect(engine.focusFromPointer("one")).toBe(true);
+
+    expect(
+      engine
+        .getNavigationTrace()
+        .find(
+          (record) =>
+            record.event === "NAV_INPUT" && record.direction === "right",
+        ),
+    ).toMatchObject({ inputSource: "gamepad" });
+    expect(
+      engine
+        .getNavigationTrace()
+        .find((record) => record.event === "POINTER_SELECTION"),
+    ).toMatchObject({
+      inputSource: "mouse",
+      focusReason: "pointer-selection",
+      selectedFocusId: "one",
+    });
+  });
+
   it("restores the opener after a modal scope closes", () => {
     resetStore();
     const registry = new FocusRegistry();
@@ -85,9 +161,251 @@ describe("NavigationEngine", () => {
     });
 
     expect(engine.getActiveScopeId()).toBe("modal");
+    expect(engine.requestScopeRestore("modal", "root", "modal-to-root-1")).toBe(
+      true,
+    );
     engine.unregisterScope("modal");
     expect(engine.getActiveScopeId()).toBe("root");
     expect(engine.getActiveFocusId()).toBe("open");
+    expect(
+      engine
+        .getNavigationTrace()
+        .filter((record) => record.event === "CONTEXT_RESTORE_COMMIT"),
+    ).toHaveLength(1);
+  });
+
+  it("activates an explicitly nested modal scope from a modal parent", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "details-open-artwork",
+      scopeId: "details",
+      element: addElement(new DOMRect()),
+    });
+    registry.register({
+      focusId: "artwork-slot-grid_horizontal",
+      scopeId: "artwork-modifier",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "details",
+      initialFocusId: "details-open-artwork",
+      modal: true,
+      trapFocus: true,
+      activateOnMount: true,
+    });
+
+    engine.prepareScopeOpen("artwork-modifier", "details-open-artwork");
+    engine.registerScope({
+      scopeId: "artwork-modifier",
+      parentScopeId: "details",
+      initialFocusId: "artwork-slot-grid_horizontal",
+      modal: true,
+      trapFocus: true,
+      activateOnMount: true,
+    });
+
+    expect(engine.getActiveScopeId()).toBe("artwork-modifier");
+    expect(engine.getActiveFocusId()).toBe("artwork-slot-grid_horizontal");
+  });
+
+  it("uses an explicit fallback when a nested modal opener unmounts", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    for (const [focusId, scopeId] of [
+      ["details-play", "details"],
+      ["details-back", "details"],
+      ["details-menu-opener", "details"],
+      ["artwork-slot-grid_horizontal", "artwork-modifier"],
+    ] as const) {
+      registry.register({
+        focusId,
+        scopeId,
+        element: addElement(new DOMRect()),
+      });
+    }
+    engine.registerScope({
+      scopeId: "details",
+      initialFocusId: "details-play",
+      modal: true,
+      trapFocus: true,
+      activateOnMount: true,
+    });
+    engine.focus("details-menu-opener");
+    engine.prepareScopeOpen("artwork-modifier", "details-menu-opener");
+    engine.registerScope({
+      scopeId: "artwork-modifier",
+      parentScopeId: "details",
+      initialFocusId: "artwork-slot-grid_horizontal",
+      modal: true,
+      trapFocus: true,
+      activateOnMount: true,
+    });
+
+    expect(engine.getActiveFocusId()).toBe("artwork-slot-grid_horizontal");
+    expect(
+      engine.requestScopeRestore(
+        "artwork-modifier",
+        "details",
+        "artwork-close-fallback",
+      ),
+    ).toBe(false);
+    expect(engine.completePendingRestore("details", "details-back")).toBe(
+      false,
+    );
+    registry.unregister("details-menu-opener");
+    engine.unregisterScope("artwork-modifier");
+
+    expect(engine.getActiveScopeId()).toBe("details");
+    expect(engine.getActiveFocusId()).toBe("details-back");
+  });
+
+  it("falls back to the parent scope when a close restore request races unmount", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "parent-focus",
+      scopeId: "parent",
+      element: addElement(new DOMRect()),
+    });
+    registry.register({
+      focusId: "modal-focus",
+      scopeId: "modal",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "parent",
+      initialFocusId: "parent-focus",
+    });
+    engine.registerScope({
+      scopeId: "modal",
+      parentScopeId: "parent",
+      initialFocusId: "modal-focus",
+      modal: true,
+      activateOnMount: true,
+    });
+
+    expect(engine.getActiveScopeId()).toBe("modal");
+    expect(engine.requestScopeRestore("modal", "parent", "racing-close")).toBe(
+      false,
+    );
+
+    engine.unregisterScope("modal");
+
+    expect(engine.getActiveScopeId()).toBe("parent");
+    expect(engine.getActiveFocusId()).toBe("parent-focus");
+  });
+
+  it("keeps one restore transaction across duplicate requests and rematerialization", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const openElement = addElement(new DOMRect());
+    const unregisterOpen = registry.register({
+      focusId: "open",
+      scopeId: "root",
+      element: openElement,
+    });
+    registry.register({
+      focusId: "modal-action",
+      scopeId: "modal",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "open",
+      activateOnMount: true,
+    });
+    engine.prepareScopeOpen("modal", "open");
+    engine.registerScope({
+      scopeId: "modal",
+      initialFocusId: "modal-action",
+      modal: true,
+      activateOnMount: true,
+      restoreFocus: true,
+    });
+    unregisterOpen();
+
+    expect(engine.requestScopeRestore("modal", "root", "transition-1")).toBe(
+      false,
+    );
+    expect(engine.requestScopeRestore("modal", "root", "transition-1")).toBe(
+      false,
+    );
+    engine.unregisterScope("modal");
+    registry.register({
+      focusId: "open",
+      scopeId: "root",
+      element: openElement,
+    });
+
+    expect(engine.getActiveScopeId()).toBe("root");
+    expect(engine.getActiveFocusId()).toBe("open");
+    expect(
+      engine
+        .getNavigationTrace()
+        .filter((record) => record.event === "CONTEXT_RESTORE_COMMIT"),
+    ).toHaveLength(1);
+    expect(
+      engine
+        .getNavigationTrace()
+        .filter((record) => record.event === "CONTEXT_RESTORE_REQUEST_REUSED"),
+    ).toHaveLength(1);
+  });
+
+  it("cancels a pending restore only for a different transition", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "open",
+      scopeId: "root",
+      element: addElement(new DOMRect()),
+    });
+    registry.register({
+      focusId: "modal-action",
+      scopeId: "modal",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "open",
+      activateOnMount: true,
+    });
+    engine.prepareScopeOpen("modal", "open");
+    engine.registerScope({
+      scopeId: "modal",
+      initialFocusId: "modal-action",
+      modal: true,
+      activateOnMount: true,
+      restoreFocus: true,
+    });
+
+    expect(engine.requestScopeRestore("modal", "root", "transition-old")).toBe(
+      false,
+    );
+    expect(engine.requestScopeRestore("modal", "root", "transition-new")).toBe(
+      false,
+    );
+    engine.unregisterScope("modal");
+
+    const traces = engine.getNavigationTrace();
+    expect(
+      traces.filter((record) => record.event === "CONTEXT_RESTORE_BEGIN"),
+    ).toHaveLength(2);
+    expect(
+      traces.filter((record) => record.event === "CONTEXT_RESTORE_COMMIT"),
+    ).toHaveLength(1);
+    const begins = traces.filter(
+      (record) => record.event === "CONTEXT_RESTORE_BEGIN",
+    );
+    expect(
+      traces.find((record) => record.event === "CONTEXT_RESTORE_COMMIT")
+        ?.transactionId,
+    ).toBe(begins[1]?.transactionId);
   });
 
   it("moves linear groups by index without falling back to spatial navigation", () => {
@@ -200,6 +518,9 @@ describe("NavigationEngine", () => {
 
     scrollScope.scrollTop = 0;
     scrollScope.scrollLeft = 0;
+    expect(engine.requestScopeRestore("modal", "root", "modal-to-root-2")).toBe(
+      false,
+    );
     engine.unregisterScope("modal");
     expect(engine.getActiveScopeId()).toBe("root");
     expect(engine.getActiveFocusId()).toBe("open");
@@ -272,7 +593,7 @@ describe("NavigationEngine", () => {
     expect(engine.getScopeLifecycleState("details")).toBe(
       "waiting-for-focusable",
     );
-    expect(engine.dispatch("move-right")).toBe(false);
+    expect(engine.dispatch("move-right")).toBe(true);
 
     registry.register({
       focusId: "details-play",
@@ -283,6 +604,40 @@ describe("NavigationEngine", () => {
     expect(engine.getActiveScopeId()).toBe("details");
     expect(engine.getActiveFocusId()).toBe("details-play");
     expect(engine.getScopeLifecycleState("details")).toBe("active");
+  });
+
+  it("requires an explicit fallback for a nonexistent restore target", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "catalog-initial",
+      scopeId: "catalog",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "catalog",
+      initialFocusId: "catalog-initial",
+      activateOnMount: true,
+    });
+
+    expect(engine.activateScope("catalog", "missing-focus")).toBe(false);
+    expect(engine.getScopeLifecycleState("catalog")).toBe(
+      "waiting-for-focusable",
+    );
+    expect(engine.getActiveFocusId()).toBe("catalog-initial");
+    expect(engine.completePendingRestore("catalog")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("catalog-initial");
+
+    const restoreCommits = engine
+      .getNavigationTrace()
+      .filter((record) => record.event === "CONTEXT_RESTORE_COMMIT");
+    expect(restoreCommits).toHaveLength(1);
+    expect(restoreCommits[0]).toMatchObject({
+      selectedFocusId: "catalog-initial",
+      focusReason: "region-fallback",
+      restoreCommitCount: 1,
+    });
   });
 
   it("falls back to the first valid focusable when the initial focus is missing or disabled", () => {
@@ -362,6 +717,207 @@ describe("NavigationEngine", () => {
     expect(engine.getActiveFocusId()).toBe("cell-7");
     expect(engine.dispatch("move-up")).toBe(true);
     expect(engine.getActiveFocusId()).toBe("cell-2");
+  });
+
+  it("keeps the logical column after artwork results are replaced", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const registerCandidates = (prefix: string, count: number) => {
+      const unregisters: Array<() => void> = [];
+      for (let index = 0; index < count; index += 1) {
+        unregisters.push(
+          registry.register({
+            focusId: `${prefix}-${index}`,
+            scopeId: "artwork",
+            element: addElement(
+              new DOMRect(
+                (index % 4) * 100,
+                Math.floor(index / 4) * 60,
+                80,
+                40,
+              ),
+            ),
+            gridNavigation: {
+              groupId: "artwork-candidates",
+              columns: 4,
+              index,
+              itemCount: count,
+            },
+          }),
+        );
+      }
+      return () => unregisters.forEach((unregister) => unregister());
+    };
+
+    const unregisterInitial = registerCandidates("initial", 1);
+    engine.registerScope({
+      scopeId: "artwork",
+      initialFocusId: "initial-0",
+      activateOnMount: true,
+    });
+    unregisterInitial();
+
+    for (const count of [7, 8, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 50]) {
+      const unregister = registerCandidates(`results-${count}`, count);
+      const focusIndex = 6;
+      expect(engine.focus(`results-${count}-${focusIndex}`)).toBe(true);
+      expect(engine.dispatch("move-up")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`results-${count}-2`);
+      expect(engine.dispatch("move-down")).toBe(true);
+      expect(engine.getActiveFocusId()).toBe(`results-${count}-${focusIndex}`);
+      unregister();
+    }
+
+    engine.dispose();
+  });
+
+  it("keeps the details action row connected to the active tab", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const actionIds = [
+      {
+        id: "details-play",
+        rect: new DOMRect(0, 0, 80, 40),
+        navigation: { right: "details-favorite", down: "details-tab-activity" },
+      },
+      {
+        id: "details-favorite",
+        rect: new DOMRect(100, 0, 80, 40),
+        navigation: {
+          left: "details-play",
+          right: "details-back",
+          down: "details-tab-activity",
+        },
+      },
+      {
+        id: "details-back",
+        rect: new DOMRect(200, 0, 80, 40),
+        navigation: { left: "details-favorite", down: "details-tab-activity" },
+      },
+      {
+        id: "details-tab-activity",
+        rect: new DOMRect(100, 100, 120, 40),
+        navigation: undefined,
+      },
+    ] as const;
+    for (const entry of actionIds) {
+      registry.register({
+        focusId: entry.id,
+        scopeId: "details",
+        element: addElement(entry.rect),
+        navigation: entry.navigation,
+      });
+    }
+    engine.registerScope({
+      scopeId: "details",
+      initialFocusId: "details-play",
+      activateOnMount: true,
+    });
+
+    expect(engine.dispatch("move-right")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-favorite");
+    expect(engine.dispatch("move-right")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-back");
+    expect(engine.dispatch("move-left")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-favorite");
+    expect(engine.dispatch("move-left")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-play");
+    expect(engine.dispatch("move-right")).toBe(true);
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-tab-activity");
+    engine.dispose();
+  });
+
+  it("updates gridIndex when a focusable is reused by a replacement result", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const register = (order: string[]) =>
+      order.map((focusId, index) =>
+        registry.register({
+          focusId,
+          scopeId: "artwork",
+          element: addElement(
+            new DOMRect((index % 4) * 100, Math.floor(index / 4) * 60, 80, 40),
+          ),
+          gridNavigation: {
+            groupId: "artwork-candidates",
+            columns: 4,
+            index,
+            itemCount: order.length,
+          },
+        }),
+      );
+    const firstOrder = [
+      "candidate-a",
+      "candidate-b",
+      "candidate-c",
+      "candidate-d",
+      "candidate-e",
+      "candidate-f",
+      "candidate-reused",
+      "candidate-h",
+    ];
+    const firstUnregisters = register(firstOrder);
+    engine.registerScope({
+      scopeId: "artwork",
+      initialFocusId: "candidate-reused",
+      activateOnMount: true,
+    });
+    expect(engine.getActiveFocusId()).toBe("candidate-reused");
+    firstUnregisters.forEach((unregister) => unregister());
+
+    const secondOrder = [
+      "candidate-a",
+      "candidate-b",
+      "candidate-reused",
+      "candidate-d",
+      "candidate-e",
+      "candidate-f",
+      "candidate-h",
+    ];
+    const secondUnregisters = register(secondOrder);
+    expect(engine.focus("candidate-reused")).toBe(true);
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("candidate-h");
+    expect(engine.dispatch("move-up")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("candidate-reused");
+    secondUnregisters.forEach((unregister) => unregister());
+    engine.dispose();
+  });
+
+  it("honors an explicit grid border override before grid resolution", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    registry.register({
+      focusId: "grid-0",
+      scopeId: "root",
+      element: addElement(new DOMRect(0, 0, 80, 40)),
+      gridNavigation: { groupId: "artwork-grid", columns: 4 },
+      navigation: { down: "panel-action" },
+    });
+    registry.register({
+      focusId: "grid-4",
+      scopeId: "root",
+      element: addElement(new DOMRect(0, 60, 80, 40)),
+      gridNavigation: { groupId: "artwork-grid", columns: 4 },
+    });
+    registry.register({
+      focusId: "panel-action",
+      scopeId: "root",
+      element: addElement(new DOMRect(500, 60, 80, 40)),
+    });
+    engine.registerScope({
+      scopeId: "root",
+      initialFocusId: "grid-0",
+      activateOnMount: true,
+    });
+
+    expect(engine.dispatch("move-down")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("panel-action");
   });
 
   it("requests an off-window grid index instead of falling back spatially", () => {
@@ -635,6 +1191,13 @@ describe("NavigationEngine", () => {
         restoreFocus: true,
       });
       expect(engine.getActiveFocusId()).toBe("details-play");
+      expect(
+        engine.requestScopeRestore(
+          "details",
+          "home",
+          `details-to-home-${rowIndex}`,
+        ),
+      ).toBe(false);
       engine.unregisterScope("details");
       expect(engine.getActiveFocusId()).toBe(opener);
       if (rowIndex < 2) {
@@ -643,6 +1206,182 @@ describe("NavigationEngine", () => {
       }
     }
   });
+
+  it("preserves row memory across an equivalent route restore", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    for (let rowIndex = 0; rowIndex < 3; rowIndex += 1) {
+      for (let itemIndex = 0; itemIndex < 5; itemIndex += 1) {
+        registry.register({
+          focusId: `home-${rowIndex}-${itemIndex}`,
+          scopeId: "home",
+          element: addElement(
+            new DOMRect(itemIndex * 100, rowIndex * 100, 80, 40),
+          ),
+          rowNavigation: {
+            groupId: "home-rows",
+            rowId: `home-row-${rowIndex}`,
+            rowIndex,
+            itemIndex,
+            preserveHorizontalIntent: true,
+          },
+        });
+      }
+    }
+    registry.register({
+      focusId: "details-play",
+      scopeId: "details",
+      element: addElement(new DOMRect()),
+    });
+    engine.registerScope({
+      scopeId: "home",
+      initialFocusId: "home-1-0",
+      activateOnMount: true,
+    });
+
+    const openAndClose = (opener: string) => {
+      expect(engine.focus(opener)).toBe(true);
+      engine.prepareScopeOpen("details", opener);
+      engine.registerScope({
+        scopeId: "details",
+        parentScopeId: "home",
+        initialFocusId: "details-play",
+        modal: true,
+        activateOnMount: true,
+        restoreFocus: true,
+      });
+      expect(engine.getActiveFocusId()).toBe("details-play");
+      expect(
+        engine.requestScopeRestore(
+          "details",
+          "home",
+          `details-to-home-${opener}`,
+        ),
+      ).toBe(false);
+      engine.unregisterScope("details");
+      expect(engine.getActiveFocusId()).toBe(opener);
+    };
+
+    openAndClose("home-1-1");
+    expect(engine.dispatch("move-up")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("home-0-1");
+
+    openAndClose("home-1-2");
+    expect(engine.dispatch("move-up")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("home-0-2");
+
+    const verticalResolution = engine
+      .getNavigationTrace()
+      .find(
+        (record) =>
+          record.event === "NAV_RESOLVE" &&
+          record.direction === "up" &&
+          record.fromFocusId === "home-1-2",
+      );
+    expect(verticalResolution).toMatchObject({
+      fromItemIndex: 2,
+      preferredItemIndexBefore: 2,
+      selectedFocusId: "home-0-2",
+      selectedItemIndex: 2,
+      resolutionStrategy: "row-memory-rejected",
+      memoryDecision: "rejected",
+      memoryRejectionReason: "generation-mismatch",
+    });
+  });
+
+  it.each(["gamepad", "mouse"] as const)(
+    "preserves the logical vertical result for %s selection across restore",
+    (inputSource) => {
+      const run = (
+        restore: boolean,
+        itemIndex: number,
+        direction: "up" | "down",
+      ) => {
+        resetStore();
+        const registry = new FocusRegistry();
+        const engine = new NavigationEngine(registry, new FocusScrollManager());
+        const prefix = `${inputSource}-${restore ? "restore" : "direct"}-${itemIndex}-${direction}`;
+        for (let rowIndex = 0; rowIndex < 3; rowIndex += 1) {
+          for (
+            let currentItemIndex = 0;
+            currentItemIndex < 5;
+            currentItemIndex += 1
+          ) {
+            registry.register({
+              focusId: `${prefix}-row-${rowIndex}-${currentItemIndex}`,
+              scopeId: `${prefix}-catalog`,
+              element: addElement(
+                new DOMRect(currentItemIndex * 100, rowIndex * 100, 80, 40),
+              ),
+              rowNavigation: {
+                groupId: `${prefix}-rows`,
+                rowId: `${prefix}-row-${rowIndex}`,
+                rowIndex,
+                itemIndex: currentItemIndex,
+                preserveHorizontalIntent: true,
+              },
+            });
+          }
+        }
+        registry.register({
+          focusId: `${prefix}-details-action`,
+          scopeId: `${prefix}-details`,
+          element: addElement(new DOMRect()),
+        });
+        const catalogScopeId = `${prefix}-catalog`;
+        const openerFocusId = `${prefix}-row-1-${itemIndex}`;
+        engine.registerScope({
+          scopeId: catalogScopeId,
+          initialFocusId: `${prefix}-row-1-0`,
+          activateOnMount: true,
+        });
+        if (inputSource === "gamepad") {
+          for (
+            let currentItemIndex = 0;
+            currentItemIndex < itemIndex;
+            currentItemIndex += 1
+          ) {
+            expect(engine.dispatch("move-right", "gamepad")).toBe(true);
+          }
+        } else {
+          expect(engine.focusFromPointer(openerFocusId)).toBe(true);
+        }
+        if (restore) {
+          engine.prepareScopeOpen(`${prefix}-details`, openerFocusId);
+          engine.registerScope({
+            scopeId: `${prefix}-details`,
+            parentScopeId: catalogScopeId,
+            initialFocusId: `${prefix}-details-action`,
+            modal: true,
+            activateOnMount: true,
+            restoreFocus: true,
+          });
+          expect(
+            engine.requestScopeRestore(
+              `${prefix}-details`,
+              catalogScopeId,
+              `${prefix}-details-to-catalog`,
+            ),
+          ).toBe(false);
+          engine.unregisterScope(`${prefix}-details`);
+        }
+        expect(engine.dispatch(`move-${direction}`, inputSource)).toBe(true);
+        const targetRowIndex = direction === "up" ? 0 : 2;
+        expect(engine.getActiveFocusId()).toBe(
+          `${prefix}-row-${targetRowIndex}-${itemIndex}`,
+        );
+        engine.dispose();
+      };
+
+      for (const itemIndex of [1, 2, 3, 4]) {
+        for (const direction of ["up", "down"] as const) {
+          run(false, itemIndex, direction);
+          run(true, itemIndex, direction);
+        }
+      }
+    },
+  );
 
   it("reproduces the missing Home tab bridge from every first-row card", () => {
     resetStore();

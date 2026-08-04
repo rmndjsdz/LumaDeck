@@ -48,7 +48,10 @@ export function createMockCatalog(): Game[] {
       platform: platforms[index % platforms.length],
       provider: providers[index % providers.length],
       coverUrl: createCover(index, title),
+      verticalCoverUrl: createCover(index, title),
+      logoUrl: createCover(index, title),
       backgroundUrl: createBackground(index),
+      screenshots: [],
       description: `${title} is a local LumaDeck catalog entry built for fast, reliable navigation.`,
       genres: [
         genres[index % genres.length],

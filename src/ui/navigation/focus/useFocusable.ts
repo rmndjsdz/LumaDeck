@@ -129,6 +129,12 @@ export function useFocusable<T extends HTMLElement = HTMLElement>(
     runtime.registry,
   ]);
 
+  useLayoutEffect(() => {
+    runtime.registry.update(options.focusId, {
+      navigation: options.navigation,
+    });
+  }, [options.focusId, options.navigation, runtime.registry]);
+
   return {
     ref,
     isActive,

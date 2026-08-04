@@ -4,6 +4,8 @@ export interface NavigationRegionConfig {
   childRegionId?: string;
   entryFocusId?: string;
   exitFocusId?: string;
+  gamepadParentRegionId?: string;
+  gamepadExitFocusId?: string;
 }
 
 export interface NavigationRegionEntry extends NavigationRegionConfig {

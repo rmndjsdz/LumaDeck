@@ -1,14 +1,610 @@
-import { useState } from "react";
-import type { Game } from "../catalog/game-types";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useMemo,
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import type {
+  Game,
+  HltbGameData,
+  SteamGameDetails,
+  SteamGameMetrics,
+} from "../catalog/game-types";
 import { useProductStore } from "../../stores/product-store";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import { FocusScope } from "../../ui/navigation/focus/FocusScope";
+import { useNavigation } from "../../ui/navigation/navigation-context";
+import {
+  NavigationTab,
+  NavigationTabs,
+} from "../../ui/navigation/layouts/NavigationTabs";
+import { providerSettingsService } from "../settings/provider-settings-service";
+import { SteamTrailer } from "./SteamTrailer";
+import { formatHltbDuration } from "./hltb-format";
+import { ArtworkModifierView } from "../artwork/ArtworkModifierView";
+import { ActivityView } from "../activity/ActivityView";
+import {
+  gameSessionService,
+  gameSessionErrorMessage,
+} from "../game-session/game-session-service";
+import { useGameSessionStore } from "../game-session/game-session-store";
+import {
+  displayProfileErrorMessage,
+  displayProfileService,
+  formatDisplayRefreshRate,
+  formatDisplayResolution,
+  type DisplayMode,
+  type DisplayProfile,
+} from "./display-profile-service";
+import {
+  frameGenerationErrorMessage,
+  frameGenerationLabel,
+  frameGenerationService,
+  type FrameGenerationProfile,
+} from "./frame-generation-service";
 
-export function DetailsView({ game }: { game: Game | undefined }) {
+export function DetailsView({
+  game,
+  onClose,
+}: {
+  game: Game | undefined;
+  onClose?: () => void;
+}) {
   const closeDetails = useProductStore((state) => state.closeDetails);
-  const [message, setMessage] = useState("Ready when you are.");
+  const queryClient = useQueryClient();
+  const { engine } = useNavigation();
+  const [message, setMessage] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [displayProfileMenu, setDisplayProfileMenu] = useState<
+    "root" | "profile" | "resolution" | "refresh" | "frame-generation"
+  >("root");
+  const [displayProfile, setDisplayProfile] = useState<DisplayProfile | null>(
+    null,
+  );
+  const [displayModes, setDisplayModes] = useState<DisplayMode[]>([]);
+  const [isSavingDisplayProfile, setIsSavingDisplayProfile] = useState(false);
+  const [frameGenerationProfile, setFrameGenerationProfile] =
+    useState<FrameGenerationProfile | null>(null);
+  const [isSavingFrameGeneration, setIsSavingFrameGeneration] = useState(false);
+  const [isRefreshingMetadata, setIsRefreshingMetadata] = useState(false);
+  const [isDownloadingMedia, setIsDownloadingMedia] = useState(false);
+  const [isUpdatingFavorite, setIsUpdatingFavorite] = useState(false);
+  const [artworkModifierOpen, setArtworkModifierOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<"summary" | "activity">(
+    "summary",
+  );
+  const artworkWasOpenRef = useRef(false);
+  const metricsRefreshTimerRef = useRef<number | null>(null);
+  const [liveMetrics, setLiveMetrics] = useState<SteamGameMetrics | null>(null);
+  const [isRefreshingMetrics, setIsRefreshingMetrics] = useState(false);
+  const handleClose = onClose ?? closeDetails;
+
+  const applyLiveMetrics = useCallback(
+    (metrics: SteamGameMetrics) => {
+      setLiveMetrics(metrics);
+      queryClient.setQueryData<Game[]>(["games"], (games) =>
+        games?.map((candidate) =>
+          candidate.id === game?.id
+            ? {
+                ...candidate,
+                playtimeMinutes: metrics.totalPlaytimeMinutes,
+                lastPlayedAt: metrics.lastPlayedAt,
+                progress: metrics.progress,
+                achievements:
+                  metrics.achievementTotal !== null ||
+                  metrics.achievementUnlocked !== null
+                    ? {
+                        total: metrics.achievementTotal,
+                        unlocked: metrics.achievementUnlocked,
+                        progress:
+                          metrics.achievementTotal &&
+                          metrics.achievementTotal > 0 &&
+                          metrics.achievementUnlocked !== null
+                            ? (metrics.achievementUnlocked /
+                                metrics.achievementTotal) *
+                              100
+                            : null,
+                      }
+                    : candidate.achievements,
+              }
+            : candidate,
+        ),
+      );
+    },
+    [game?.id, queryClient],
+  );
+
+  const loadLiveMetrics = useCallback(
+    async (showAnimation = false, refreshAchievements = false) => {
+      if (!game?.id) return;
+      if (metricsRefreshTimerRef.current !== null) {
+        window.clearTimeout(metricsRefreshTimerRef.current);
+        metricsRefreshTimerRef.current = null;
+      }
+      const startedAt = performance.now();
+      if (showAnimation) setIsRefreshingMetrics(true);
+      try {
+        const metrics = await providerSettingsService.refreshSteamGameMetrics(
+          game.id,
+        );
+        applyLiveMetrics(metrics);
+      } catch {
+        setLiveMetrics(null);
+      } finally {
+        if (refreshAchievements) {
+          try {
+            const metrics =
+              await providerSettingsService.refreshSteamGameAchievements(
+                game.id,
+              );
+            applyLiveMetrics(metrics);
+          } catch {
+            // Keep the metrics refresh useful when Steam achievements are unavailable.
+          }
+        }
+        if (showAnimation) {
+          const remaining = Math.max(0, 650 - (performance.now() - startedAt));
+          metricsRefreshTimerRef.current = window.setTimeout(() => {
+            metricsRefreshTimerRef.current = null;
+            setIsRefreshingMetrics(false);
+          }, remaining);
+        }
+      }
+    },
+    [applyLiveMetrics, game?.id],
+  );
+
+  useLayoutEffect(() => {
+    if (artworkModifierOpen) {
+      artworkWasOpenRef.current = true;
+      return;
+    }
+    if (!artworkWasOpenRef.current) return;
+    artworkWasOpenRef.current = false;
+    if (
+      engine.getActiveScopeId() === "details" &&
+      (engine.getActiveFocusId() === null ||
+        engine.getActiveFocusId() === "details-play")
+    ) {
+      engine.focus("details-back");
+    }
+  }, [artworkModifierOpen, engine]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+    setDisplayProfileMenu("root");
+    setDisplayProfile(null);
+    setDisplayModes([]);
+    setIsSavingDisplayProfile(false);
+    setFrameGenerationProfile(null);
+    setIsSavingFrameGeneration(false);
+    setIsRefreshingMetadata(false);
+    setIsDownloadingMedia(false);
+    setIsUpdatingFavorite(false);
+    setArtworkModifierOpen(false);
+    setActiveSection("summary");
+    setLiveMetrics(null);
+    setIsRefreshingMetrics(false);
+    setMessage("");
+  }, [game?.id]);
+
+  useEffect(() => {
+    if (!game?.id) return;
+    let disposed = false;
+    void Promise.all([
+      displayProfileService.getProfile(game.id),
+      displayProfileService.getModes(),
+      frameGenerationService.getProfile(game.id),
+    ])
+      .then(([profile, modes, frameProfile]) => {
+        if (disposed) return;
+        setDisplayProfile(profile);
+        setDisplayModes(modes);
+        setFrameGenerationProfile(frameProfile);
+      })
+      .catch((error: unknown) => {
+        if (!disposed) setMessage(displayProfileErrorMessage(error));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [game?.id]);
+
+  useEffect(() => {
+    void loadLiveMetrics();
+  }, [loadLiveMetrics]);
+
+  useEffect(() => {
+    if (!game?.id) return;
+    let sessionWasActive = false;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void gameSessionService
+      .subscribe((status) => {
+        if (disposed || status.gameId !== game.id) return;
+        if (
+          status.state === "preparing" ||
+          status.state === "launching" ||
+          status.state === "running" ||
+          status.state === "finishing"
+        ) {
+          sessionWasActive = true;
+          return;
+        }
+        if (status.state === "idle" && sessionWasActive) {
+          sessionWasActive = false;
+          void loadLiveMetrics(true, true);
+        }
+      })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+      if (metricsRefreshTimerRef.current !== null) {
+        window.clearTimeout(metricsRefreshTimerRef.current);
+        metricsRefreshTimerRef.current = null;
+      }
+    };
+  }, [game?.id, loadLiveMetrics]);
+
+  useEffect(() => {
+    if (menuOpen && displayProfileMenu === "root") {
+      engine.focus("details-display-profile");
+      return;
+    }
+    if (menuOpen && displayProfileMenu === "profile") {
+      engine.focus("details-display-mode");
+      return;
+    }
+    if (menuOpen && displayProfileMenu === "resolution") {
+      engine.focus("details-display-resolution-auto");
+      return;
+    }
+    if (menuOpen && displayProfileMenu === "refresh") {
+      const firstRefresh = displayModes
+        .filter(
+          (mode) =>
+            mode.width === displayProfile?.width &&
+            mode.height === displayProfile?.height,
+        )
+        .map((mode) => mode.refreshRate)
+        .sort((left, right) => left - right)[0];
+      if (firstRefresh) engine.focus(`details-display-refresh-${firstRefresh}`);
+      return;
+    }
+    if (menuOpen && displayProfileMenu === "frame-generation") {
+      engine.focus("details-frame-generation-off");
+      return;
+    }
+    if (!menuOpen && engine.getActiveFocusId() === "details-display-profile") {
+      engine.focus("details-back");
+    }
+  }, [
+    displayModes,
+    displayProfile?.height,
+    displayProfile?.width,
+    displayProfileMenu,
+    engine,
+    menuOpen,
+  ]);
+
+  const toggleMenu = () => {
+    if (!isRefreshingMetadata && !isDownloadingMedia) {
+      setMenuOpen((isOpen) => {
+        if (isOpen) setDisplayProfileMenu("root");
+        return !isOpen;
+      });
+    }
+  };
+
+  const saveProfile = async (next: DisplayProfile) => {
+    if (isSavingDisplayProfile) return;
+    setIsSavingDisplayProfile(true);
+    try {
+      const saved = await displayProfileService.saveProfile(next);
+      setDisplayProfile(saved);
+      setMessage("Perfil de pantalla guardado.");
+    } catch (error: unknown) {
+      setMessage(displayProfileErrorMessage(error));
+    } finally {
+      setIsSavingDisplayProfile(false);
+    }
+  };
+
+  const openDisplayProfile = () => {
+    if (!displayProfile) {
+      setMessage("Cargando los modos de pantalla disponibles...");
+      return;
+    }
+    setDisplayProfileMenu("profile");
+  };
+
+  const toggleDisplayProfileMode = async () => {
+    if (!displayProfile || isSavingDisplayProfile) return;
+    if (displayProfile.enabled) {
+      await saveProfile({
+        ...displayProfile,
+        enabled: false,
+        displayId: null,
+        deviceName: null,
+        width: null,
+        height: null,
+        refreshRate: null,
+      });
+      return;
+    }
+    const currentMode = await displayProfileService
+      .getCurrentMode()
+      .catch(() => null);
+    const fallbackMode = currentMode ?? displayModes[0];
+    if (!fallbackMode) {
+      setMessage("No hay modos de pantalla disponibles para elegir.");
+      return;
+    }
+    await saveProfile({
+      ...displayProfile,
+      enabled: true,
+      displayId: fallbackMode.displayId,
+      deviceName: fallbackMode.deviceName,
+      width: fallbackMode.width,
+      height: fallbackMode.height,
+      refreshRate: fallbackMode.refreshRate,
+      restoreOnExit: true,
+    });
+  };
+
+  const chooseDisplayResolution = async (mode: DisplayMode | null) => {
+    if (!displayProfile || !mode) return;
+    const matchingRefreshRates = displayModes
+      .filter(
+        (candidate) =>
+          candidate.width === mode.width && candidate.height === mode.height,
+      )
+      .map((candidate) => candidate.refreshRate);
+    const refreshRate = matchingRefreshRates.includes(
+      displayProfile.refreshRate ?? -1,
+    )
+      ? displayProfile.refreshRate
+      : (matchingRefreshRates[0] ?? mode.refreshRate);
+    await saveProfile({
+      ...displayProfile,
+      enabled: true,
+      displayId: mode.displayId,
+      deviceName: mode.deviceName,
+      width: mode.width,
+      height: mode.height,
+      refreshRate,
+    });
+    setDisplayProfileMenu("profile");
+  };
+
+  const chooseDisplayRefreshRate = async (refreshRate: number) => {
+    if (!displayProfile) return;
+    await saveProfile({ ...displayProfile, enabled: true, refreshRate });
+    setDisplayProfileMenu("profile");
+  };
+
+  const toggleRestoreOnExit = () => {
+    if (!displayProfile) return;
+    void saveProfile({
+      ...displayProfile,
+      restoreOnExit: !displayProfile.restoreOnExit,
+    });
+  };
+
+  const resetDisplayProfile = async () => {
+    if (!game || isSavingDisplayProfile) return;
+    setIsSavingDisplayProfile(true);
+    try {
+      await displayProfileService.resetProfile(game.id);
+      setDisplayProfile({
+        gameId: game.id,
+        enabled: false,
+        displayId: null,
+        deviceName: null,
+        width: null,
+        height: null,
+        refreshRate: null,
+        restoreOnExit: true,
+        updatedAt: null,
+      });
+      setDisplayProfileMenu("root");
+      setMessage("Perfil de pantalla restablecido a Auto.");
+    } catch (error: unknown) {
+      setMessage(displayProfileErrorMessage(error));
+    } finally {
+      setIsSavingDisplayProfile(false);
+    }
+  };
+
+  const chooseFrameGeneration = async (multiplier: 0 | 2 | 3 | 4) => {
+    if (!frameGenerationProfile || isSavingFrameGeneration) return;
+    const next: FrameGenerationProfile = {
+      ...frameGenerationProfile,
+      enabled: multiplier !== 0,
+      multiplier:
+        multiplier === 0 ? frameGenerationProfile.multiplier : multiplier,
+    };
+    setIsSavingFrameGeneration(true);
+    try {
+      const saved = await frameGenerationService.saveProfile(next);
+      setFrameGenerationProfile(saved);
+      setDisplayProfileMenu("profile");
+      setMessage(
+        saved.restartRequired
+          ? "Lossless Scaling debe reiniciarse antes del próximo lanzamiento."
+          : saved.enabled && !saved.targetExecutable
+            ? "Frame Generation preparado para el próximo lanzamiento; se detectará el ejecutable real."
+            : `Frame Generation: ${frameGenerationLabel(saved)}.`,
+      );
+    } catch (error: unknown) {
+      setMessage(frameGenerationErrorMessage(error));
+    } finally {
+      setIsSavingFrameGeneration(false);
+    }
+  };
+
+  const openArtworkModifier = () => {
+    if (!game || isRefreshingMetadata || isDownloadingMedia) return;
+    engine.prepareScopeOpen(
+      "artwork-modifier",
+      engine.getActiveFocusId() ?? "details-back",
+    );
+    setMenuOpen(false);
+    setArtworkModifierOpen(true);
+  };
+
+  const closeArtworkModifier = () => {
+    engine.requestScopeRestore(
+      "artwork-modifier",
+      "details",
+      `artwork-modifier-close-${game?.id ?? "unknown"}`,
+    );
+    engine.completePendingRestore("details", "details-back");
+    setArtworkModifierOpen(false);
+  };
+
+  const downloadMedia = async () => {
+    if (!game || isDownloadingMedia) return;
+    setIsDownloadingMedia(true);
+    setMessage("Descargando multimedia desde Steam…");
+    try {
+      const downloaded = await providerSettingsService.downloadSteamGameMedia(
+        game.id,
+      );
+      await queryClient.invalidateQueries({ queryKey: ["games"] });
+      setMenuOpen(false);
+      setMessage(`Multimedia descargado: ${downloaded} recursos.`);
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "Error desconocido";
+      setMessage(`No se pudo descargar el multimedia: ${detail}`);
+    } finally {
+      setIsDownloadingMedia(false);
+    }
+  };
+
+  const refreshMetadata = async () => {
+    if (!game || isRefreshingMetadata) return;
+    setIsRefreshingMetadata(true);
+    setMessage("Actualizando metadatos desde Steam…");
+    try {
+      await providerSettingsService.refreshSteamGameMetadata(game.id);
+      await queryClient.invalidateQueries({ queryKey: ["games"] });
+      setMenuOpen(false);
+      setMessage("Metadatos actualizados correctamente.");
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "Error desconocido";
+      setMessage(`No se pudieron actualizar los metadatos: ${detail}`);
+    } finally {
+      setIsRefreshingMetadata(false);
+    }
+  };
+
+  const toggleFavorite = async () => {
+    if (!game || isUpdatingFavorite) return;
+    const nextFavorite = !game.favorite;
+    setIsUpdatingFavorite(true);
+    try {
+      await providerSettingsService.setGameFavorite(game.id, nextFavorite);
+      await queryClient.invalidateQueries({ queryKey: ["games"] });
+      setMessage(
+        nextFavorite ? "Added to favorites." : "Removed from favorites.",
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown error";
+      setMessage(`Could not update favorite: ${detail}`);
+    } finally {
+      setIsUpdatingFavorite(false);
+    }
+  };
+
+  const launchGame = () => {
+    if (!game) return;
+    const steamAppId = game.details?.steam?.appId;
+    if (!steamAppId) {
+      setMessage("Este juego no tiene un Steam AppID disponible.");
+      return;
+    }
+    useGameSessionStore
+      .getState()
+      .setReturnFocusId(engine.getActiveFocusId() ?? "details-play");
+    void gameSessionService
+      .start(game.id, steamAppId)
+      .then((status) => useGameSessionStore.getState().applyStatus(status))
+      .catch((error: unknown) => setMessage(gameSessionErrorMessage(error)));
+  };
+
+  const selectDetailsSection = (focusId: string) => {
+    setActiveSection(
+      focusId === "details-tab-activity" ? "activity" : "summary",
+    );
+  };
+
+  const refreshModes = useMemo(
+    () =>
+      displayModes
+        .filter(
+          (mode) =>
+            mode.width === displayProfile?.width &&
+            mode.height === displayProfile?.height,
+        )
+        .map((mode) => mode.refreshRate)
+        .filter((rate, index, rates) => rates.indexOf(rate) === index)
+        .sort((left, right) => left - right),
+    [displayModes, displayProfile?.height, displayProfile?.width],
+  );
 
   if (!game) return <p className="empty-state">Game not found.</p>;
+
+  const steamDetails = game.details?.steam;
+  const playtimeMinutes =
+    liveMetrics?.totalPlaytimeMinutes ??
+    steamDetails?.totalPlaytimeMinutes ??
+    game.playtimeMinutes;
+  const lastPlayedAt =
+    liveMetrics?.lastPlayedAt ??
+    game.lastPlayedAt ??
+    steamDetails?.lastPlayedAt ??
+    null;
+  const primaryGenre =
+    game.genres[0] ?? steamDetails?.genres[0] ?? "Uncategorized";
+  const achievementUnlocked =
+    liveMetrics?.achievementUnlocked ??
+    game.achievements?.unlocked ??
+    steamDetails?.achievementUnlocked ??
+    null;
+  const achievementTotal =
+    liveMetrics?.achievementTotal ??
+    game.achievements?.total ??
+    steamDetails?.achievementTotal ??
+    null;
+  const screenshotUrls = (
+    game.screenshots.length > 0
+      ? game.screenshots
+      : (steamDetails?.screenshots ?? [])
+  ).slice(0, 6);
+  const summaryDescription = toPlainText(
+    steamDetails?.shortDescription ??
+      steamDetails?.description ??
+      game.description,
+  );
+  const features = getFeatureList(game, steamDetails);
+  const activeDetailsTabFocusId = `details-tab-${activeSection}`;
+  const resolutionModes = displayModes.filter(
+    (mode, index, modes) =>
+      modes.findIndex(
+        (candidate) =>
+          candidate.width === mode.width && candidate.height === mode.height,
+      ) === index,
+  );
 
   return (
     <FocusScope
@@ -21,7 +617,23 @@ export function DetailsView({ game }: { game: Game | undefined }) {
       modal
       activateOnMount
       onBack={() => {
-        closeDetails();
+        if (menuOpen) {
+          if (
+            displayProfileMenu === "resolution" ||
+            displayProfileMenu === "refresh" ||
+            displayProfileMenu === "frame-generation"
+          ) {
+            setDisplayProfileMenu("profile");
+            return true;
+          }
+          if (displayProfileMenu === "profile") {
+            setDisplayProfileMenu("root");
+            return true;
+          }
+          setMenuOpen(false);
+          return true;
+        }
+        handleClose();
         return true;
       }}
     >
@@ -29,57 +641,701 @@ export function DetailsView({ game }: { game: Game | undefined }) {
         className="product-page details-view"
         aria-labelledby="details-heading"
       >
-        <div className="details-hero">
-          <img src={game.coverUrl} alt="" className="details-cover" />
+        <div
+          className="details-hero"
+          style={{ backgroundImage: `url("${game.backgroundUrl}")` }}
+        >
+          <SteamTrailer
+            gameId={game.id}
+            title={game.title}
+            sourceUrls={steamDetails?.movies ?? []}
+            posterUrl={game.backgroundUrl}
+          />
           <div className="details-copy">
-            <p className="eyebrow">
-              {game.provider} · {game.platform}
-            </p>
-            <h1 id="details-heading">{game.title}</h1>
-            <p>{game.description}</p>
+            <h1
+              id="details-heading"
+              className={game.logoUrl ? "visually-hidden" : undefined}
+            >
+              {game.title}
+            </h1>
+            {game.logoUrl && (
+              <img
+                src={game.logoUrl}
+                alt={`${game.title} logo`}
+                className="details-logo"
+                draggable={false}
+              />
+            )}
             <div className="details-tags">
-              {game.genres.map((genre) => (
-                <span key={genre}>{genre}</span>
-              ))}
-              <span>{game.releaseYear}</span>
+              <span>{formatProgress(game.progress)}</span>
+              <span>{formatPlaytime(playtimeMinutes)}</span>
+              <span>{primaryGenre}</span>
+              <span>{game.provider}</span>
             </div>
             <div className="details-actions">
               <Focusable
                 focusId="details-play"
                 scopeId="details"
                 className="primary-button"
-                onConfirm={() =>
-                  setMessage("Play simulated — no process was launched.")
-                }
+                navigation={{
+                  right: "details-favorite",
+                  down: activeDetailsTabFocusId,
+                }}
+                onConfirm={launchGame}
               >
+                <span className="details-button-input" aria-hidden="true">
+                  A
+                </span>
                 {game.installed ? "Play" : "Add to library"}
               </Focusable>
               <Focusable
-                focusId="details-back"
+                focusId="details-favorite"
                 scopeId="details"
-                className="secondary-button"
-                onConfirm={closeDetails}
+                className="details-favorite-button"
+                navigation={{
+                  left: "details-play",
+                  right: "details-back",
+                  down: activeDetailsTabFocusId,
+                }}
+                ariaLabel={
+                  game.favorite ? "Remove from favorites" : "Add to favorites"
+                }
+                ariaPressed={game.favorite}
+                onConfirm={() => void toggleFavorite()}
               >
-                Back
+                <span aria-hidden="true">{game.favorite ? "♥" : "♡"}</span>
               </Focusable>
+              <div className="details-menu-anchor">
+                <Focusable
+                  focusId="details-back"
+                  scopeId="details"
+                  className="details-menu-button"
+                  navigation={{
+                    left: "details-favorite",
+                    down: activeDetailsTabFocusId,
+                  }}
+                  aria-label="More options"
+                  ariaHaspopup="menu"
+                  ariaExpanded={menuOpen}
+                  onConfirm={toggleMenu}
+                >
+                  <span aria-hidden="true">...</span>
+                </Focusable>
+                {menuOpen && (
+                  <div
+                    className="details-context-menu"
+                    role="menu"
+                    aria-label="Game options"
+                  >
+                    {displayProfileMenu === "root" && (
+                      <>
+                        <Focusable
+                          focusId="details-display-profile"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          navigation={{ down: "details-modify-artwork" }}
+                          disabled={isSavingDisplayProfile}
+                          onConfirm={openDisplayProfile}
+                        >
+                          <span>Display Profile</span>
+                          <span className="details-context-menu-value">
+                            {formatDisplayResolution(
+                              displayProfile?.width ?? null,
+                              displayProfile?.height ?? null,
+                            )}{" "}
+                            <span aria-hidden="true">›</span>
+                          </span>
+                        </Focusable>
+                        <Focusable
+                          focusId="details-modify-artwork"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          disabled={isRefreshingMetadata || isDownloadingMedia}
+                          onConfirm={openArtworkModifier}
+                        >
+                          Modificar arte
+                        </Focusable>
+                        <Focusable
+                          focusId="details-update-metadata"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          disabled={isRefreshingMetadata || isDownloadingMedia}
+                          onConfirm={() => void refreshMetadata()}
+                        >
+                          {isRefreshingMetadata
+                            ? "Actualizando metadatos…"
+                            : "Actualizar Metadatos"}
+                        </Focusable>
+                        <Focusable
+                          focusId="details-download-media"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          disabled={isRefreshingMetadata || isDownloadingMedia}
+                          onConfirm={() => void downloadMedia()}
+                        >
+                          {isDownloadingMedia
+                            ? "Descargando multimedia…"
+                            : "Descargar multimedia"}
+                        </Focusable>
+                      </>
+                    )}
+                    {displayProfileMenu === "profile" && displayProfile && (
+                      <>
+                        <Focusable
+                          focusId="details-display-mode"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          navigation={{ down: "details-display-resolution" }}
+                          disabled={isSavingDisplayProfile}
+                          onConfirm={() => void toggleDisplayProfileMode()}
+                        >
+                          <span>Mode</span>
+                          <span className="details-context-menu-value">
+                            {displayProfile.enabled ? "Custom" : "Auto"}
+                          </span>
+                        </Focusable>
+                        <Focusable
+                          focusId="details-display-resolution"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          navigation={{
+                            up: "details-display-mode",
+                            down: "details-display-refresh",
+                          }}
+                          disabled={
+                            !displayProfile.enabled || isSavingDisplayProfile
+                          }
+                          onConfirm={() => setDisplayProfileMenu("resolution")}
+                        >
+                          <span>Resolution</span>
+                          <span className="details-context-menu-value">
+                            {formatDisplayResolution(
+                              displayProfile.width,
+                              displayProfile.height,
+                            )}{" "}
+                            <span aria-hidden="true">›</span>
+                          </span>
+                        </Focusable>
+                        <Focusable
+                          focusId="details-display-refresh"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          navigation={{
+                            up: "details-display-resolution",
+                            down: "details-frame-generation",
+                          }}
+                          disabled={
+                            !displayProfile.enabled || isSavingDisplayProfile
+                          }
+                          onConfirm={() => setDisplayProfileMenu("refresh")}
+                        >
+                          <span>Refresh Rate</span>
+                          <span className="details-context-menu-value">
+                            {formatDisplayRefreshRate(
+                              displayProfile.refreshRate,
+                            )}{" "}
+                            <span aria-hidden="true">›</span>
+                          </span>
+                        </Focusable>
+                        <Focusable
+                          focusId="details-frame-generation"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          navigation={{
+                            up: "details-display-refresh",
+                            down: "details-display-restore",
+                          }}
+                          disabled={isSavingFrameGeneration}
+                          onConfirm={() =>
+                            setDisplayProfileMenu("frame-generation")
+                          }
+                        >
+                          <span>Frame Generation</span>
+                          <span className="details-context-menu-value">
+                            {frameGenerationLabel(frameGenerationProfile)}{" "}
+                            <span aria-hidden="true">›</span>
+                          </span>
+                        </Focusable>
+                        <Focusable
+                          focusId="details-display-restore"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          navigation={{
+                            up: "details-frame-generation",
+                            down: "details-display-reset",
+                          }}
+                          disabled={
+                            !displayProfile.enabled || isSavingDisplayProfile
+                          }
+                          onConfirm={toggleRestoreOnExit}
+                        >
+                          <span>Restore on Exit</span>
+                          <span className="details-context-menu-value">
+                            {displayProfile.restoreOnExit ? "On" : "Off"}
+                          </span>
+                        </Focusable>
+                        <Focusable
+                          focusId="details-display-reset"
+                          scopeId="details"
+                          className="details-context-menu-item details-context-menu-item-danger"
+                          role="menuitem"
+                          navigation={{ up: "details-display-restore" }}
+                          disabled={isSavingDisplayProfile}
+                          onConfirm={() => void resetDisplayProfile()}
+                        >
+                          Reset Profile
+                        </Focusable>
+                      </>
+                    )}
+                    {displayProfileMenu === "frame-generation" && (
+                      <>
+                        {([0, 2, 3, 4] as const).map((multiplier, index) => (
+                          <Focusable
+                            key={multiplier}
+                            focusId={
+                              multiplier === 0
+                                ? "details-frame-generation-off"
+                                : `details-frame-generation-${multiplier}`
+                            }
+                            scopeId="details"
+                            className="details-context-menu-item"
+                            role="menuitem"
+                            navigation={{
+                              up:
+                                index === 0
+                                  ? undefined
+                                  : multiplier === 2
+                                    ? "details-frame-generation-off"
+                                    : `details-frame-generation-${multiplier - 1}`,
+                              down:
+                                index === 3
+                                  ? undefined
+                                  : multiplier === 0
+                                    ? "details-frame-generation-2"
+                                    : `details-frame-generation-${multiplier + 1}`,
+                            }}
+                            disabled={isSavingFrameGeneration}
+                            onConfirm={() =>
+                              void chooseFrameGeneration(multiplier)
+                            }
+                          >
+                            {multiplier === 0
+                              ? "Off"
+                              : `LSFG ${multiplier}x${multiplier === 2 ? " (Recommended en NUC)" : ""}`}
+                          </Focusable>
+                        ))}
+                      </>
+                    )}
+                    {displayProfileMenu === "resolution" && (
+                      <>
+                        <Focusable
+                          focusId="details-display-resolution-auto"
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          onConfirm={() => {
+                            if (!displayProfile) return;
+                            void saveProfile({
+                              ...displayProfile,
+                              enabled: false,
+                              displayId: null,
+                              deviceName: null,
+                              width: null,
+                              height: null,
+                              refreshRate: null,
+                            });
+                            setDisplayProfileMenu("profile");
+                          }}
+                        >
+                          Auto / Desktop
+                        </Focusable>
+                        {resolutionModes.map((mode, index) => {
+                          const focusId =
+                            "details-display-resolution-" +
+                            mode.width +
+                            "x" +
+                            mode.height;
+                          const previous =
+                            index === 0
+                              ? "details-display-resolution-auto"
+                              : "details-display-resolution-" +
+                                resolutionModes[index - 1].width +
+                                "x" +
+                                resolutionModes[index - 1].height;
+                          const next =
+                            index === resolutionModes.length - 1
+                              ? undefined
+                              : "details-display-resolution-" +
+                                resolutionModes[index + 1].width +
+                                "x" +
+                                resolutionModes[index + 1].height;
+                          return (
+                            <Focusable
+                              key={focusId}
+                              focusId={focusId}
+                              scopeId="details"
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              navigation={{ up: previous, down: next }}
+                              onConfirm={() =>
+                                void chooseDisplayResolution(mode)
+                              }
+                            >
+                              {mode.width} × {mode.height}
+                            </Focusable>
+                          );
+                        })}
+                      </>
+                    )}
+                    {displayProfileMenu === "refresh" &&
+                      refreshModes.length === 0 && (
+                        <p className="details-context-menu-empty">
+                          No hay frecuencias disponibles.
+                        </p>
+                      )}
+                    {displayProfileMenu === "refresh" &&
+                      refreshModes.map((refreshRate, index) => (
+                        <Focusable
+                          key={refreshRate}
+                          focusId={"details-display-refresh-" + refreshRate}
+                          scopeId="details"
+                          className="details-context-menu-item"
+                          role="menuitem"
+                          navigation={{
+                            up:
+                              index > 0
+                                ? "details-display-refresh-" +
+                                  refreshModes[index - 1]
+                                : undefined,
+                            down:
+                              index < refreshModes.length - 1
+                                ? "details-display-refresh-" +
+                                  refreshModes[index + 1]
+                                : undefined,
+                          }}
+                          onConfirm={() =>
+                            void chooseDisplayRefreshRate(refreshRate)
+                          }
+                        >
+                          {refreshRate} Hz
+                        </Focusable>
+                      ))}
+                  </div>
+                )}
+              </div>
             </div>
-            <p className="details-message" aria-live="polite">
-              {message}
-            </p>
+            {message && (
+              <p className="details-message" aria-live="polite">
+                {message}
+              </p>
+            )}
+          </div>
+          <div
+            className={`details-metrics${
+              isRefreshingMetrics ? " is-refreshing" : ""
+            }`}
+            aria-busy={isRefreshingMetrics}
+            aria-label="Game statistics"
+          >
+            {isRefreshingMetrics && (
+              <span className="details-metrics-refresh-status" role="status">
+                Actualizando métricas…
+              </span>
+            )}
+            <DetailsMetric
+              icon="clock"
+              label="Time played"
+              value={formatPlaytime(playtimeMinutes)}
+            />
+            <DetailsMetric
+              icon="calendar"
+              label="Last played"
+              value={formatLastPlayed(lastPlayedAt)}
+            />
+            <HltbDetailsMetric data={game.details?.hltb} />
+            <DetailsMetric
+              icon="trophy"
+              label="Achievements"
+              value={`${achievementUnlocked ?? "-"} / ${achievementTotal ?? "-"}`}
+            />
+            <DetailsMetric
+              icon="players"
+              label="Active players"
+              value={
+                liveMetrics?.activePlayers === null ||
+                liveMetrics?.activePlayers === undefined
+                  ? "-"
+                  : formatCount(liveMetrics.activePlayers)
+              }
+            />
           </div>
         </div>
-        <div className="details-stats">
-          <span>
-            <strong>{game.progress}%</strong> progress
-          </span>
-          <span>
-            <strong>{game.playtimeMinutes}m</strong> played
-          </span>
-          <span>
-            <strong>{game.status}</strong> status
-          </span>
-        </div>
+        <NavigationTabs
+          groupId="details-sections"
+          className="details-tabs"
+          selectedId={`details-tab-${activeSection}`}
+          onSelect={selectDetailsSection}
+          ariaLabel="Game sections"
+        >
+          <NavigationTab
+            focusId="details-tab-summary"
+            scopeId="details"
+            className="details-tab"
+          >
+            Resumen
+          </NavigationTab>
+          <NavigationTab
+            focusId="details-tab-activity"
+            scopeId="details"
+            className="details-tab"
+          >
+            Actividad
+          </NavigationTab>
+          <button className="details-tab" type="button" role="tab" disabled>
+            Logros
+            <span className="details-tab-badge">
+              {achievementUnlocked ?? "-"} / {achievementTotal ?? "-"}
+            </span>
+          </button>
+          <button className="details-tab" type="button" role="tab" disabled>
+            Noticias
+          </button>
+          <button className="details-tab" type="button" role="tab" disabled>
+            DLC
+          </button>
+          <button className="details-tab" type="button" role="tab" disabled>
+            Relacionados
+          </button>
+          <button className="details-tab" type="button" role="tab" disabled>
+            Reseñas
+          </button>
+        </NavigationTabs>
+        {activeSection === "activity" ? (
+          <ActivityView game={game} />
+        ) : (
+          <section
+            className="details-summary"
+            aria-labelledby="details-summary-heading"
+          >
+            <div className="details-summary-copy">
+              <h2 id="details-summary-heading" className="visually-hidden">
+                Resumen
+              </h2>
+              <p className="details-summary-description">
+                {summaryDescription}
+              </p>
+              <h3>Características</h3>
+              <ul className="details-feature-list">
+                {features.map((feature) => (
+                  <li key={feature}>{feature}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="details-summary-screenshots">
+              <p className="eyebrow">Capturas de pantalla</p>
+              {screenshotUrls.length > 0 ? (
+                <div className="details-screenshot-grid">
+                  {screenshotUrls.map((screenshot, index) => (
+                    <img
+                      key={`${game.id}-screenshot-${index}`}
+                      src={screenshot}
+                      alt={`${game.title} screenshot ${index + 1}`}
+                      className="details-screenshot"
+                      loading="lazy"
+                      draggable={false}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="details-empty-media">No screenshots available.</p>
+              )}
+            </div>
+          </section>
+        )}
       </section>
+      {artworkModifierOpen && (
+        <ArtworkModifierView game={game} onClose={closeArtworkModifier} />
+      )}
     </FocusScope>
   );
+}
+
+type DetailsMetricIconName =
+  "clock" | "calendar" | "chart" | "trophy" | "players";
+
+function DetailsMetric({
+  icon,
+  label,
+  value,
+}: {
+  icon: DetailsMetricIconName;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="details-metric">
+      <DetailsMetricIcon name={icon} />
+      <span className="details-metric-label">{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function HltbDetailsMetric({ data }: { data: HltbGameData | undefined }) {
+  const hasData = data?.status === "matched" && data.mainStoryMinutes !== null;
+  return (
+    <div className="details-metric details-metric-hltb">
+      <DetailsMetricIcon name="chart" />
+      <span className="details-metric-label">HowLongToBeat</span>
+      <strong>
+        {hasData ? formatDuration(data.mainStoryMinutes) : "Sin datos"}
+      </strong>
+    </div>
+  );
+}
+
+function DetailsMetricIcon({ name }: { name: DetailsMetricIconName }) {
+  const commonProps = {
+    className: "details-metric-icon",
+    fill: "none",
+    stroke: "currentColor",
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    strokeWidth: 2,
+    viewBox: "0 0 24 24",
+    "aria-hidden": true,
+  };
+
+  return (
+    <svg {...commonProps}>
+      {name === "clock" && (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </>
+      )}
+      {name === "calendar" && (
+        <>
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M16 3v4M8 3v4M3 10h18" />
+          <path d="m9 15 2 2 4-4" />
+        </>
+      )}
+      {name === "chart" && (
+        <>
+          <path d="M4 20V10M10 20V4M16 20v-7M3 20h18" />
+          <path d="m5 8 5-4 6 5 4-5" />
+        </>
+      )}
+      {name === "trophy" && (
+        <>
+          <path d="M8 4h8v4a4 4 0 0 1-8 0V4Z" />
+          <path d="M8 6H5a3 3 0 0 0 3 3M16 6h3a3 3 0 0 1-3 3M12 12v4M8 20h8M10 16h4" />
+        </>
+      )}
+      {name === "players" && (
+        <>
+          <circle cx="9" cy="8" r="3" />
+          <path d="M3 19c0-3 2.5-5 6-5s6 2 6 5" />
+          <path d="M16 6.5a2.5 2.5 0 0 1 0 5M18 14c2 .6 3 2 3 4" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+function formatProgress(progress: number): string {
+  return `${Math.round(progress)}%`;
+}
+
+function formatPlaytime(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours === 0) return `${remainingMinutes}m`;
+  return remainingMinutes === 0
+    ? `${hours}h`
+    : `${hours}h ${remainingMinutes}m`;
+}
+
+const formatDuration = formatHltbDuration;
+
+function formatCount(value: number): string {
+  return new Intl.NumberFormat("en-US", { notation: "compact" }).format(value);
+}
+
+function formatLastPlayed(value: string | null): string {
+  if (!value) return "Never";
+  const date = parseSteamDate(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const elapsedDays = Math.max(
+    0,
+    Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24)),
+  );
+  if (elapsedDays === 0) return "Today";
+  return `${elapsedDays} days`;
+}
+
+function parseSteamDate(value: string): Date {
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    return new Date(
+      numericValue < 100_000_000_000 ? numericValue * 1000 : numericValue,
+    );
+  }
+  return new Date(value);
+}
+
+function toPlainText(value: string): string {
+  return value
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function getFeatureList(
+  game: Game,
+  steamDetails: SteamGameDetails | undefined,
+): string[] {
+  const features = [
+    steamDetails?.singlePlayer ? "Experiencia para un jugador" : null,
+    steamDetails?.multiplayer ? "Multijugador" : null,
+    steamDetails?.cloud ? "Guardado en la nube" : null,
+    steamDetails?.tradingCards ? "Cartas coleccionables" : null,
+    steamDetails?.workshop ? "Contenido del Steam Workshop" : null,
+    ...(steamDetails?.categories ?? []).map(translateSteamFeature),
+  ].filter((feature): feature is string => Boolean(feature));
+
+  const uniqueFeatures = [...new Set(features)];
+  if (uniqueFeatures.length > 0) return uniqueFeatures.slice(0, 5);
+  return game.genres.slice(0, 4).map((genre) => `Género: ${genre}`);
+}
+
+function translateSteamFeature(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  const translations: Record<string, string> = {
+    "single-player": "Experiencia para un jugador",
+    multiplayer: "Multijugador",
+    "steam achievements": "Logros de Steam",
+    "full controller support": "Compatibilidad con mando",
+    "partial controller support": "Compatibilidad parcial con mando",
+    "steam cloud": "Guardado en la nube",
+    "steam trading cards": "Cartas coleccionables",
+    "steam workshop": "Contenido del Steam Workshop",
+  };
+  return translations[normalized] ?? value;
 }

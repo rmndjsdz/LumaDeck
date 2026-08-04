@@ -4,6 +4,7 @@ import {
 } from "../core/navigation-actions";
 import type { NavigationAction } from "../core/navigation-types";
 import { DirectionRepeatController } from "./direction-repeat-controller";
+import { navigationRuntimeTrace } from "../debug/navigation-runtime-trace";
 
 export const KEYBOARD_ACTION_MAP: Readonly<Record<string, NavigationAction>> = {
   ArrowUp: "move-up",
@@ -19,10 +20,10 @@ export const KEYBOARD_ACTION_MAP: Readonly<Record<string, NavigationAction>> = {
   d: "move-right",
   D: "move-right",
   Enter: "confirm",
-  " ": "confirm",
-  Space: "confirm",
+  " ": "insert-space",
+  Space: "insert-space",
   Escape: "back",
-  Backspace: "back",
+  Backspace: "delete-character",
   PageUp: "page-previous",
   PageDown: "page-next",
 };
@@ -42,6 +43,8 @@ interface KeyboardAdapterOptions {
   onTab?: (shiftKey: boolean) => boolean;
   onInputMode: () => void;
   repeatController: DirectionRepeatController;
+  isInputBlocked?: () => boolean;
+  getInputBlockReason?: () => string | null;
   target?: Window;
 }
 
@@ -51,6 +54,8 @@ export class KeyboardAdapter {
   private readonly onTab?: (shiftKey: boolean) => boolean;
   private readonly onInputMode: () => void;
   private readonly repeatController: DirectionRepeatController;
+  private readonly isInputBlocked: () => boolean;
+  private readonly getInputBlockReason: () => string | null;
   private activeKey: string | null = null;
 
   public constructor(options: KeyboardAdapterOptions) {
@@ -60,9 +65,14 @@ export class KeyboardAdapter {
     this.onTab = options.onTab;
     this.onInputMode = options.onInputMode;
     this.repeatController = options.repeatController;
+    this.isInputBlocked = options.isInputBlocked ?? (() => false);
+    this.getInputBlockReason = options.getInputBlockReason ?? (() => null);
   }
 
   public start(): void {
+    navigationRuntimeTrace.record("KEYBOARD_ADAPTER_STARTED", {
+      details: { target: "window" },
+    });
     this.target?.addEventListener("keydown", this.handleKeyDown);
     this.target?.addEventListener("keyup", this.handleKeyUp);
     this.target?.addEventListener("blur", this.handleBlur);
@@ -73,6 +83,9 @@ export class KeyboardAdapter {
     this.target?.removeEventListener("keyup", this.handleKeyUp);
     this.target?.removeEventListener("blur", this.handleBlur);
     this.handleBlur();
+    navigationRuntimeTrace.record("KEYBOARD_ADAPTER_STOPPED", {
+      details: { target: "window" },
+    });
   }
 
   public dispose(): void {
@@ -80,8 +93,20 @@ export class KeyboardAdapter {
   }
 
   public handleKeyDown = (event: KeyboardEvent): void => {
-    if (isEditableTarget(event.target)) return;
+    const editableTarget = isEditableTarget(event.target);
+    if (editableTarget) {
+      if (event.key.startsWith("Arrow")) {
+        navigationRuntimeTrace.record("INPUT_DISCARDED", {
+          details: { reason: "editable-target", key: event.key },
+        });
+      }
+      return;
+    }
     if (event.key === "Tab") {
+      if (this.isInputBlocked()) {
+        event.preventDefault();
+        return;
+      }
       if (this.onTab?.(event.shiftKey)) {
         this.onInputMode();
         event.preventDefault();
@@ -89,10 +114,42 @@ export class KeyboardAdapter {
       return;
     }
     const action = KEYBOARD_ACTION_MAP[event.key];
-    if (!action || event.repeat) return;
+    if (!action) return;
+    navigationRuntimeTrace.record("KEYBOARD_INTENT_CREATED", {
+      inputSource: "keyboard",
+      details: {
+        key: event.key,
+        action,
+        repeat: event.repeat,
+        targetTag:
+          event.target instanceof HTMLElement
+            ? event.target.tagName.toLowerCase()
+            : null,
+      },
+    });
+    if (this.isInputBlocked()) {
+      event.preventDefault();
+      navigationRuntimeTrace.record("INPUT_DISCARDED", {
+        inputSource: "keyboard",
+        details: {
+          reason: this.getInputBlockReason() ?? "input-blocked",
+          key: event.key,
+          action,
+        },
+      });
+      this.handleBlur();
+      return;
+    }
+    if (event.repeat) {
+      navigationRuntimeTrace.record("INPUT_DISCARDED", {
+        inputSource: "keyboard",
+        details: { reason: "event-repeat", key: event.key, action },
+      });
+      return;
+    }
     this.onInputMode();
     event.preventDefault();
-    this.onAction(action);
+    this.onAction(event.key === "Enter" ? "accept-text" : action);
 
     const direction = ACTION_TO_DIRECTION[action];
     if (direction) {

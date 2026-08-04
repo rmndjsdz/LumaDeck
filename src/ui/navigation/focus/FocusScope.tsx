@@ -7,7 +7,10 @@ import {
 
 import { useNavigation } from "../navigation-context";
 import { useNavigationStore } from "../../../stores/navigation-store";
-import type { ScopeRegistration } from "../core/navigation-types";
+import type {
+  ScopeActionHandler,
+  ScopeRegistration,
+} from "../core/navigation-types";
 import { FocusScopeContext } from "./focus-scope-context";
 
 export interface FocusScopeProps extends PropsWithChildren {
@@ -20,6 +23,7 @@ export interface FocusScopeProps extends PropsWithChildren {
   modal?: boolean;
   activateOnMount?: boolean;
   onBack?: () => boolean | void;
+  onAction?: ScopeActionHandler;
   className?: string;
   style?: CSSProperties;
 }
@@ -34,6 +38,7 @@ export function FocusScope({
   modal = false,
   activateOnMount = false,
   onBack,
+  onAction,
   className,
   style,
   children,
@@ -50,6 +55,7 @@ export function FocusScope({
     modal,
     activateOnMount,
     onBack,
+    onAction,
   });
   optionsRef.current = {
     scopeId,
@@ -61,12 +67,15 @@ export function FocusScope({
     modal,
     activateOnMount,
     onBack,
+    onAction,
   };
 
   useLayoutEffect(() => {
     return engine.registerScope({
       ...optionsRef.current,
       onBack: () => optionsRef.current.onBack?.(),
+      onAction: (action, inputSource) =>
+        optionsRef.current.onAction?.(action, inputSource),
     });
   }, [engine, scopeId]);
 

@@ -9,14 +9,50 @@ export type NavigationAction =
   | "back"
   | "menu"
   | "page-next"
-  | "page-previous";
+  | "page-previous"
+  | "previous-primary-screen"
+  | "next-primary-screen"
+  | "delete-character"
+  | "insert-space"
+  | "toggle-caps-lock"
+  | "shift-release"
+  | "accept-text";
 
 export type NavigationDirection = "up" | "down" | "left" | "right";
 
 export type InputMode = "mouse" | "keyboard" | "gamepad";
 
+export type InputSource = InputMode | "programmatic";
+
+export type ScopeActionHandler = (
+  action: NavigationAction,
+  inputSource: InputSource,
+) => boolean | void;
+
+export type FocusReason =
+  | "directional-navigation"
+  | "pointer-selection"
+  | "route-restore"
+  | "initial-focus"
+  | "region-fallback"
+  | "dom-focus-sync";
+
+export interface NavigationContext {
+  generationId: number;
+  scopeId: string;
+  regionId?: string;
+  rowId?: string;
+  focusId: string;
+  itemIndex?: number;
+  preferredItemIndex?: number;
+  horizontalCenter?: number;
+}
+
 export type NavigationPhase =
   "idle" | "navigating" | "fast-navigating" | "settling";
+
+export type PrimaryNavigationBlockReason =
+  "modal" | "transition-pending" | "restoration-pending";
 
 export type ScopeLifecycleState =
   | "mounting"
@@ -99,6 +135,7 @@ export interface ScopeRegistration {
   modal?: boolean;
   activateOnMount?: boolean;
   onBack?: () => boolean | void;
+  onAction?: ScopeActionHandler;
 }
 
 export interface SpatialCandidate {

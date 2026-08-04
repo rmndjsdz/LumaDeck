@@ -18,6 +18,8 @@ describe("motion tokens", () => {
     expect(motionTokens.duration.viewExit).toBeLessThan(
       motionTokens.duration.viewEnter,
     );
+    expect(motionTokens.duration.cardSpring).toBeGreaterThanOrEqual(212);
+    expect(motionTokens.duration.cardSpring).toBeLessThanOrEqual(280);
   });
 
   it("uses separate enter, exit, standard and focus curves", () => {
@@ -25,5 +27,14 @@ describe("motion tokens", () => {
     expect(motionTokens.easing.enter).toBe("cubic-bezier(0.16, 1, 0.3, 1)");
     expect(motionTokens.easing.exit).toBe("cubic-bezier(0.4, 0, 1, 1)");
     expect(motionTokens.easing.focus).toBe("cubic-bezier(0.18, 0.9, 0.25, 1)");
+  });
+
+  it("uses an overshoot spring curve for selection feedback", () => {
+    expect(motionTokens.easing.spring).toBe(
+      "cubic-bezier(0.34, 1.56, 0.64, 1)",
+    );
+    // A spring/overshoot curve must exceed 1 on the y-axis control points;
+    // that's what produces the settle-past-target bounce.
+    expect(motionTokens.easing.spring).toMatch(/1\.\d+/);
   });
 });

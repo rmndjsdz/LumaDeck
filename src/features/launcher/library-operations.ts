@@ -1,6 +1,7 @@
 import type { Game, GameStatus } from "../catalog/game-types";
+import type { LibrarySort } from "../../stores/library-store";
 
-export type LibrarySort = "title" | "recent" | "time";
+export type { LibrarySort } from "../../stores/library-store";
 
 export function filterAndSortGames(
   games: readonly Game[],

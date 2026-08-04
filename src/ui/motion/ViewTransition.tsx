@@ -6,6 +6,7 @@ import {
   measurePerformance,
 } from "../performance/performance-marks";
 import { motionTokens } from "./motion-tokens";
+import { navigationRuntimeTrace } from "../navigation/debug/navigation-runtime-trace";
 
 export function ViewTransition({
   view,
@@ -26,10 +27,20 @@ export function ViewTransition({
         } as CSSProperties
       }
       onAnimationStart={() => {
+        navigationRuntimeTrace.record("animation", {
+          animationState: "running",
+          transitionState: "running",
+          details: { phase: "start", view },
+        });
         markPerformance("view-active");
         setTransitionActive({ transitionActive: true });
       }}
       onAnimationEnd={() => {
+        navigationRuntimeTrace.record("animation", {
+          animationState: "idle",
+          transitionState: "idle",
+          details: { phase: "end", view },
+        });
         markPerformance("view-active");
         measurePerformance("view-transition", "view-requested", "view-active");
         setTransitionActive({ transitionActive: false });

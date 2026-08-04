@@ -19,6 +19,8 @@ interface NavigationGridProps extends NavigationLayoutProps {
   parentRegionId?: string;
   entryFocusId?: string;
   exitFocusId?: string;
+  gamepadParentRegionId?: string;
+  gamepadExitFocusId?: string;
   style?: CSSProperties;
 }
 
@@ -37,6 +39,8 @@ export function NavigationGrid({
   parentRegionId,
   entryFocusId,
   exitFocusId,
+  gamepadParentRegionId,
+  gamepadExitFocusId,
   style,
   children,
 }: NavigationGridProps) {
@@ -61,8 +65,24 @@ export function NavigationGrid({
   );
   const regionValue = useMemo<NavigationRegionConfig | null>(
     () =>
-      regionId ? { regionId, parentRegionId, entryFocusId, exitFocusId } : null,
-    [entryFocusId, exitFocusId, parentRegionId, regionId],
+      regionId
+        ? {
+            regionId,
+            parentRegionId,
+            entryFocusId,
+            exitFocusId,
+            gamepadParentRegionId,
+            gamepadExitFocusId,
+          }
+        : null,
+    [
+      entryFocusId,
+      exitFocusId,
+      gamepadExitFocusId,
+      gamepadParentRegionId,
+      parentRegionId,
+      regionId,
+    ],
   );
   const content = (
     <NavigationRegionContext.Provider value={regionValue}>

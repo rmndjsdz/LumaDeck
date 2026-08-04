@@ -13,12 +13,19 @@
     "windows": [
       {
         "title": "LumaDeck",
-        "width": 800,
-        "height": 600
+        "width": 3840,
+        "height": 2160,
+        "fullscreen": true,
+        "decorations": false,
+        "resizable": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**", "$RESOURCE/**", "$RESOURCE/../data/**"]
+      }
     }
   },
   "bundle": {

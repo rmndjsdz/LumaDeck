@@ -107,14 +107,43 @@ describe("row navigation model", () => {
   it("restores a row's last focus only after explicit restoration", () => {
     const coordinator = new NavigationRowCoordinator();
     const rows = [registration(0, 1), registration(1, 0), registration(1, 3)];
-    coordinator.recordFocus(rows[2]!);
+    coordinator.recordFocus(rows[2]!, { generationId: 7 });
     coordinator.recordFocus(rows[0]!);
-    coordinator.recordFocus(rows[0]!, { restored: true });
+    coordinator.recordFocus(rows[0]!, { restored: true, generationId: 7 });
 
-    const target = coordinator.resolveVertical("home", rows[0]!, "down", rows);
+    const target = coordinator.resolveVertical(
+      "home",
+      rows[0]!,
+      "down",
+      rows,
+      undefined,
+      7,
+    );
 
     expect(target.item?.itemIndex).toBe(3);
     expect(target.strategy).toBe("last-restored");
+    expect(target.memoryDecision).toBe("accepted");
+    expect(target.memoryGenerationId).toBe(7);
+  });
+
+  it("rejects a remembered target from a previous navigation generation", () => {
+    const state: HomeNavigationState = {
+      activeRowIndex: 1,
+      activeItemIndex: 2,
+      preferredItemIndex: 2,
+    };
+    const target = getVerticalTarget(
+      [item(0, 1), item(0, 2)],
+      state,
+      "row-0-1",
+      { focusId: "row-0-1", itemIndex: 1, generationId: 3 },
+      4,
+    );
+
+    expect(target.item?.itemIndex).toBe(2);
+    expect(target.strategy).toBe("same-index");
+    expect(target.memoryDecision).toBe("rejected");
+    expect(target.memoryRejectionReason).toBe("generation-mismatch");
   });
 
   it("uses the nearest center as a deterministic secondary policy", () => {

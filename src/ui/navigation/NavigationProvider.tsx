@@ -6,6 +6,8 @@ import { NavigationEngine } from "./core/navigation-engine";
 import { InputManager } from "./input/input-manager";
 import { FocusScrollManager } from "./scroll/focus-scroll-manager";
 import { NavigationContext } from "./navigation-context";
+import { VirtualKeyboardProvider } from "../keyboard/VirtualKeyboardProvider";
+import { navigationRuntimeTrace } from "./debug/navigation-runtime-trace";
 
 export interface NavigationRuntime {
   registry: FocusRegistry;
@@ -19,6 +21,7 @@ export function NavigationProvider({ children }: PropsWithChildren) {
     const registry = new FocusRegistry();
     const scrollManager = new FocusScrollManager();
     const engine = new NavigationEngine(registry, scrollManager);
+    navigationRuntimeTrace.attach({ registry, engine });
     return {
       registry,
       engine,
@@ -29,6 +32,7 @@ export function NavigationProvider({ children }: PropsWithChildren) {
   const inputMode = useNavigationStore((state) => state.inputMode);
 
   useEffect(() => {
+    const stopRuntimeTrace = navigationRuntimeTrace.startObservers();
     runtime.inputManager.start();
     const invalidate = () => runtime.registry.invalidateAll();
     window.addEventListener("resize", invalidate);
@@ -44,6 +48,7 @@ export function NavigationProvider({ children }: PropsWithChildren) {
       duplicateFocusIds: runtime.registry.getDuplicateIds(),
     });
     return () => {
+      stopRuntimeTrace();
       unsubscribe();
       window.removeEventListener("resize", invalidate);
       window.removeEventListener("scroll", invalidate, true);
@@ -64,7 +69,7 @@ export function NavigationProvider({ children }: PropsWithChildren) {
   return (
     <NavigationContext.Provider value={runtime}>
       <div className="navigation-root" data-input-mode={inputMode}>
-        {children}
+        <VirtualKeyboardProvider>{children}</VirtualKeyboardProvider>
       </div>
     </NavigationContext.Provider>
   );

@@ -19,6 +19,70 @@ mouse / keyboard / gamepad
   DOM focus + callbacks
 ```
 
+## Screen Adapter V1
+
+Screen Adapter V1 es una capa declarativa opt-in entre una pantalla y las APIs
+de navegación existentes. Home es la primera pantalla migrada; Library y
+Details continúan usando temporalmente el flujo legacy para permitir una
+migración incremental sin cambiar su comportamiento.
+
+La regla de ownership es explícita:
+
+```text
+Pantalla declara estructura e intención.
+Screen Adapter traduce la declaración.
+ProductShell controla la route.
+Navigation Engine controla contexto, resolución, restore y foco.
+FocusRegistry controla disponibilidad.
+```
+
+El `NavigationScreenDefinition` V1 soporta únicamente:
+
+- identidad de pantalla y route;
+- root scope y parent scope opcional;
+- foco inicial;
+- regiones y relaciones padre/hijo;
+- grupos de filas e índices lógicos declarados por la pantalla;
+- política de restauración existente;
+- activación opt-in.
+
+`ScreenNavigationAdapter` traduce esa definición hacia `FocusScope` y la
+notificación de route activa del `NavigationEngine`. No mantiene una copia
+autoritativa de `NavigationContext`, no calcula vecinos, no resuelve
+direcciones, no accede a coordenadas DOM y no crea generaciones, restores ni
+transacciones propias. El Engine sigue siendo el dueño de contexto,
+resolución, restauración, foco, sincronización DOM y trazas; `FocusRegistry`
+solo informa qué focusables están disponibles.
+
+En Home, la definición declara `product-shell`, `main-nav-home`, la región
+`home-content` y el grupo `home-rows`. Home continúa construyendo y ordenando
+los datos, filtrando juegos, asignando `rowId`, `rowIndex` e `itemIndex`, y
+abriendo Details mediante la acción existente.
+
+ProductShell conserva temporalmente el control de la route, la coordinación
+de navegación principal, la preparación de apertura de Details y la solicitud
+de restauración al cerrar Details. Library permanece sin migrar y Details
+continúa siendo un scope legacy compatible con el adapter de Home. El campo
+`ProductStore.returnFocusId` también permanece temporalmente para mantener la
+compatibilidad del flujo actual.
+
+Queda fuera de V1:
+
+- una abstracción genérica de virtualización;
+- un framework declarativo de acciones;
+- un framework completo de transiciones;
+- la migración de Details o Library;
+- la eliminación de `returnFocusId`;
+- la eliminación de las APIs actuales del Engine;
+- la obligación de usar el contrato en todas las pantallas.
+
+Una futura pantalla puede migrarse cuando su estructura pueda expresarse con
+el contrato V1, sus callbacks de dominio permanezcan fuera del adaptador y la
+paridad de foco, restore, navegación direccional, mouse y gamepad pueda
+demostrarse con pruebas y validación manual. La migración debe seguir siendo
+opt-in y convivir con las pantallas legacy hasta que exista evidencia de
+paridad.
+
 Zustand conserva `inputMode`, scopes/foco activos, foco anterior, última acción,
 fase de navegación y métricas pequeñas. `FocusRegistry` mantiene nodos,
 scope, vecinos y rectángulos cacheados de forma imperativa.
@@ -74,6 +138,69 @@ tras 128 ms. El input y el foco lógico no esperan a esta política.
 `navigating`/`fast-navigating`. Así no inicia un crossfade por cada tarjeta
 atravesada. Al estabilizarse precarga/decodifica el destino final y descarta
 solicitudes obsoletas mediante `requestId`.
+
+## Continuidad del contexto de navegacion
+
+### Contexto canonico
+
+`NavigationContext` pertenece al `NavigationEngine`. Los componentes y las
+pantallas pueden solicitar acciones, registrar focusables y declarar scopes,
+pero no mantienen copias autoritativas del contexto. `activeFocusId`,
+`itemIndex`, `preferredItemIndex`, region, fila y generacion deben permanecer
+coherentes dentro del Engine.
+
+### Memoria de fila ligada a generacion
+
+La memoria de una fila pertenece a una generacion. El Engine rechaza
+explicitamente memoria stale de una generacion anterior antes de resolver una
+navegacion vertical; una memoria de la generacion actual puede conservar una
+posicion previamente visitada cuando sigue siendo valida.
+
+### Restauracion de ruta
+
+Una restauracion explicita pertenece a una transicion semantica e idempotente.
+Debe producir exactamente un `CONTEXT_RESTORE_COMMIT`. Los ciclos de montaje y
+desmontaje, incluido `React.StrictMode`, no cambian el resultado logico.
+`scope-unregister` y el registro de focusables solo informan lifecycle y
+disponibilidad; no crean restauraciones competidoras ni generaciones paralelas.
+
+Si el target aun no esta materializado, el restore queda pendiente y espera al
+registro valido sin ejecutar un fallback prematuro. No se usan timeouts
+arbitrarios como mecanismo de sincronizacion.
+
+### Invariante de continuidad
+
+La navegacion despues de volver de una vista secundaria debe ser equivalente a
+la navegacion sin abandonar el scope:
+
+```text
+navigate(context, direction)
+===
+navigate(restore(save(context)), direction)
+```
+
+### Convergencia de input
+
+Mouse, teclado y gamepad son fuentes distintas de entrada, pero convergen en
+el mismo contexto logico antes de ejecutar la resolucion direccional. No hay
+algoritmos de navegacion separados por dispositivo.
+
+## Estados de entrega
+
+Las tareas de navegacion pueden pasar por estos estados:
+
+```text
+IMPLEMENTED
+AUTOMATED VERIFICATION PASSED
+READY FOR PRODUCT QA
+ACCEPTED
+```
+
+`ACCEPTED` requiere la validacion funcional del Product Owner; no se deriva
+unicamente de unit tests, integracion, build o lint.
+
+Screen Adapter V1 y la migración de Home alcanzaron ese estado después de la
+validación manual en la aplicación real, incluida la paridad con gamepad.
 
 ## Transiciones de vista
 

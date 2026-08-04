@@ -1,6 +1,9 @@
+import { useState } from "react";
 import { useNavigationStore } from "../../../stores/navigation-store";
+import { navigationRuntimeTrace } from "./navigation-runtime-trace";
 
 export function NavigationDebugOverlay() {
+  const [traceStatus, setTraceStatus] = useState("ready");
   const inputMode = useNavigationStore((state) => state.inputMode);
   const navigationPhase = useNavigationStore((state) => state.navigationPhase);
   const activeScopeId = useNavigationStore((state) => state.activeScopeId);
@@ -12,6 +15,11 @@ export function NavigationDebugOverlay() {
   const debug = useNavigationStore((state) => state.debug);
 
   if (import.meta.env.PROD) return null;
+
+  const copyTrace = async () => {
+    const copied = await navigationRuntimeTrace.copyToClipboard();
+    setTraceStatus(copied ? "copied" : "clipboard unavailable");
+  };
 
   return (
     <aside className="debug-overlay" aria-label="Navigation debug overlay">
@@ -191,6 +199,24 @@ export function NavigationDebugOverlay() {
         />
       </dl>
       <small>{debug.evaluatedCandidates.length} candidates evaluated</small>
+      <div className="debug-trace-actions">
+        <button type="button" onClick={() => void copyTrace()}>
+          Copy navigation trace ({navigationRuntimeTrace.getCount()})
+        </button>
+        <button type="button" onClick={() => navigationRuntimeTrace.download()}>
+          Export JSON
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            navigationRuntimeTrace.clear();
+            setTraceStatus("cleared");
+          }}
+        >
+          Clear trace
+        </button>
+        <small aria-live="polite">{traceStatus}</small>
+      </div>
     </aside>
   );
 }

@@ -8,19 +8,38 @@ import {
 } from "react";
 import type { Game, GameStatus } from "../catalog/game-types";
 import { useGames } from "../catalog/catalog-query";
+import { useLibraryStore } from "../../stores/library-store";
 import { useProductStore } from "../../stores/product-store";
 import { useNavigationStore } from "../../stores/navigation-store";
 import { useNavigation } from "../../ui/navigation/navigation-context";
 import { NavigationGrid } from "../../ui/navigation/layouts/NavigationGrid";
+import {
+  NavigationTab,
+  NavigationTabs,
+} from "../../ui/navigation/layouts/NavigationTabs";
 import { ScrollRestoration } from "../../ui/navigation/scroll/scroll-restoration";
+import { Focusable } from "../../ui/navigation/focus/Focusable";
+import { GamepadTextInput } from "../../ui/keyboard/GamepadTextInput";
 import { getWindowForTarget } from "../../ui/navigation/core/virtual-grid";
 import { GameCard } from "./GameCard";
-import { filterAndSortGames, type LibrarySort } from "./library-operations";
+import { filterAndSortGames } from "./library-operations";
+import { navigationRuntimeTrace } from "../../ui/navigation/debug/navigation-runtime-trace";
 
 const LIBRARY_COLUMNS = 5;
 const LIBRARY_VISIBLE_ROWS = 12;
 const LIBRARY_OVERSCAN_ROWS = 2;
 const LIBRARY_WINDOW_SIZE = LIBRARY_COLUMNS * LIBRARY_VISIBLE_ROWS;
+
+const STATUS_FILTERS: readonly {
+  id: string;
+  label: string;
+  value: "all" | GameStatus;
+}[] = [
+  { id: "all", label: "Todos", value: "all" },
+  { id: "playing", label: "Instalados", value: "playing" },
+  { id: "not-started", label: "Sin empezar", value: "not-started" },
+  { id: "completed", label: "Completados", value: "completed" },
+];
 
 interface VirtualScrollAnchor {
   focusId: string;
@@ -34,10 +53,17 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
   const activeView = useProductStore((state) => state.activeView);
   const selectedGameId = useProductStore((state) => state.selectedGameId);
   const returnFocusId = useProductStore((state) => state.returnFocusId);
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<"all" | GameStatus>("all");
-  const [sort, setSort] = useState<LibrarySort>("title");
+  const query = useLibraryStore((state) => state.query);
+  const status = useLibraryStore((state) => state.status);
+  const sort = useLibraryStore((state) => state.sort);
+  const queryVersion = useLibraryStore((state) => state.queryVersion);
+  const queryCommitted = useLibraryStore((state) => state.queryCommitted);
+  const setQuery = useLibraryStore((state) => state.setQuery);
+  const setStatus = useLibraryStore((state) => state.setStatus);
+  const setSort = useLibraryStore((state) => state.setSort);
   const [windowStart, setWindowStart] = useState(0);
+  const resultGenerationRef = useRef(0);
+  const contentSignatureRef = useRef<string | null>(null);
   const windowStartRef = useRef(0);
   const anchorRef = useRef<VirtualScrollAnchor | null>(null);
   windowStartRef.current = windowStart;
@@ -49,6 +75,49 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
     windowStart,
     windowStart + LIBRARY_WINDOW_SIZE,
   );
+
+  const handleQueryChange = useCallback(
+    (value: string) => {
+      setQuery(value);
+    },
+    [setQuery],
+  );
+
+  useEffect(() => {
+    if (activeView !== "library") return;
+    navigationRuntimeTrace.recordLibraryLifecycle("mounted");
+    return () => navigationRuntimeTrace.recordLibraryLifecycle("unmounted");
+  }, [activeView]);
+
+  useEffect(() => {
+    if (activeView !== "library") return;
+    const contentSignature = `${queryVersion}:${query}:${status}:${sort}:${games.length}`;
+    if (contentSignatureRef.current !== contentSignature) {
+      contentSignatureRef.current = contentSignature;
+      resultGenerationRef.current += 1;
+    }
+    navigationRuntimeTrace.recordLibraryContent({
+      queryVersion,
+      queryLength: query.length,
+      queryCommitted,
+      filterIds: [status],
+      sortId: sort,
+      resultCount: filteredGames.length,
+      visibleResultIds: visibleGames.map((game) => game.id),
+      resultGeneration: resultGenerationRef.current,
+      resultIds: filteredGames.map((game) => game.id),
+    });
+  }, [
+    activeView,
+    filteredGames,
+    games.length,
+    query,
+    queryCommitted,
+    queryVersion,
+    sort,
+    status,
+    visibleGames,
+  ]);
 
   const requestIndex = useCallback(
     (index: number) => {
@@ -165,45 +234,84 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
     >
       <div className="page-intro">
         <div>
-          <p className="eyebrow">200 local entries</p>
+          <p className="eyebrow">{games.length} local entries</p>
           <h1 id="library-heading">Library</h1>
         </div>
         <span className="page-hint">{filteredGames.length} games match</span>
       </div>
       <div className="library-toolbar" aria-label="Library filters">
-        <label>
-          <span>Filter title</span>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search games"
-          />
-        </label>
-        <label>
-          <span>Status</span>
-          <select
-            value={status}
-            onChange={(event) =>
-              setStatus(event.target.value as "all" | GameStatus)
+        <NavigationTabs
+          groupId="library-filters"
+          ariaLabel="Library filters"
+          selectedId={`library-filter-${status}`}
+          onSelect={(focusId) => {
+            const filter = STATUS_FILTERS.find(
+              (candidate) => `library-filter-${candidate.id}` === focusId,
+            );
+            if (filter) setStatus(filter.value);
+          }}
+          navigationRegion={{
+            regionId: "library-filters",
+            parentRegionId: "main-navigation",
+            childRegionId: "library-content",
+            entryFocusId: "library-game-001",
+          }}
+          className="library-filter-nav"
+        >
+          <div className="library-search-control">
+            <span>Buscar</span>
+            <GamepadTextInput
+              focusId="library-search"
+              scopeId="product-shell"
+              value={query}
+              onChange={handleQueryChange}
+              placeholder="Search games"
+              ariaLabel="Buscar juegos"
+              className="library-search-input"
+            />
+          </div>
+          {STATUS_FILTERS.map((filter) => (
+            <NavigationTab
+              key={filter.id}
+              focusId={`library-filter-${filter.id}`}
+              scopeId="product-shell"
+              className="library-filter-button"
+            >
+              {filter.label}
+            </NavigationTab>
+          ))}
+          <Focusable
+            focusId="library-sort"
+            scopeId="product-shell"
+            className="library-filter-button library-sort-button"
+            ariaLabel={`Ordenar: ${sort}`}
+            onConfirm={() =>
+              setSort(
+                sort === "title"
+                  ? "recent"
+                  : sort === "recent"
+                    ? "time"
+                    : "title",
+              )
             }
           >
-            <option value="all">All statuses</option>
-            <option value="playing">Playing</option>
-            <option value="not-started">Not started</option>
-            <option value="completed">Completed</option>
-          </select>
-        </label>
-        <label>
-          <span>Sort</span>
-          <select
-            value={sort}
-            onChange={(event) => setSort(event.target.value as LibrarySort)}
+            Orden:{" "}
+            {sort === "title"
+              ? "Título"
+              : sort === "recent"
+                ? "Reciente"
+                : "Tiempo"}
+          </Focusable>
+          <Focusable
+            focusId="library-clear-filters"
+            scopeId="product-shell"
+            className="library-filter-button library-clear-button"
+            ariaLabel="Limpiar filtros"
+            onConfirm={() => useLibraryStore.getState().reset()}
           >
-            <option value="title">Title</option>
-            <option value="recent">Recent</option>
-            <option value="time">Time played</option>
-          </select>
-        </label>
+            Limpiar
+          </Focusable>
+        </NavigationTabs>
       </div>
       <ScrollRestoration scopeId="library" className="library-scroll-area">
         <NavigationGrid
@@ -216,8 +324,9 @@ export function LibraryView({ onOpen }: { onOpen: (game: Game) => void }) {
           }
           regionId="library-content"
           parentRegionId="main-navigation"
-          entryFocusId="main-nav-library"
+          entryFocusId="library-game-001"
           exitFocusId="main-nav-library"
+          gamepadParentRegionId="library-filters"
         >
           {visibleGames.map((game, index) => (
             <GameCard

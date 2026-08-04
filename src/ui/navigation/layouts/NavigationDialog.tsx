@@ -1,8 +1,10 @@
 import { FocusScope } from "../focus/FocusScope";
+import type { ScopeActionHandler } from "../core/navigation-types";
 import type { NavigationLayoutProps } from "./layout-types";
 
 export interface NavigationDialogProps extends NavigationLayoutProps {
   onBack?: () => boolean | void;
+  onAction?: ScopeActionHandler;
 }
 
 export function NavigationDialog({
@@ -12,6 +14,7 @@ export function NavigationDialog({
   rememberScroll = true,
   className,
   onBack,
+  onAction,
   children,
 }: NavigationDialogProps) {
   const content = (
@@ -35,6 +38,7 @@ export function NavigationDialog({
       modal
       activateOnMount
       onBack={onBack}
+      onAction={onAction}
     >
       {content}
     </FocusScope>
