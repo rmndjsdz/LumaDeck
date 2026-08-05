@@ -31,26 +31,7 @@ export function ActivityView({ game }: { game: Game }) {
   }, [loadActivity]);
 
   return (
-    <section className="details-activity" aria-labelledby="activity-heading">
-      <div className="activity-heading">
-        <div>
-          <p className="eyebrow">Actividad</p>
-          <h2 id="activity-heading">Tu historial de juego</h2>
-          <p className="activity-heading-copy">
-            Sesiones locales, logros y datos sociales disponibles.
-          </p>
-        </div>
-        <Focusable
-          focusId="details-activity-refresh"
-          scopeId="details"
-          className="activity-refresh-button"
-          disabled={state === "loading"}
-          onConfirm={() => void loadActivity()}
-        >
-          {state === "loading" ? "Consultando…" : "Actualizar"}
-        </Focusable>
-      </div>
-
+    <section className="details-activity" aria-label="Game activity">
       {state === "error" && !snapshot ? (
         <ActivityStatePanel
           title="No se pudo consultar la actividad"
