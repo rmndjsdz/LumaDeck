@@ -2513,19 +2513,21 @@ html[data-cursor="hidden"] * {
 
 .activity-layout {
   display: grid;
-  grid-template-columns: minmax(0, 0.52fr) minmax(0, 1fr) minmax(0, 0.54fr);
+  grid-template-columns: minmax(0, 0.56fr) minmax(0, 0.96fr) minmax(0, 0.64fr);
   gap: 18px;
   align-items: stretch;
 }
 
 .activity-column {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
   min-width: 0;
 }
 
 .activity-card {
   min-width: 0;
+  min-height: 0;
   padding: 20px;
   border: 1px solid rgba(142, 188, 255, 0.18);
   border-radius: 16px;
@@ -4339,6 +4341,7 @@ html[data-cursor="hidden"] * {
   .activity-column-right {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
   }
 }
 
