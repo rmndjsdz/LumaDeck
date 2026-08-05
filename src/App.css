@@ -2516,6 +2516,7 @@ html[data-cursor="hidden"] * {
   grid-template-columns: minmax(0, 0.56fr) minmax(0, 0.96fr) minmax(0, 0.64fr);
   gap: 18px;
   align-items: stretch;
+  min-height: 0;
 }
 
 .activity-column {
@@ -2539,6 +2540,14 @@ html[data-cursor="hidden"] * {
   box-shadow: inset 0 1px 0 rgba(231, 242, 255, 0.035);
 }
 
+.activity-last-session,
+.activity-timeline-card,
+.activity-stats-card,
+.activity-friends-card {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .activity-card-title {
   margin: 0 0 18px;
   color: var(--shell-accent);
@@ -2550,7 +2559,9 @@ html[data-cursor="hidden"] * {
 
 .activity-session-summary {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 15px;
+  min-height: 0;
 }
 
 .activity-session-meta {
@@ -2601,6 +2612,8 @@ html[data-cursor="hidden"] * {
 .activity-session-art {
   display: block;
   width: 100%;
+  height: 100%;
+  min-height: 0;
   aspect-ratio: 16 / 9;
   border: 1px solid rgba(142, 188, 255, 0.18);
   border-radius: 11px;
@@ -2654,6 +2667,9 @@ html[data-cursor="hidden"] * {
 }
 
 .activity-timeline-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-height: 100%;
 }
 
@@ -2676,7 +2692,10 @@ html[data-cursor="hidden"] * {
 .activity-timeline {
   position: relative;
   display: grid;
+  flex: 1 1 auto;
   gap: 0;
+  min-height: 0;
+  overflow-y: auto;
   padding-left: 8px;
 }
 
@@ -2766,7 +2785,10 @@ html[data-cursor="hidden"] * {
 
 .activity-friends-list {
   display: grid;
+  flex: 1 1 auto;
   gap: 13px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .activity-friend {
@@ -2837,6 +2859,59 @@ html[data-cursor="hidden"] * {
   color: #f2a2ad;
   background: rgba(99, 28, 43, 0.24);
   font-size: 0.76rem;
+}
+
+@media (min-width: 1101px) {
+  .app-shell-details .view-transition:has(.details-activity),
+  .app-shell-details .details-view:has(.details-activity),
+  .app-shell-details .details-tab-content:has(.details-activity) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .app-shell-details .view-transition:has(.details-activity),
+  .app-shell-details .details-view:has(.details-activity),
+  .app-shell-details .details-tab-content:has(.details-activity),
+  .app-shell-details .details-activity {
+    flex: 1 1 auto;
+  }
+
+  .app-shell-details .details-activity {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .activity-layout {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .activity-column {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .activity-card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .activity-session-summary {
+    flex: 1 1 auto;
+  }
+
+  .activity-timeline-card > .activity-empty-copy,
+  .activity-friends-card > .activity-empty-copy {
+    display: grid;
+    flex: 1 1 auto;
+    min-height: 0;
+    align-content: center;
+  }
 }
 
 .app-shell-details .details-stats,
@@ -4320,6 +4395,25 @@ html[data-cursor="hidden"] * {
 }
 
 @media (max-width: 1100px) {
+  .app-shell-details .app-shell-main:has(.details-activity) {
+    overflow-y: auto;
+  }
+
+  .app-shell-details .view-transition:has(.details-activity),
+  .app-shell-details .details-view:has(.details-activity),
+  .app-shell-details .details-tab-content:has(.details-activity) {
+    display: block;
+    min-height: 0;
+  }
+
+  .app-shell-details .details-activity {
+    display: grid;
+    flex: none;
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
   .app-shell-details .details-hero {
     grid-template-columns: 1fr;
     align-items: end;
@@ -4336,12 +4430,35 @@ html[data-cursor="hidden"] * {
 
   .activity-layout {
     grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    flex: none;
+    height: auto;
+  }
+
+  .activity-column {
+    height: auto;
+    overflow: visible;
   }
 
   .activity-column-right {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: auto;
+  }
+
+  .activity-last-session,
+  .activity-timeline-card,
+  .activity-stats-card,
+  .activity-friends-card {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .activity-timeline,
+  .activity-friends-list {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
   }
 }
 
