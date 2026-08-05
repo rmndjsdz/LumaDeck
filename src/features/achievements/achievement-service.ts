@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   emptyGameAchievements,
+  type AchievementDistributions,
   type AchievementDistribution,
   type AchievementSummary,
   type GameAchievements,
@@ -17,9 +18,13 @@ export const achievementsService = {
   },
   refreshGameAchievements: async (
     gameId: string,
+    force = true,
   ): Promise<GameAchievements> => {
     if (!isTauriRuntime()) return emptyGameAchievements(gameId);
-    return invoke<GameAchievements>("refresh_game_achievements", { gameId });
+    return invoke<GameAchievements>("refresh_game_achievements", {
+      gameId,
+      force,
+    });
   },
   getAchievementSummary: async (
     gameId: string,
@@ -34,5 +39,23 @@ export const achievementsService = {
     return invoke<AchievementDistribution>("get_achievement_distribution", {
       gameId,
     });
+  },
+  getAchievementDistributions: async (
+    gameId: string,
+  ): Promise<AchievementDistributions> => {
+    if (!isTauriRuntime()) {
+      const empty = emptyGameAchievements(gameId);
+      return {
+        total: empty.totalDistribution,
+        unlocked: empty.unlockedDistribution,
+      };
+    }
+    return invoke<AchievementDistributions>("get_achievement_distributions", {
+      gameId,
+    });
+  },
+  cancelRefreshGameAchievements: async (): Promise<void> => {
+    if (!isTauriRuntime()) return;
+    await invoke<void>("cancel_game_achievements_refresh");
   },
 };

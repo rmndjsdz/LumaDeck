@@ -32,6 +32,13 @@ export type AchievementDistribution = {
   gold: number;
 };
 
+export type AchievementUnlockedDistribution = AchievementDistribution;
+
+export type AchievementDistributions = {
+  total: AchievementDistribution;
+  unlocked: AchievementUnlockedDistribution;
+};
+
 export type AchievementRecent = {
   achievements: Achievement[];
 };
@@ -43,6 +50,8 @@ export type GameAchievements = {
   summary: AchievementSummary;
   distribution: AchievementDistribution;
   recent: AchievementRecent;
+  totalDistribution: AchievementDistribution;
+  unlockedDistribution: AchievementUnlockedDistribution;
   lastSyncedAt: string | null;
   syncStatus: string;
   schemaVersion: number;
@@ -60,6 +69,8 @@ export function emptyGameAchievements(gameId: string): GameAchievements {
       completionPercentage: 0,
     },
     distribution: { bronze: 0, silver: 0, gold: 0 },
+    totalDistribution: { bronze: 0, silver: 0, gold: 0 },
+    unlockedDistribution: { bronze: 0, silver: 0, gold: 0 },
     recent: { achievements: [] },
     lastSyncedAt: null,
     syncStatus: "unavailable",

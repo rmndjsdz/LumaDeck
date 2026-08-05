@@ -14,5 +14,12 @@ describe("achievementsService", () => {
       completionPercentage: 0,
     });
     expect(result.syncStatus).toBe("unavailable");
+
+    await expect(
+      achievementsService.getAchievementDistributions("game-001"),
+    ).resolves.toEqual({
+      total: { bronze: 0, silver: 0, gold: 0 },
+      unlocked: { bronze: 0, silver: 0, gold: 0 },
+    });
   });
 });

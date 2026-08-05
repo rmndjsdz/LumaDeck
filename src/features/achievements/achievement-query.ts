@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { achievementsService } from "./achievement-service";
 
 const ACHIEVEMENT_STALE_TIME = 5 * 60 * 1000;
@@ -31,6 +31,16 @@ export function useAchievementDistribution(gameId: string | undefined) {
   });
 }
 
+export function useAchievementDistributions(gameId: string | undefined) {
+  return useQuery({
+    queryKey: ["achievements", "distributions", gameId],
+    queryFn: () =>
+      achievementsService.getAchievementDistributions(gameId ?? ""),
+    enabled: Boolean(gameId),
+    staleTime: ACHIEVEMENT_STALE_TIME,
+  });
+}
+
 export function useAchievementRecent(gameId: string | undefined) {
   const query = useAchievements(gameId);
   return {
@@ -41,18 +51,31 @@ export function useAchievementRecent(gameId: string | undefined) {
 
 export function useRefreshGameAchievements() {
   const queryClient = useQueryClient();
-  return async (gameId: string) => {
-    const result = await achievementsService.refreshGameAchievements(gameId);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["achievements", gameId] }),
-      queryClient.invalidateQueries({
-        queryKey: ["achievements", "summary", gameId],
-      }),
-      queryClient.invalidateQueries({
-        queryKey: ["achievements", "distribution", gameId],
-      }),
-    ]);
-    return result;
+  const mutation = useMutation({
+    mutationFn: (gameId: string) =>
+      achievementsService.refreshGameAchievements(gameId, true),
+    onSuccess: async (result, gameId) => {
+      queryClient.setQueryData(["achievements", gameId], result);
+      queryClient.setQueryData(
+        ["achievements", "summary", gameId],
+        result.summary,
+      );
+      queryClient.setQueryData(
+        ["achievements", "distribution", gameId],
+        result.distribution,
+      );
+      queryClient.setQueryData(["achievements", "distributions", gameId], {
+        total: result.totalDistribution,
+        unlocked: result.unlockedDistribution,
+      });
+      await queryClient.invalidateQueries({
+        queryKey: ["achievements", gameId],
+      });
+    },
+  });
+  return {
+    ...mutation,
+    cancel: () => achievementsService.cancelRefreshGameAchievements(),
   };
 }
 
@@ -63,6 +86,7 @@ export function useAutoRefreshGameAchievements(gameId: string | undefined) {
     queryFn: async () => {
       const result = await achievementsService.refreshGameAchievements(
         gameId ?? "",
+        false,
       );
       queryClient.setQueryData(["achievements", gameId], result);
       queryClient.setQueryData(
@@ -73,6 +97,10 @@ export function useAutoRefreshGameAchievements(gameId: string | undefined) {
         ["achievements", "distribution", gameId],
         result.distribution,
       );
+      queryClient.setQueryData(["achievements", "distributions", gameId], {
+        total: result.totalDistribution,
+        unlocked: result.unlockedDistribution,
+      });
       return result;
     },
     enabled: Boolean(gameId),

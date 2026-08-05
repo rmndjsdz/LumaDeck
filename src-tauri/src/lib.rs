@@ -1236,7 +1236,7 @@ async fn refresh_steam_game_achievements(
         )
         .await
         .map_err(steam_command_error)?;
-        let icon_downloaded_count = achievements::cache_icons(
+        let icon_report = achievements::cache_icons_with_report(
             state.data_directory.root(),
             game.app_id,
             &mut snapshot.achievements,
@@ -1258,7 +1258,7 @@ async fn refresh_steam_game_achievements(
             correlation_id,
             "STEAM_GAME_ACHIEVEMENTS_REFRESH_SUCCESS",
             &format!(
-                "game_id={} app_id={} achievement_count={} unlocked_count={} icon_downloaded_count={}",
+                "game_id={} app_id={} achievement_count={} unlocked_count={} icon_downloaded_count={} icon_reused_count={} icon_failed_count={} icon_errors={}",
                 game_id,
                 game.app_id,
                 snapshot.total,
@@ -1267,7 +1267,10 @@ async fn refresh_steam_game_achievements(
                     .iter()
                     .filter(|achievement| achievement.unlocked)
                     .count(),
-                icon_downloaded_count,
+                icon_report.downloaded_count,
+                icon_report.reused_count,
+                icon_report.failed_count,
+                icon_report.errors.join("|"),
             ),
         );
         Ok(metrics)
@@ -1319,11 +1322,26 @@ fn get_achievement_distribution(
 }
 
 #[tauri::command]
+fn get_achievement_distributions(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<achievements::AchievementDistributions, String> {
+    map_command_result(
+        &state,
+        "achievements-distributions",
+        "get_achievement_distributions",
+        settings::get_achievement_distributions(&state, &game_id),
+    )
+}
+
+#[tauri::command]
 async fn refresh_game_achievements(
     state: State<'_, DatabaseState>,
     game_id: String,
+    force: Option<bool>,
 ) -> Result<achievements::GameAchievements, String> {
     let correlation_id = "achievements-refresh";
+    let force = force.unwrap_or(true);
     if state.steam_sync_running.load(Ordering::SeqCst)
         || state.steam_image_sync_running.load(Ordering::SeqCst)
         || state
@@ -1333,7 +1351,25 @@ async fn refresh_game_achievements(
     {
         return Err("STEAM_ACHIEVEMENT_SYNC_ALREADY_RUNNING".to_string());
     }
+    state
+        .steam_achievement_sync_cancel_requested
+        .store(false, Ordering::SeqCst);
+    let cached_for_fallback = settings::get_game_achievements(&state, &game_id).ok();
     let result = async {
+        let cached = cached_for_fallback.clone();
+        if !force
+            && cached.as_ref().is_some_and(|value| {
+                value.sync_status == "completed"
+                    && achievements::is_sync_fresh(
+                        value.last_synced_at.as_deref(),
+                        unix_timestamp()
+                            .parse::<i64>()
+                            .unwrap_or_default(),
+                    )
+            })
+        {
+            return cached.ok_or_else(|| "GAME_NOT_FOUND".to_string());
+        }
         let credentials = settings::get_steam_credentials(&state).map_err(|error| {
             command_error(&state, correlation_id, "get_steam_credentials", error)
         })?;
@@ -1347,19 +1383,26 @@ async fn refresh_game_achievements(
                 )
             })?
             .ok_or_else(|| "GAME_NOT_FOUND".to_string())?;
-        let mut snapshot = steam::fetch_game_achievements(
+        let mut snapshot = steam::fetch_game_achievements_with_cancel(
             &credentials.steam_id64,
             &credentials.api_key,
             game.app_id,
+            Some(state.steam_achievement_sync_cancel_requested.clone()),
         )
         .await
         .map_err(steam_command_error)?;
-        let icon_downloaded_count = achievements::cache_icons(
+        let icon_report = achievements::cache_icons_with_report(
             state.data_directory.root(),
             game.app_id,
             &mut snapshot.achievements,
         )
         .await;
+        if state
+            .steam_achievement_sync_cancel_requested
+            .load(Ordering::SeqCst)
+        {
+            return Err("STEAM_SYNC_CANCELLED".to_string());
+        }
         let changed = settings::save_steam_achievements(
             &state,
             game.app_id,
@@ -1373,18 +1416,43 @@ async fn refresh_game_achievements(
             correlation_id,
             "ACHIEVEMENTS_REFRESH_SUCCESS",
             &format!(
-                "game_id={} app_id={} changed={} icons_downloaded={}",
-                game_id, game.app_id, changed, icon_downloaded_count
+                "game_id={} app_id={} changed={} icons_downloaded={} icons_reused={} icons_failed={} icon_errors={}",
+                game_id,
+                game.app_id,
+                changed,
+                icon_report.downloaded_count,
+                icon_report.reused_count,
+                icon_report.failed_count,
+                icon_report.errors.join("|"),
             ),
         );
         settings::get_game_achievements(&state, &game_id)
             .map_err(|error| command_error(&state, correlation_id, "get_game_achievements", error))
     }
     .await;
+    let result = if !force {
+        result.or_else(|_| cached_for_fallback.ok_or_else(|| "GAME_NOT_FOUND".to_string()))
+    } else {
+        result
+    };
     state
         .steam_achievement_sync_running
         .store(false, Ordering::SeqCst);
+    state
+        .steam_achievement_sync_cancel_requested
+        .store(false, Ordering::SeqCst);
     result
+}
+
+#[tauri::command]
+fn cancel_game_achievements_refresh(state: State<'_, DatabaseState>) -> Result<(), String> {
+    if !state.steam_achievement_sync_running.load(Ordering::SeqCst) {
+        return Err("STEAM_ACHIEVEMENT_SYNC_NOT_RUNNING".to_string());
+    }
+    state
+        .steam_achievement_sync_cancel_requested
+        .store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1762,12 +1830,24 @@ async fn sync_steam_achievements(
             for (app_id, handle) in handles {
                 match handle.await {
                     Ok(Ok(mut snapshot)) => {
-                        let _icon_downloaded_count = achievements::cache_icons(
+                        let icon_report = achievements::cache_icons_with_report(
                             state.data_directory.root(),
                             app_id,
                             &mut snapshot.achievements,
                         )
                         .await;
+                        if icon_report.failed_count > 0 {
+                            state.log(
+                                "steam-achievements",
+                                "ICON_CACHE_ERRORS",
+                                &format!(
+                                    "app_id={} failed_count={} errors={}",
+                                    app_id,
+                                    icon_report.failed_count,
+                                    icon_report.errors.join("|")
+                                ),
+                            );
+                        }
                         if settings::save_steam_achievements(
                             &state,
                             app_id,
@@ -2401,7 +2481,9 @@ pub fn run() {
             get_game_achievements,
             get_achievement_summary,
             get_achievement_distribution,
+            get_achievement_distributions,
             refresh_game_achievements,
+            cancel_game_achievements_refresh,
             download_steam_game_media,
             get_steam_sync_status,
             get_steam_library_sync_settings,

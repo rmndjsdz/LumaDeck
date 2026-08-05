@@ -13,8 +13,9 @@ use super::{
     DatabaseState,
 };
 use crate::achievements::{
-    distribute, rarity_from_str, recent, source_hash, summarize, virtual_tier_from_str,
-    Achievement, AchievementDistribution, AchievementSummary, GameAchievements,
+    distribute_total, distribute_unlocked, rarity_from_str, recent, source_hash, summarize,
+    Achievement, AchievementDistribution, AchievementDistributions, AchievementSummary,
+    GameAchievements, DEFAULT_RECENT_LIMIT,
 };
 use crate::display::{DisplayProfile, PendingDisplayRestore};
 use crate::steam::{
@@ -1757,7 +1758,7 @@ impl<'a> SettingsRepository<'a> {
                         achievement.hidden,
                         achievement.unlock_percentage,
                         achievement.rarity.as_str(),
-                        achievement.virtual_tier.as_str(),
+                        achievement.rarity.virtual_tier().as_str(),
                         achievement.icon_unlocked,
                         achievement.icon_locked,
                         achievement.local_icon_unlocked,
@@ -1809,6 +1810,7 @@ impl<'a> SettingsRepository<'a> {
         )?;
         let achievements = statement
             .query_map(params![game_id], |row| {
+                let rarity = rarity_from_str(&row.get::<_, String>(7)?);
                 Ok(Achievement {
                     api_name: row.get(0)?,
                     display_name: row.get(1)?,
@@ -1817,8 +1819,8 @@ impl<'a> SettingsRepository<'a> {
                     unlocked: row.get::<_, i64>(4)? != 0,
                     unlock_time: row.get(5)?,
                     unlock_percentage: row.get(6)?,
-                    rarity: rarity_from_str(&row.get::<_, String>(7)?),
-                    virtual_tier: virtual_tier_from_str(&row.get::<_, String>(8)?),
+                    rarity,
+                    virtual_tier: rarity.virtual_tier(),
                     icon_unlocked: row.get(9)?,
                     icon_locked: row.get(10)?,
                     local_icon_unlocked: row
@@ -1850,8 +1852,10 @@ impl<'a> SettingsRepository<'a> {
             game_id: game_id.to_string(),
             steam_app_id,
             summary: summarize(&achievements),
-            distribution: distribute(&achievements),
-            recent: recent(&achievements),
+            distribution: distribute_total(&achievements),
+            recent: recent(&achievements, DEFAULT_RECENT_LIMIT),
+            total_distribution: distribute_total(&achievements),
+            unlocked_distribution: distribute_unlocked(&achievements),
             achievements,
             last_synced_at,
             sync_status,
@@ -1871,6 +1875,17 @@ impl<'a> SettingsRepository<'a> {
         game_id: &str,
     ) -> Result<AchievementDistribution, DatabaseError> {
         Ok(self.get_game_achievements(game_id)?.distribution)
+    }
+
+    pub fn get_achievement_distributions(
+        &self,
+        game_id: &str,
+    ) -> Result<AchievementDistributions, DatabaseError> {
+        let achievements = self.get_game_achievements(game_id)?;
+        Ok(AchievementDistributions {
+            total: achievements.total_distribution,
+            unlocked: achievements.unlocked_distribution,
+        })
     }
 
     fn get_provider_configuration_traced(

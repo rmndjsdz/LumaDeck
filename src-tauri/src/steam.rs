@@ -951,9 +951,18 @@ pub async fn fetch_game_achievements(
     api_key: &str,
     app_id: i64,
 ) -> Result<SteamAchievementSnapshot, SteamError> {
+    fetch_game_achievements_with_cancel(steam_id64, api_key, app_id, None).await
+}
+
+pub async fn fetch_game_achievements_with_cancel(
+    steam_id64: &str,
+    api_key: &str,
+    app_id: i64,
+    cancel_requested: Option<Arc<AtomicBool>>,
+) -> Result<SteamAchievementSnapshot, SteamError> {
     let client = build_client()?;
     let app_id_text = app_id.to_string();
-    let store_details = request_json::<HashMap<String, AppDetailsEnvelope>>(
+    let store_response = request_json::<HashMap<String, AppDetailsEnvelope>>(
         &client,
         &format!(
             "{}/api/appdetails/",
@@ -962,9 +971,11 @@ pub async fn fetch_game_achievements(
         &[("appids", &app_id_text), ("l", "english")],
     )
     .await
-    .ok()
-    .and_then(|mut responses| responses.remove(&app_id_text))
-    .and_then(|response| response.data);
+    .ok();
+    check_optional_cancel(&cancel_requested)?;
+    let store_details = store_response
+        .and_then(|mut responses| responses.remove(&app_id_text))
+        .and_then(|response| response.data);
     let store_total = store_details
         .as_ref()
         .and_then(|details| details.achievements.as_ref())
@@ -978,7 +989,7 @@ pub async fn fetch_game_achievements(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let schema = request_json::<SchemaResponse>(
+    let schema_response = request_json::<SchemaResponse>(
         &client,
         &format!(
             "{}/ISteamUserStats/GetSchemaForGame/v2/",
@@ -991,11 +1002,13 @@ pub async fn fetch_game_achievements(
         ],
     )
     .await
-    .ok()
-    .and_then(|response| response.game)
-    .and_then(|game| game.available_game_stats);
+    .ok();
+    check_optional_cancel(&cancel_requested)?;
+    let schema = schema_response
+        .and_then(|response| response.game)
+        .and_then(|game| game.available_game_stats);
     let definitions = schema.map(|value| value.achievements).unwrap_or_default();
-    let player = request_json::<PlayerAchievementsResponse>(
+    let player_response = request_json::<PlayerAchievementsResponse>(
         &client,
         &format!(
             "{}/ISteamUserStats/GetPlayerAchievements/v0001/",
@@ -1009,10 +1022,12 @@ pub async fn fetch_game_achievements(
         ],
     )
     .await
-    .ok()
-    .and_then(|response| response.playerstats)
-    .filter(|stats| stats.error.is_none());
-    let global = request_json::<GlobalAchievementPercentagesResponse>(
+    .ok();
+    check_optional_cancel(&cancel_requested)?;
+    let player = player_response
+        .and_then(|response| response.playerstats)
+        .filter(|stats| stats.error.is_none());
+    let global_response = request_json::<GlobalAchievementPercentagesResponse>(
         &client,
         &format!(
             "{}/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v0002/",
@@ -1021,9 +1036,11 @@ pub async fn fetch_game_achievements(
         &[("gameid", &app_id_text), ("format", "json")],
     )
     .await
-    .ok()
-    .and_then(|response| response.achievement_percentages)
-    .unwrap_or_default();
+    .ok();
+    check_optional_cancel(&cancel_requested)?;
+    let global = global_response
+        .and_then(|response| response.achievement_percentages)
+        .unwrap_or_default();
     let global_by_name = global
         .achievements
         .into_iter()
@@ -1037,7 +1054,7 @@ pub async fn fetch_game_achievements(
     {
         player_by_name.insert(achievement.apiname.as_str(), achievement);
     }
-    let user_stats = request_json::<PlayerAchievementsResponse>(
+    let user_stats_response = request_json::<PlayerAchievementsResponse>(
         &client,
         &format!(
             "{}/ISteamUserStats/GetUserStatsForGame/v0002/",
@@ -1051,9 +1068,11 @@ pub async fn fetch_game_achievements(
         ],
     )
     .await
-    .ok()
-    .and_then(|response| response.playerstats)
-    .filter(|stats| stats.error.is_none());
+    .ok();
+    check_optional_cancel(&cancel_requested)?;
+    let user_stats = user_stats_response
+        .and_then(|response| response.playerstats)
+        .filter(|stats| stats.error.is_none());
     let build_achievement = |api_name: String,
                              display_name: Option<String>,
                              description: Option<String>,
@@ -2163,6 +2182,12 @@ fn ensure_not_cancelled(cancel_requested: &AtomicBool) -> Result<(), SteamError>
     } else {
         Ok(())
     }
+}
+
+fn check_optional_cancel(cancel_requested: &Option<Arc<AtomicBool>>) -> Result<(), SteamError> {
+    cancel_requested
+        .as_deref()
+        .map_or(Ok(()), ensure_not_cancelled)
 }
 
 fn should_refresh(game: &OwnedGame, cached_games: &HashMap<i64, (i64, i64)>) -> bool {

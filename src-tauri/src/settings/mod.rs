@@ -393,6 +393,13 @@ pub fn get_achievement_distribution(
     SettingsRepository::new(state).get_achievement_distribution(game_id)
 }
 
+pub fn get_achievement_distributions(
+    state: &DatabaseState,
+    game_id: &str,
+) -> Result<crate::achievements::AchievementDistributions, DatabaseError> {
+    SettingsRepository::new(state).get_achievement_distributions(game_id)
+}
+
 pub fn begin_steam_sync(
     state: &DatabaseState,
     found_count: i64,

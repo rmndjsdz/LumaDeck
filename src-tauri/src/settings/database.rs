@@ -94,6 +94,7 @@ pub struct DatabaseState {
     pub(crate) steam_image_sync_progress: Arc<AtomicUsize>,
     pub(crate) steam_image_sync_total: Arc<AtomicUsize>,
     pub(crate) steam_achievement_sync_running: Arc<AtomicBool>,
+    pub(crate) steam_achievement_sync_cancel_requested: Arc<AtomicBool>,
     pub(crate) hltb_sync_running: Arc<AtomicBool>,
     pub(crate) hltb_sync_cancel_requested: Arc<AtomicBool>,
     pub(crate) hltb_sync_progress: Arc<AtomicUsize>,
@@ -155,6 +156,7 @@ impl DatabaseState {
             steam_image_sync_progress: Arc::new(AtomicUsize::new(0)),
             steam_image_sync_total: Arc::new(AtomicUsize::new(0)),
             steam_achievement_sync_running: Arc::new(AtomicBool::new(false)),
+            steam_achievement_sync_cancel_requested: Arc::new(AtomicBool::new(false)),
             hltb_sync_running: Arc::new(AtomicBool::new(false)),
             hltb_sync_cancel_requested: Arc::new(AtomicBool::new(false)),
             hltb_sync_progress: Arc::new(AtomicUsize::new(0)),
@@ -733,6 +735,10 @@ fn run_migrations(connection: &Connection) -> Result<(), DatabaseError> {
 mod tests {
     use super::run_migrations;
     use rusqlite::Connection;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn migration_is_idempotent_and_enables_foreign_keys() {
@@ -792,5 +798,97 @@ mod tests {
             )
             .expect("frame generation profile table");
         assert_eq!(frame_generation_table_count, 1);
+    }
+
+    #[test]
+    fn migrates_production_11_achievements_to_12_and_preserves_rows() {
+        let path = std::env::temp_dir().join(format!(
+            "lumadeck-achievements-migration-{}.db",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let connection = Connection::open(&path).expect("production database");
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 CREATE TABLE games(id TEXT PRIMARY KEY);
+                 CREATE TABLE steam_game_achievements(
+                    game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                    api_name TEXT NOT NULL,
+                    display_name TEXT,
+                    description TEXT,
+                    achieved INTEGER NOT NULL DEFAULT 0 CHECK (achieved IN (0, 1)),
+                    unlock_time TEXT,
+                    PRIMARY KEY(game_id, api_name)
+                 );
+                 INSERT INTO schema_migrations(version, applied_at) VALUES
+                    (1, '2026-01-01'), (2, '2026-01-01'), (3, '2026-01-01'),
+                    (4, '2026-01-01'), (5, '2026-01-01'), (6, '2026-01-01'),
+                    (7, '2026-01-01'), (8, '2026-01-01'), (9, '2026-01-01'),
+                    (10, '2026-01-01'), (11, '2026-01-01');
+                 INSERT INTO games(id) VALUES ('game-001');
+                 INSERT INTO steam_game_achievements(game_id, api_name, display_name, description, achieved, unlock_time)
+                    VALUES ('game-001', 'ACH_LEGACY', 'Legacy', 'Preserve me', 1, '1700000000');",
+            )
+            .expect("version 11 fixture");
+        run_migrations(&connection).expect("migration 12");
+        let preserved: (String, i64, String) = connection
+            .query_row(
+                "SELECT display_name, achieved, unlock_time FROM steam_game_achievements WHERE api_name = 'ACH_LEGACY'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("preserved achievement");
+        assert_eq!(
+            preserved,
+            ("Legacy".to_string(), 1, "1700000000".to_string())
+        );
+        let defaults: (i64, Option<f64>, String, String, String) = connection
+            .query_row(
+                "SELECT hidden, unlock_percentage, rarity, virtual_tier, updated_at FROM steam_game_achievements WHERE api_name = 'ACH_LEGACY'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .expect("migration defaults");
+        assert_eq!(
+            defaults,
+            (
+                0,
+                None,
+                "common".to_string(),
+                "bronze".to_string(),
+                String::new()
+            )
+        );
+        let index_exists: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_steam_game_achievements_unlocked'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("achievement index");
+        assert_eq!(index_exists, 1);
+        let sync_table_exists: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'steam_achievement_sync_state'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("sync state table");
+        assert_eq!(sync_table_exists, 1);
+        drop(connection);
+
+        let reopened = Connection::open(&path).expect("reopen migrated database");
+        run_migrations(&reopened).expect("second migration");
+        let migration_version: i64 = reopened
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("migration version");
+        assert_eq!(migration_version, 12);
+        drop(reopened);
+        let _ = fs::remove_file(path);
     }
 }
