@@ -9,6 +9,7 @@ import { NavigationProvider } from "../NavigationProvider";
 import { useNavigation } from "../navigation-context";
 import { NavigationTab, NavigationTabs } from "./NavigationTabs";
 import type { NavigationEngine } from "../core/navigation-engine";
+import type { NavigationAction } from "../core/navigation-types";
 
 interface MutableGamepad extends Omit<Gamepad, "axes" | "buttons"> {
   axes: number[];
@@ -49,12 +50,43 @@ function DetailsTabsHarness({
   engineRef?: { current: NavigationEngine | null };
 }) {
   const [selectedId, setSelectedId] = useState("details-tab-summary");
+  const [transitionDirection, setTransitionDirection] = useState<
+    "forward" | "backward"
+  >("forward");
   const { engine } = useNavigation();
 
   if (engineRef) engineRef.current = engine;
 
+  const selectTab = (focusId: string) => {
+    if (focusId === selectedId) return;
+    setTransitionDirection(
+      selectedId === "details-tab-summary" && focusId === "details-tab-activity"
+        ? "forward"
+        : "backward",
+    );
+    setSelectedId(focusId);
+  };
+
+  const handleAction = (action: NavigationAction): boolean => {
+    if (action !== "page-next" && action !== "page-previous") return false;
+    const navigableTabs = [
+      "details-tab-summary",
+      "details-tab-activity",
+    ] as const;
+    const currentIndex = navigableTabs.indexOf(
+      selectedId as (typeof navigableTabs)[number],
+    );
+    const nextTab =
+      navigableTabs[currentIndex + (action === "page-next" ? 1 : -1)];
+    if (!nextTab) return true;
+    selectTab(nextTab);
+    engine.focus(nextTab);
+    return true;
+  };
+
   useEffect(() => {
     setSelectedId("details-tab-summary");
+    setTransitionDirection("forward");
   }, [gameId]);
 
   return (
@@ -63,6 +95,7 @@ function DetailsTabsHarness({
       initialFocusId="details-play"
       trapFocus
       activateOnMount
+      onAction={handleAction}
     >
       <Focusable
         focusId="details-play"
@@ -74,7 +107,7 @@ function DetailsTabsHarness({
       <NavigationTabs
         groupId="details-sections"
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={selectTab}
         activationMode={activationMode}
         upTargetId="details-play"
         ariaLabel="Game sections"
@@ -93,6 +126,7 @@ function DetailsTabsHarness({
           Disabled
         </NavigationTab>
       </NavigationTabs>
+      <output data-testid="transition-direction">{transitionDirection}</output>
       <output data-testid="selected-tab">{selectedId}</output>
       <output data-testid="game-id">{gameId}</output>
     </FocusScope>
@@ -203,6 +237,74 @@ describe("NavigationTabs", () => {
     expect(
       host.querySelector('[data-testid="selected-tab"]')?.textContent,
     ).toBe("details-tab-activity");
+    cleanup(root, host);
+  });
+
+  it("uses page actions for synchronized focus and selection without wrapping", async () => {
+    const { root, host, engineRef } = renderTabs();
+    await flushEffects();
+
+    act(() => {
+      engineRef.current?.dispatch("page-next", "gamepad");
+    });
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-tab-activity",
+    );
+    expect(host.querySelector('[aria-selected="true"]')?.textContent).toBe(
+      "Activity",
+    );
+    expect(
+      host.querySelector('[data-testid="transition-direction"]')?.textContent,
+    ).toBe("forward");
+
+    act(() => {
+      engineRef.current?.dispatch("page-next", "gamepad");
+    });
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-tab-activity",
+    );
+    expect(
+      host.querySelector('[data-testid="selected-tab"]')?.textContent,
+    ).toBe("details-tab-activity");
+
+    act(() => {
+      engineRef.current?.dispatch("page-previous", "gamepad");
+    });
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-tab-summary",
+    );
+    expect(
+      host.querySelector('[data-testid="transition-direction"]')?.textContent,
+    ).toBe("backward");
+
+    act(() => {
+      engineRef.current?.dispatch("page-previous", "gamepad");
+    });
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-tab-summary",
+    );
+    cleanup(root, host);
+  });
+
+  it("starts page navigation from Play and skips the disabled tab", async () => {
+    const { root, host, engineRef } = renderTabs();
+    await flushEffects();
+
+    expect(useNavigationStore.getState().activeFocusId).toBe("details-play");
+    act(() => {
+      engineRef.current?.dispatch("page-next", "gamepad");
+    });
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-tab-activity",
+    );
+    expect(
+      host.querySelector('[data-focus-id="details-tab-disabled"]'),
+    ).not.toBeNull();
+    expect(
+      host
+        .querySelector('[data-focus-id="details-tab-disabled"]')
+        ?.getAttribute("aria-disabled"),
+    ).toBe("true");
     cleanup(root, host);
   });
 

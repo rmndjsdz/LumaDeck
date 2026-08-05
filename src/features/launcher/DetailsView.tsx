@@ -17,6 +17,7 @@ import { useProductStore } from "../../stores/product-store";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import { FocusScope } from "../../ui/navigation/focus/FocusScope";
 import { useNavigation } from "../../ui/navigation/navigation-context";
+import type { NavigationAction } from "../../ui/navigation/core/navigation-types";
 import {
   NavigationTab,
   NavigationTabs,
@@ -76,6 +77,9 @@ export function DetailsView({
   const [activeSection, setActiveSection] = useState<"summary" | "activity">(
     "summary",
   );
+  const [detailsContentDirection, setDetailsContentDirection] = useState<
+    "forward" | "backward"
+  >("forward");
   const artworkWasOpenRef = useRef(false);
   const metricsRefreshTimerRef = useRef<number | null>(null);
   const [liveMetrics, setLiveMetrics] = useState<SteamGameMetrics | null>(null);
@@ -186,6 +190,7 @@ export function DetailsView({
     setIsUpdatingFavorite(false);
     setArtworkModifierOpen(false);
     setActiveSection("summary");
+    setDetailsContentDirection("forward");
     setLiveMetrics(null);
     setIsRefreshingMetrics(false);
     setMessage("");
@@ -543,9 +548,32 @@ export function DetailsView({
   };
 
   const selectDetailsSection = (focusId: string) => {
-    setActiveSection(
-      focusId === "details-tab-activity" ? "activity" : "summary",
+    const nextSection =
+      focusId === "details-tab-activity" ? "activity" : "summary";
+    if (nextSection === activeSection) return;
+    setDetailsContentDirection(
+      activeSection === "summary" && nextSection === "activity"
+        ? "forward"
+        : "backward",
     );
+    setActiveSection(nextSection);
+  };
+
+  const handleDetailsAction = (action: NavigationAction): boolean => {
+    if (action !== "page-next" && action !== "page-previous") return false;
+
+    const navigableTabs = [
+      "details-tab-summary",
+      "details-tab-activity",
+    ] as const;
+    const currentIndex = activeSection === "summary" ? 0 : 1;
+    const offset = action === "page-next" ? 1 : -1;
+    const nextTab = navigableTabs[currentIndex + offset];
+    if (!nextTab) return true;
+
+    selectDetailsSection(nextTab);
+    engine.focus(nextTab);
+    return true;
   };
 
   const refreshModes = useMemo(
@@ -616,6 +644,7 @@ export function DetailsView({
       trapFocus
       modal
       activateOnMount
+      onAction={handleDetailsAction}
       onBack={() => {
         if (menuOpen) {
           if (
@@ -1081,7 +1110,7 @@ export function DetailsView({
         </div>
         <NavigationTabs
           groupId="details-sections"
-          className="details-tabs"
+          className={`details-tabs is-${activeSection}`}
           selectedId={`details-tab-${activeSection}`}
           onSelect={selectDetailsSection}
           activationMode="automatic"
@@ -1146,48 +1175,57 @@ export function DetailsView({
             Reseñas
           </NavigationTab>
         </NavigationTabs>
-        {activeSection === "activity" ? (
-          <ActivityView game={game} />
-        ) : (
-          <section
-            className="details-summary"
-            aria-labelledby="details-summary-heading"
-          >
-            <div className="details-summary-copy">
-              <h2 id="details-summary-heading" className="visually-hidden">
-                Resumen
-              </h2>
-              <p className="details-summary-description">
-                {summaryDescription}
-              </p>
-              <h3>Características</h3>
-              <ul className="details-feature-list">
-                {features.map((feature) => (
-                  <li key={feature}>{feature}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="details-summary-screenshots">
-              <p className="eyebrow">Capturas de pantalla</p>
-              {screenshotUrls.length > 0 ? (
-                <div className="details-screenshot-grid">
-                  {screenshotUrls.map((screenshot, index) => (
-                    <img
-                      key={`${game.id}-screenshot-${index}`}
-                      src={screenshot}
-                      alt={`${game.title} screenshot ${index + 1}`}
-                      className="details-screenshot"
-                      loading="lazy"
-                      draggable={false}
-                    />
+        <div
+          key={activeSection}
+          className={`details-tab-content is-${detailsContentDirection}`}
+          data-transition-direction={detailsContentDirection}
+          data-active-section={activeSection}
+        >
+          {activeSection === "activity" ? (
+            <ActivityView game={game} />
+          ) : (
+            <section
+              className="details-summary"
+              aria-labelledby="details-summary-heading"
+            >
+              <div className="details-summary-copy">
+                <h2 id="details-summary-heading" className="visually-hidden">
+                  Resumen
+                </h2>
+                <p className="details-summary-description">
+                  {summaryDescription}
+                </p>
+                <h3>Características</h3>
+                <ul className="details-feature-list">
+                  {features.map((feature) => (
+                    <li key={feature}>{feature}</li>
                   ))}
-                </div>
-              ) : (
-                <p className="details-empty-media">No screenshots available.</p>
-              )}
-            </div>
-          </section>
-        )}
+                </ul>
+              </div>
+              <div className="details-summary-screenshots">
+                <p className="eyebrow">Capturas de pantalla</p>
+                {screenshotUrls.length > 0 ? (
+                  <div className="details-screenshot-grid">
+                    {screenshotUrls.map((screenshot, index) => (
+                      <img
+                        key={`${game.id}-screenshot-${index}`}
+                        src={screenshot}
+                        alt={`${game.title} screenshot ${index + 1}`}
+                        className="details-screenshot"
+                        loading="lazy"
+                        draggable={false}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="details-empty-media">
+                    No screenshots available.
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+        </div>
       </section>
       {artworkModifierOpen && (
         <ArtworkModifierView game={game} onClose={closeArtworkModifier} />

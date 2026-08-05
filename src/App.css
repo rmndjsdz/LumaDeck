@@ -2241,7 +2241,9 @@ html[data-cursor="hidden"] * {
   z-index: 6;
   display: flex;
   align-items: stretch;
-  gap: clamp(22px, 4vw, 56px);
+  --details-tab-gap: clamp(22px, 4vw, 56px);
+  --details-tab-width: 96px;
+  gap: var(--details-tab-gap);
   min-height: 72px;
   padding: 0 clamp(24px, 4vw, 48px);
   top: -70px;
@@ -2270,6 +2272,18 @@ html[data-cursor="hidden"] * {
   font-size: 0.84rem;
   font-weight: 850;
   white-space: nowrap;
+  transition:
+    color var(--motion-focus-fast) var(--ease-standard),
+    font-size var(--motion-focus-fast) var(--ease-focus),
+    font-weight var(--motion-focus-fast) var(--ease-focus),
+    transform var(--motion-focus-fast) var(--ease-focus),
+    text-shadow var(--motion-focus-fast) var(--ease-focus);
+}
+
+.app-shell-details .details-tab:nth-child(1),
+.app-shell-details .details-tab:nth-child(2) {
+  width: var(--details-tab-width);
+  justify-content: center;
 }
 
 .app-shell-details .details-tab:disabled {
@@ -2287,22 +2301,82 @@ html[data-cursor="hidden"] * {
   color: #e9f2ff;
 }
 
-.app-shell-details .details-tab[data-active="true"] {
+.app-shell-details .details-tab:not(:disabled)[data-active="true"] {
   border-color: transparent;
-  box-shadow: none;
-  transform: none;
+  box-shadow: 0 0 18px rgba(142, 188, 255, 0.1);
+  font-size: 0.9rem;
+  font-weight: 900;
+  text-shadow: 0 0 14px rgba(205, 229, 255, 0.22);
+  transform: translateY(-1px);
+  will-change: transform;
 }
 
 .app-shell-details .details-tab.is-active::after,
 .app-shell-details .details-tab[aria-selected="true"]::after {
+  display: none;
+}
+
+.app-shell-details .details-tabs::after {
   position: absolute;
-  right: 0;
   bottom: -1px;
-  left: 0;
+  left: clamp(24px, 4vw, 48px);
+  width: var(--details-tab-width);
   height: 3px;
   border-radius: 3px 3px 0 0;
   background: var(--shell-accent);
+  box-shadow: 0 0 10px rgba(142, 188, 255, 0.55);
   content: "";
+  pointer-events: none;
+  transform: translateX(
+    calc(
+      var(--details-tab-indicator-index, 0) *
+        (var(--details-tab-width) + var(--details-tab-gap))
+    )
+  );
+  transition: transform var(--motion-focus-fast) var(--ease-focus);
+}
+
+.app-shell-details .details-tabs.is-activity {
+  --details-tab-indicator-index: 1;
+}
+
+.app-shell-details .details-tab-content {
+  width: 100%;
+  overflow: hidden;
+  border-top: 1px solid rgba(181, 211, 247, 0.12);
+  background: rgba(3, 10, 19, 0.2);
+}
+
+.app-shell-details .details-tab-content.is-forward {
+  animation: details-tab-content-forward var(--motion-standard)
+    var(--ease-enter) both;
+}
+
+.app-shell-details .details-tab-content.is-backward {
+  animation: details-tab-content-backward var(--motion-standard)
+    var(--ease-enter) both;
+}
+
+@keyframes details-tab-content-forward {
+  from {
+    opacity: 0;
+    transform: translate3d(22px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes details-tab-content-backward {
+  from {
+    opacity: 0;
+    transform: translate3d(-22px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .details-tab-badge {
@@ -2407,7 +2481,7 @@ html[data-cursor="hidden"] * {
   display: grid;
   gap: 18px;
   width: 100%;
-  padding: 28px clamp(24px, 4vw, 48px) 110px;
+  padding: 24px clamp(24px, 4vw, 48px) 110px;
   text-align: left;
 }
 
