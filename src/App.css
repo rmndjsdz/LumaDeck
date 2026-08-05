@@ -1872,29 +1872,29 @@ html[data-cursor="hidden"] * {
 }
 
 .app-shell-details .details-logo {
-  width: min(100%, 560px);
-  max-height: 150px;
+  width: min(100%, clamp(620px, 27vw, 640px));
+  max-height: clamp(164px, 10vh, 168px);
   margin-bottom: 6px;
   object-position: left center;
 }
 
 .app-shell-details .details-tags {
-  gap: 8px;
+  gap: 9px;
   margin: 0 0 22px;
 }
 
 .app-shell-details .details-tags span {
-  padding: 8px 14px;
+  padding: 9px 15px;
   border-color: rgba(181, 211, 247, 0.28);
   color: #dbe9fb;
   background: rgba(4, 13, 25, 0.62);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 800;
 }
 
 .app-shell-details .details-actions {
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   margin: 0;
 }
 
@@ -1907,15 +1907,15 @@ html[data-cursor="hidden"] * {
 .app-shell-details .primary-button {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  min-height: 62px;
-  padding: 12px 28px;
+  gap: 13px;
+  min-height: 70px;
+  padding: 14px 32px;
   border: 2px solid #a8cfff;
   border-radius: 999px;
   color: #dceaff;
   background: rgba(7, 18, 32, 0.62);
   box-shadow: none;
-  font-size: 0.92rem;
+  font-size: 0.98rem;
   font-weight: 900;
 }
 .app-shell-details .primary-button[data-active="true"] {
@@ -1928,26 +1928,26 @@ html[data-cursor="hidden"] * {
 
 .details-button-input {
   display: inline-grid;
-  width: 28px;
-  height: 28px;
+  width: 31px;
+  height: 31px;
   place-items: center;
   border: 2px solid currentColor;
   border-radius: 50%;
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   line-height: 1;
 }
 
 .app-shell-details .details-favorite-button {
   display: inline-grid;
-  width: 62px;
-  height: 62px;
+  width: 70px;
+  height: 70px;
   padding: 0;
   place-items: center;
   border: 1px solid rgba(181, 211, 247, 0.42);
   border-radius: 50%;
   color: #edf5ff;
   background: rgba(4, 13, 25, 0.72);
-  font-size: 1.7rem;
+  font-size: 1.85rem;
   line-height: 1;
 }
 
@@ -2048,15 +2048,15 @@ html[data-cursor="hidden"] * {
 
 .app-shell-details .details-menu-button {
   display: inline-grid;
-  width: 62px;
-  height: 62px;
+  width: 70px;
+  height: 70px;
   padding: 0;
   place-items: center;
   border: 1px solid rgba(181, 211, 247, 0.42);
   border-radius: 50%;
   color: #edf5ff;
   background: rgba(4, 13, 25, 0.72);
-  font-size: 1.25rem;
+  font-size: 1.32rem;
   font-weight: 900;
   letter-spacing: 0.13em;
   line-height: 1;
@@ -2241,8 +2241,8 @@ html[data-cursor="hidden"] * {
   z-index: 6;
   display: flex;
   align-items: stretch;
-  --details-tab-gap: clamp(22px, 4vw, 56px);
-  --details-tab-width: clamp(96px, 5vw, 112px);
+  --details-tab-gap: clamp(24px, 4.2vw, 60px);
+  --details-tab-width: clamp(101px, 5.3vw, 118px);
   gap: var(--details-tab-gap);
   min-height: 72px;
   padding: 0 clamp(24px, 4vw, 48px);
@@ -2269,7 +2269,7 @@ html[data-cursor="hidden"] * {
   border: 0;
   color: #8998ad;
   background: transparent;
-  font-size: clamp(0.84rem, 0.76rem + 0.16vw, 1.05rem);
+  font-size: clamp(0.8rem, 0.8rem + 0.17vw, 1.08rem);
   font-weight: 850;
   white-space: nowrap;
   transition:
@@ -2304,7 +2304,7 @@ html[data-cursor="hidden"] * {
 .app-shell-details .details-tab:not(:disabled)[data-active="true"] {
   border-color: transparent;
   box-shadow: 0 0 18px rgba(142, 188, 255, 0.1);
-  font-size: clamp(0.9rem, 0.82rem + 0.16vw, 1.05rem);
+  font-size: clamp(0.86rem, 0.86rem + 0.17vw, 1.08rem);
   font-weight: 900;
   text-shadow: 0 0 14px rgba(205, 229, 255, 0.22);
   transform: translateY(-1px);
@@ -2411,8 +2411,8 @@ html[data-cursor="hidden"] * {
 
 .details-summary-description {
   max-width: clamp(640px, 30vw, 720px);
-  margin: 0 0 26px;
-  color: #bac8db;
+  margin: 0 0 30px;
+  color: #c4d1e3;
   font-size: clamp(1rem, 0.9rem + 0.2vw, 1.22rem);
   line-height: 1.65;
   text-align: left;
@@ -2420,7 +2420,7 @@ html[data-cursor="hidden"] * {
 }
 
 .details-summary-copy h3 {
-  margin: 0 0 16px;
+  margin: 0 0 18px;
   color: #e8f1fd;
   font-size: clamp(0.82rem, 0.76rem + 0.12vw, 0.98rem);
   letter-spacing: 0.12em;
@@ -2432,7 +2432,7 @@ html[data-cursor="hidden"] * {
   gap: clamp(10px, 0.5vw, 14px);
   margin: 0;
   padding: 0;
-  color: #aebdd1;
+  color: #b9c7d9;
   font-size: clamp(0.9rem, 0.84rem + 0.1vw, 1.02rem);
   list-style: none;
 }
@@ -3121,6 +3121,20 @@ html[data-cursor="hidden"] * {
   z-index: 10;
   border-top: 0;
   background: transparent;
+}
+.app-shell-details .footer-controls {
+  gap: clamp(18px, 1.2vw, 24px);
+  font-size: clamp(0.72rem, 0.7rem + 0.05vw, 0.76rem);
+}
+.app-shell-details .footer-controls span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  white-space: nowrap;
+}
+.app-shell-details .footer-controls strong {
+  margin-right: 0;
 }
 .footer-controls {
   display: flex;

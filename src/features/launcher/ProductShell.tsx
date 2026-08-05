@@ -355,19 +355,46 @@ export function ProductShell() {
         </main>
         <footer className="app-footer">
           <div className="footer-controls">
-            <span>
-              <strong>✣</strong> Navigate
-            </span>
-            <span>
-              <strong className="footer-a-button">A</strong> Select
-            </span>
-            <span>
-              <strong className="footer-b-button">B</strong> Back
-            </span>
-            <span>
-              <strong className="footer-trigger-button">LT</strong>{" "}
-              <strong className="footer-trigger-button">RT</strong> Change View
-            </span>
+            {activeView === "details" ? (
+              <>
+                <span>
+                  <strong>✣</strong> Navigate
+                </span>
+                <span>
+                  <strong className="footer-a-button">A</strong> Select
+                </span>
+                <span>
+                  <strong className="footer-b-button">B</strong> Back
+                </span>
+                <span>
+                  <strong className="footer-trigger-button">LB</strong>
+                  <strong className="footer-trigger-button">RB</strong> Change
+                  Tab
+                </span>
+                <span>
+                  <strong className="footer-trigger-button">LT</strong>
+                  <strong className="footer-trigger-button">RT</strong> Change
+                  View
+                </span>
+              </>
+            ) : (
+              <>
+                <span>
+                  <strong>✣</strong> Navigate
+                </span>
+                <span>
+                  <strong className="footer-a-button">A</strong> Select
+                </span>
+                <span>
+                  <strong className="footer-b-button">B</strong> Back
+                </span>
+                <span>
+                  <strong className="footer-trigger-button">LT</strong>
+                  <strong className="footer-trigger-button">RT</strong> Change
+                  View
+                </span>
+              </>
+            )}
           </div>
           <span>↑ ↓ ← → navigate</span>
           <span>Enter / Space select</span>
