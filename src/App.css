@@ -2242,7 +2242,7 @@ html[data-cursor="hidden"] * {
   display: flex;
   align-items: stretch;
   --details-tab-gap: clamp(22px, 4vw, 56px);
-  --details-tab-width: 96px;
+  --details-tab-width: clamp(96px, 5vw, 112px);
   gap: var(--details-tab-gap);
   min-height: 72px;
   padding: 0 clamp(24px, 4vw, 48px);
@@ -2269,7 +2269,7 @@ html[data-cursor="hidden"] * {
   border: 0;
   color: #8998ad;
   background: transparent;
-  font-size: 0.84rem;
+  font-size: clamp(0.84rem, 0.76rem + 0.16vw, 1.05rem);
   font-weight: 850;
   white-space: nowrap;
   transition:
@@ -2304,7 +2304,7 @@ html[data-cursor="hidden"] * {
 .app-shell-details .details-tab:not(:disabled)[data-active="true"] {
   border-color: transparent;
   box-shadow: 0 0 18px rgba(142, 188, 255, 0.1);
-  font-size: 0.9rem;
+  font-size: clamp(0.9rem, 0.82rem + 0.16vw, 1.05rem);
   font-weight: 900;
   text-shadow: 0 0 14px rgba(205, 229, 255, 0.22);
   transform: translateY(-1px);
@@ -2391,11 +2391,17 @@ html[data-cursor="hidden"] * {
 .app-shell-details .details-summary {
   display: grid;
   grid-template-columns: minmax(0, 0.78fr) minmax(0, 1.22fr);
+  align-items: start;
   gap: clamp(34px, 6vw, 92px);
   width: 100%;
   margin: 0;
-  padding: 24px clamp(24px, 4vw, 48px) 110px;
+  padding: 24px clamp(24px, 4vw, 48px) 24px;
   text-align: left;
+}
+
+.app-shell-details .app-shell-main:has(.details-summary) {
+  padding-bottom: 0;
+  overflow-y: auto;
 }
 
 .details-summary-copy {
@@ -2404,11 +2410,11 @@ html[data-cursor="hidden"] * {
 }
 
 .details-summary-description {
-  max-width: 620px;
+  max-width: clamp(640px, 30vw, 720px);
   margin: 0 0 26px;
   color: #bac8db;
-  font-size: 1rem;
-  line-height: 1.72;
+  font-size: clamp(1rem, 0.9rem + 0.2vw, 1.22rem);
+  line-height: 1.65;
   text-align: left;
   white-space: pre-line;
 }
@@ -2416,18 +2422,18 @@ html[data-cursor="hidden"] * {
 .details-summary-copy h3 {
   margin: 0 0 16px;
   color: #e8f1fd;
-  font-size: 0.82rem;
+  font-size: clamp(0.82rem, 0.76rem + 0.12vw, 0.98rem);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .details-feature-list {
   display: grid;
-  gap: 10px;
+  gap: clamp(10px, 0.5vw, 14px);
   margin: 0;
   padding: 0;
   color: #aebdd1;
-  font-size: 0.9rem;
+  font-size: clamp(0.9rem, 0.84rem + 0.1vw, 1.02rem);
   list-style: none;
 }
 
@@ -2463,7 +2469,7 @@ html[data-cursor="hidden"] * {
 }
 
 .details-summary-screenshots .details-screenshot {
-  height: clamp(128px, 14vh, 220px);
+  height: clamp(150px, 16.5vh, 270px);
   aspect-ratio: auto;
   border-color: rgba(181, 211, 247, 0.22);
   border-radius: 12px;
