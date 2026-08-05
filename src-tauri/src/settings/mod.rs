@@ -358,11 +358,39 @@ pub fn clear_stale_steam_achievements(state: &DatabaseState) -> Result<i64, Data
 pub fn save_steam_achievements(
     state: &DatabaseState,
     app_id: i64,
-    achievements: &[crate::steam::SteamAchievement],
+    achievements: &[crate::achievements::Achievement],
     genres: &[String],
     total: i64,
+    stats: &[crate::steam::SteamStat],
 ) -> Result<bool, DatabaseError> {
-    SettingsRepository::new(state).save_steam_achievements(app_id, achievements, genres, total)
+    SettingsRepository::new(state).save_steam_achievements(
+        app_id,
+        achievements,
+        genres,
+        total,
+        stats,
+    )
+}
+
+pub fn get_game_achievements(
+    state: &DatabaseState,
+    game_id: &str,
+) -> Result<crate::achievements::GameAchievements, DatabaseError> {
+    SettingsRepository::new(state).get_game_achievements(game_id)
+}
+
+pub fn get_achievement_summary(
+    state: &DatabaseState,
+    game_id: &str,
+) -> Result<crate::achievements::AchievementSummary, DatabaseError> {
+    SettingsRepository::new(state).get_achievement_summary(game_id)
+}
+
+pub fn get_achievement_distribution(
+    state: &DatabaseState,
+    game_id: &str,
+) -> Result<crate::achievements::AchievementDistribution, DatabaseError> {
+    SettingsRepository::new(state).get_achievement_distribution(game_id)
 }
 
 pub fn begin_steam_sync(

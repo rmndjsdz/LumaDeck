@@ -12,13 +12,18 @@ use super::{
     },
     DatabaseState,
 };
+use crate::achievements::{
+    distribute, rarity_from_str, recent, source_hash, summarize, virtual_tier_from_str,
+    Achievement, AchievementDistribution, AchievementSummary, GameAchievements,
+};
 use crate::display::{DisplayProfile, PendingDisplayRestore};
 use crate::steam::{
-    SteamAchievement, SteamGameDetails, SteamImageRecord, SteamImageSource, SteamLibraryGame,
+    SteamGameDetails, SteamImageRecord, SteamImageSource, SteamLibraryGame, SteamStat,
 };
 use crate::steamgriddb::LocalGameIdentity;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
@@ -33,6 +38,23 @@ const HLTB_SOURCE: &str = "HowLongToBeat Community Database";
 const STEAMGRIDDB_PROVIDER_ID: &str = "steamgriddb";
 const STEAMGRIDDB_ACCOUNT_ID: &str = "steamgriddb-default";
 const STEAMGRIDDB_CREDENTIAL_TYPE: &str = "steamgriddb_api_key";
+
+fn steam_achievements_source_hash(
+    achievements: &[Achievement],
+    total: i64,
+    stats: &[SteamStat],
+) -> String {
+    let achievement_hash = source_hash(achievements, total);
+    let stats_fingerprint = stats
+        .iter()
+        .map(|stat| (&stat.name, &stat.value))
+        .collect::<Vec<_>>();
+    let encoded = serde_json::to_vec(&(achievement_hash, stats_fingerprint)).unwrap_or_default();
+    Sha256::digest(encoded)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 pub struct SettingsRepository<'a> {
     state: &'a DatabaseState,
@@ -1665,9 +1687,10 @@ impl<'a> SettingsRepository<'a> {
     pub fn save_steam_achievements(
         &self,
         app_id: i64,
-        achievements: &[SteamAchievement],
+        achievements: &[Achievement],
         genres: &[String],
         total: i64,
+        stats: &[SteamStat],
     ) -> Result<bool, DatabaseError> {
         let connection = self
             .state
@@ -1686,9 +1709,18 @@ impl<'a> SettingsRepository<'a> {
         };
         let unlocked = achievements
             .iter()
-            .filter(|achievement| achievement.achieved)
+            .filter(|achievement| achievement.unlocked)
             .count() as i64;
         let progress = (total > 0).then(|| unlocked as f64 * 100.0 / total as f64);
+        let fingerprint = steam_achievements_source_hash(achievements, total, stats);
+        let previous_hash: Option<String> = connection
+            .query_row(
+                "SELECT source_hash FROM steam_achievement_sync_state WHERE game_id = ?1",
+                params![game_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let changed = previous_hash.as_deref() != Some(fingerprint.as_str());
         let transaction = connection.unchecked_transaction()?;
         let updated_at = timestamp();
         transaction.execute(
@@ -1707,25 +1739,138 @@ impl<'a> SettingsRepository<'a> {
                 )?;
             }
         }
-        transaction.execute(
-            "DELETE FROM steam_game_achievements WHERE game_id = ?1",
-            params![game_id],
-        )?;
-        for achievement in achievements {
+        if changed {
             transaction.execute(
-                "INSERT INTO steam_game_achievements(game_id, api_name, display_name, description, achieved, unlock_time) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    game_id,
-                    achievement.api_name,
-                    achievement.display_name,
-                    achievement.description,
-                    achievement.achieved,
-                    achievement.unlock_time,
-                ],
+                "DELETE FROM steam_game_achievements WHERE game_id = ?1",
+                params![game_id],
             )?;
+            for achievement in achievements {
+                transaction.execute(
+                    "INSERT INTO steam_game_achievements(game_id, api_name, display_name, description, achieved, unlock_time, hidden, unlock_percentage, rarity, virtual_tier, icon_unlocked, icon_locked, local_icon_unlocked, local_icon_locked, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                    params![
+                        game_id,
+                        achievement.api_name,
+                        achievement.display_name,
+                        achievement.description,
+                        achievement.unlocked,
+                        achievement.unlock_time,
+                        achievement.hidden,
+                        achievement.unlock_percentage,
+                        achievement.rarity.as_str(),
+                        achievement.virtual_tier.as_str(),
+                        achievement.icon_unlocked,
+                        achievement.icon_locked,
+                        achievement.local_icon_unlocked,
+                        achievement.local_icon_locked,
+                        updated_at,
+                    ],
+                )?;
+            }
+            transaction.execute(
+                "DELETE FROM steam_game_stats WHERE game_id = ?1",
+                params![game_id],
+            )?;
+            for stat in stats {
+                transaction.execute(
+                    "INSERT INTO steam_game_stats(game_id, name, value_json) VALUES (?1, ?2, ?3)",
+                    params![game_id, stat.name, stat.value.to_string()],
+                )?;
+            }
         }
+        transaction.execute(
+            "INSERT INTO steam_achievement_sync_state(game_id, steam_app_id, status, schema_version, source_hash, last_synced_at, last_attempted_at, error_message) VALUES (?1, ?2, 'completed', 1, ?3, ?4, ?4, NULL) ON CONFLICT(game_id) DO UPDATE SET steam_app_id = excluded.steam_app_id, status = excluded.status, schema_version = excluded.schema_version, source_hash = excluded.source_hash, last_synced_at = excluded.last_synced_at, last_attempted_at = excluded.last_attempted_at, error_message = NULL",
+            params![game_id, app_id, fingerprint, updated_at],
+        )?;
         transaction.commit()?;
-        Ok(true)
+        Ok(changed)
+    }
+
+    pub fn get_game_achievements(&self, game_id: &str) -> Result<GameAchievements, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let steam_app_id: i64 = connection
+            .query_row(
+                "SELECT steam_app_id FROM game_details WHERE game_id = ?1 AND steam_app_id IS NOT NULL",
+                params![game_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or(DatabaseError::GameNotFound)?;
+        let mut statement = connection.prepare(
+            "SELECT api_name, COALESCE(display_name, api_name), COALESCE(description, ''), hidden, achieved, unlock_time,
+                    unlock_percentage, rarity, virtual_tier, icon_unlocked, icon_locked,
+                    local_icon_unlocked, local_icon_locked
+             FROM steam_game_achievements
+             WHERE game_id = ?1
+             ORDER BY api_name",
+        )?;
+        let achievements = statement
+            .query_map(params![game_id], |row| {
+                Ok(Achievement {
+                    api_name: row.get(0)?,
+                    display_name: row.get(1)?,
+                    description: row.get(2)?,
+                    hidden: row.get::<_, i64>(3)? != 0,
+                    unlocked: row.get::<_, i64>(4)? != 0,
+                    unlock_time: row.get(5)?,
+                    unlock_percentage: row.get(6)?,
+                    rarity: rarity_from_str(&row.get::<_, String>(7)?),
+                    virtual_tier: virtual_tier_from_str(&row.get::<_, String>(8)?),
+                    icon_unlocked: row.get(9)?,
+                    icon_locked: row.get(10)?,
+                    local_icon_unlocked: row
+                        .get::<_, Option<String>>(11)?
+                        .and_then(|value| resolve_optional_local_asset_path(self.state, &value)),
+                    local_icon_locked: row
+                        .get::<_, Option<String>>(12)?
+                        .and_then(|value| resolve_optional_local_asset_path(self.state, &value)),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let sync_state = connection
+            .query_row(
+                "SELECT status, schema_version, last_synced_at
+                 FROM steam_achievement_sync_state WHERE game_id = ?1",
+                params![game_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let (sync_status, schema_version, last_synced_at) =
+            sync_state.unwrap_or(("never-synced".to_string(), 1, None));
+        Ok(GameAchievements {
+            game_id: game_id.to_string(),
+            steam_app_id,
+            summary: summarize(&achievements),
+            distribution: distribute(&achievements),
+            recent: recent(&achievements),
+            achievements,
+            last_synced_at,
+            sync_status,
+            schema_version,
+        })
+    }
+
+    pub fn get_achievement_summary(
+        &self,
+        game_id: &str,
+    ) -> Result<AchievementSummary, DatabaseError> {
+        Ok(self.get_game_achievements(game_id)?.summary)
+    }
+
+    pub fn get_achievement_distribution(
+        &self,
+        game_id: &str,
+    ) -> Result<AchievementDistribution, DatabaseError> {
+        Ok(self.get_game_achievements(game_id)?.distribution)
     }
 
     fn get_provider_configuration_traced(
@@ -2549,6 +2694,8 @@ pub(crate) fn resolve_local_asset_path(
     };
     let current_path = if original.starts_with(Path::new("artwork")) {
         state.data_directory.cache_directory().join(original)
+    } else if original.starts_with(Path::new("cache")) {
+        state.data_directory.root().join(original)
     } else {
         state
             .data_directory
@@ -2564,6 +2711,11 @@ pub(crate) fn resolve_local_asset_path(
             fallback.to_string()
         }
     }
+}
+
+fn resolve_optional_local_asset_path(state: &DatabaseState, value: &str) -> Option<String> {
+    let resolved = resolve_local_asset_path(state, value, "");
+    Path::new(&resolved).is_file().then_some(resolved)
 }
 
 fn is_remote_asset(value: &str) -> bool {
@@ -2642,7 +2794,7 @@ fn upsert_steam_details(
     let unlocked = details
         .achievements
         .iter()
-        .filter(|achievement| achievement.achieved)
+        .filter(|achievement| achievement.unlocked)
         .count() as i64;
     let total = details
         .achievement_total
@@ -2670,7 +2822,6 @@ fn replace_steam_child_rows(
         "steam_game_publishers",
         "steam_game_languages",
         "steam_game_platforms",
-        "steam_game_achievements",
         "steam_game_stats",
         "steam_game_media",
         "steam_game_dlc",
@@ -2723,7 +2874,7 @@ fn replace_steam_child_rows(
         )?;
     }
     for achievement in &details.achievements {
-        transaction.execute("INSERT OR IGNORE INTO steam_game_achievements(game_id, api_name, display_name, description, achieved, unlock_time) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![game_id, achievement.api_name, achievement.display_name, achievement.description, achievement.achieved, achievement.unlock_time])?;
+        transaction.execute("INSERT OR IGNORE INTO steam_game_achievements(game_id, api_name, display_name, description, achieved, unlock_time) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![game_id, achievement.api_name, achievement.display_name, achievement.description, achievement.unlocked, achievement.unlock_time])?;
     }
     for stat in &details.stats {
         transaction.execute(
@@ -3087,7 +3238,7 @@ mod tests {
 
         let database_status = repository.get_database_status().expect("database status");
         assert!(database_status.path.ends_with("lumadeck.db"));
-        assert_eq!(database_status.schema_version, 11);
+        assert_eq!(database_status.schema_version, 12);
         assert_eq!(database_status.provider_count, 3);
         let connection = state.connection.lock().expect("database lock");
         let foreign_keys: i64 = connection

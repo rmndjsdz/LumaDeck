@@ -1,3 +1,4 @@
+use crate::achievements::{rarity_from_percentage, Achievement};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
@@ -245,14 +246,7 @@ pub struct SteamImageSourceRefreshResult {
     pub apps_with_screenshots: usize,
 }
 
-#[derive(Debug, Clone)]
-pub struct SteamAchievement {
-    pub api_name: String,
-    pub display_name: Option<String>,
-    pub description: Option<String>,
-    pub achieved: bool,
-    pub unlock_time: Option<String>,
-}
+pub type SteamAchievement = Achievement;
 
 #[derive(Debug, Clone)]
 pub struct SteamStat {
@@ -501,6 +495,12 @@ struct SchemaAchievement {
     displayname: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(default)]
+    hidden: Option<i64>,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default, rename = "icongray")]
+    icon_gray: Option<String>,
 }
 #[derive(Debug, Deserialize)]
 struct PlayerAchievementsResponse {
@@ -527,11 +527,30 @@ struct PlayerStat {
     value: Value,
 }
 
+#[derive(Debug, Deserialize)]
+struct GlobalAchievementPercentagesResponse {
+    #[serde(default, rename = "achievementpercentages")]
+    achievement_percentages: Option<GlobalAchievementPercentages>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct GlobalAchievementPercentages {
+    #[serde(default)]
+    achievements: Vec<GlobalAchievementPercentage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GlobalAchievementPercentage {
+    name: String,
+    percent: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SteamAchievementSnapshot {
     pub achievements: Vec<SteamAchievement>,
     pub genres: Vec<String>,
     pub total: i64,
+    pub stats: Vec<SteamStat>,
 }
 
 pub async fn fetch_profile(steam_id64: &str, api_key: &str) -> Result<SteamProfile, SteamError> {
@@ -992,55 +1011,133 @@ pub async fn fetch_game_achievements(
     .await
     .ok()
     .and_then(|response| response.playerstats)
-    .ok_or(SteamError::InvalidResponse)?;
-    if player.error.is_some() {
-        return Err(SteamError::InvalidResponse);
-    }
+    .filter(|stats| stats.error.is_none());
+    let global = request_json::<GlobalAchievementPercentagesResponse>(
+        &client,
+        &format!(
+            "{}/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v0002/",
+            STEAM_API_BASE_URL.trim_end_matches('/')
+        ),
+        &[("gameid", &app_id_text), ("format", "json")],
+    )
+    .await
+    .ok()
+    .and_then(|response| response.achievement_percentages)
+    .unwrap_or_default();
+    let global_by_name = global
+        .achievements
+        .into_iter()
+        .map(|achievement| (achievement.name, achievement.percent))
+        .collect::<HashMap<_, _>>();
     let mut player_by_name = HashMap::new();
-    for achievement in &player.achievements {
+    for achievement in player
+        .as_ref()
+        .map(|stats| stats.achievements.as_slice())
+        .unwrap_or(&[])
+    {
         player_by_name.insert(achievement.apiname.as_str(), achievement);
     }
+    let user_stats = request_json::<PlayerAchievementsResponse>(
+        &client,
+        &format!(
+            "{}/ISteamUserStats/GetUserStatsForGame/v0002/",
+            STEAM_API_BASE_URL.trim_end_matches('/')
+        ),
+        &[
+            ("key", api_key),
+            ("steamid", steam_id64),
+            ("appid", &app_id_text),
+            ("format", "json"),
+        ],
+    )
+    .await
+    .ok()
+    .and_then(|response| response.playerstats)
+    .filter(|stats| stats.error.is_none());
+    let build_achievement = |api_name: String,
+                             display_name: Option<String>,
+                             description: Option<String>,
+                             hidden: bool,
+                             icon_unlocked: Option<String>,
+                             icon_locked: Option<String>| {
+        let player = player_by_name.get(api_name.as_str()).copied();
+        let unlock_percentage = global_by_name.get(api_name.as_str()).copied().flatten();
+        let rarity = rarity_from_percentage(unlock_percentage);
+        let display_name = display_name.unwrap_or_else(|| api_name.clone());
+        Achievement {
+            api_name,
+            display_name,
+            description: description.unwrap_or_default(),
+            hidden,
+            unlocked: player.and_then(|value| value.achieved).unwrap_or(0) > 0,
+            unlock_time: player
+                .and_then(|value| value.unlocktime)
+                .filter(|value| *value > 0)
+                .map(|value| value.to_string()),
+            unlock_percentage,
+            rarity,
+            virtual_tier: rarity.virtual_tier(),
+            icon_unlocked,
+            icon_locked,
+            local_icon_unlocked: None,
+            local_icon_locked: None,
+        }
+    };
     let achievements = if definitions.is_empty() {
         player
-            .achievements
+            .as_ref()
+            .map(|stats| stats.achievements.as_slice())
+            .unwrap_or(&[])
             .iter()
-            .map(|achievement| SteamAchievement {
-                api_name: achievement.apiname.clone(),
-                display_name: None,
-                description: None,
-                achieved: achievement.achieved.unwrap_or(0) > 0,
-                unlock_time: achievement
-                    .unlocktime
-                    .filter(|value| *value > 0)
-                    .map(|value| value.to_string()),
+            .map(|achievement| {
+                build_achievement(achievement.apiname.clone(), None, None, false, None, None)
             })
             .collect::<Vec<_>>()
     } else {
         definitions
             .into_iter()
             .map(|definition| {
-                let player = player_by_name.get(definition.apiname.as_str()).copied();
-                SteamAchievement {
-                    api_name: definition.apiname,
-                    display_name: definition.displayname,
-                    description: definition.description,
-                    achieved: player.and_then(|value| value.achieved).unwrap_or(0) > 0,
-                    unlock_time: player
-                        .and_then(|value| value.unlocktime)
-                        .filter(|value| *value > 0)
-                        .map(|value| value.to_string()),
-                }
+                build_achievement(
+                    definition.apiname,
+                    definition.displayname,
+                    definition.description,
+                    definition.hidden.unwrap_or(0) > 0,
+                    definition.icon,
+                    definition.icon_gray,
+                )
             })
             .collect::<Vec<_>>()
     };
-    let total = store_total.unwrap_or(achievements.len() as i64);
+    let stats = user_stats
+        .map(|value| {
+            value
+                .stats
+                .into_iter()
+                .map(|stat| SteamStat {
+                    name: stat.name,
+                    value: stat.value,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let total = store_total.unwrap_or(0).max(achievements.len() as i64).max(
+        player
+            .as_ref()
+            .map_or(0, |value| value.achievements.len() as i64),
+    );
     if total == 0 && achievements.is_empty() {
-        return Err(SteamError::InvalidResponse);
+        return Ok(SteamAchievementSnapshot {
+            achievements,
+            genres,
+            total,
+            stats,
+        });
     }
     Ok(SteamAchievementSnapshot {
         achievements,
         genres,
         total,
+        stats,
     })
 }
 
@@ -1216,15 +1313,27 @@ async fn fetch_game_details(
         .iter()
         .map(|definition| {
             let player = player_by_name.get(definition.apiname.as_str()).copied();
+            let rarity = rarity_from_percentage(None);
             SteamAchievement {
                 api_name: definition.apiname.clone(),
-                display_name: definition.displayname.clone(),
-                description: definition.description.clone(),
-                achieved: player.and_then(|value| value.achieved).unwrap_or(0) > 0,
+                display_name: definition
+                    .displayname
+                    .clone()
+                    .unwrap_or_else(|| definition.apiname.clone()),
+                description: definition.description.clone().unwrap_or_default(),
+                hidden: definition.hidden.unwrap_or(0) > 0,
+                unlocked: player.and_then(|value| value.achieved).unwrap_or(0) > 0,
                 unlock_time: player
                     .and_then(|value| value.unlocktime)
                     .filter(|value| *value > 0)
                     .map(|value| value.to_string()),
+                unlock_percentage: None,
+                rarity,
+                virtual_tier: rarity.virtual_tier(),
+                icon_unlocked: definition.icon.clone(),
+                icon_locked: definition.icon_gray.clone(),
+                local_icon_unlocked: None,
+                local_icon_locked: None,
             }
         })
         .collect::<Vec<_>>();
@@ -2187,7 +2296,8 @@ mod tests {
     use super::{
         asset_dimensions_meet_target, image_assets_for, image_candidate_urls,
         needs_image_source_refresh, parse_languages, parse_owned_game_count, parse_player_summary,
-        AppDetailsEnvelope, SchemaResponse, SteamError, SteamImageSource,
+        AppDetailsEnvelope, GlobalAchievementPercentagesResponse, SchemaResponse, SteamError,
+        SteamImageSource,
     };
 
     const STEAM_ID: &str = "76561198012345678";
@@ -2215,6 +2325,20 @@ mod tests {
             .achievements[0];
         assert_eq!(achievement.apiname, "ACH_WIN");
         assert_eq!(achievement.displayname.as_deref(), Some("Winner"));
+    }
+
+    #[test]
+    fn parses_global_achievement_percentages() {
+        let response: GlobalAchievementPercentagesResponse = serde_json::from_str(
+            r#"{"achievementpercentages":{"achievements":[{"name":"ACH_WIN","percent":12.5}]}}"#,
+        )
+        .expect("global achievement percentages");
+        let achievement = &response
+            .achievement_percentages
+            .expect("achievement percentages")
+            .achievements[0];
+        assert_eq!(achievement.name, "ACH_WIN");
+        assert_eq!(achievement.percent, Some(12.5));
     }
 
     #[test]

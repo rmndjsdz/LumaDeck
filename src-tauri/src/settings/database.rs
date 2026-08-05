@@ -696,6 +696,36 @@ fn run_migrations(connection: &Connection) -> Result<(), DatabaseError> {
         )?;
         transaction.commit()?;
     }
+    if applied < 12 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE steam_game_achievements ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1));
+             ALTER TABLE steam_game_achievements ADD COLUMN unlock_percentage REAL;
+             ALTER TABLE steam_game_achievements ADD COLUMN rarity TEXT NOT NULL DEFAULT 'common';
+             ALTER TABLE steam_game_achievements ADD COLUMN virtual_tier TEXT NOT NULL DEFAULT 'bronze';
+             ALTER TABLE steam_game_achievements ADD COLUMN icon_unlocked TEXT;
+             ALTER TABLE steam_game_achievements ADD COLUMN icon_locked TEXT;
+             ALTER TABLE steam_game_achievements ADD COLUMN local_icon_unlocked TEXT;
+             ALTER TABLE steam_game_achievements ADD COLUMN local_icon_locked TEXT;
+             ALTER TABLE steam_game_achievements ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+             CREATE INDEX IF NOT EXISTS idx_steam_game_achievements_unlocked
+                 ON steam_game_achievements(game_id, achieved, unlock_time);
+             CREATE TABLE IF NOT EXISTS steam_achievement_sync_state (
+                 game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+                 steam_app_id INTEGER NOT NULL,
+                 status TEXT NOT NULL DEFAULT 'idle',
+                 schema_version INTEGER NOT NULL DEFAULT 1,
+                 source_hash TEXT,
+                 last_synced_at TEXT,
+                 last_attempted_at TEXT,
+                 error_message TEXT
+             );
+             CREATE INDEX IF NOT EXISTS idx_steam_achievement_sync_app
+                 ON steam_achievement_sync_state(steam_app_id);
+             INSERT INTO schema_migrations(version, applied_at) VALUES (12, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -720,7 +750,7 @@ mod tests {
         let provider_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
             .expect("provider count");
-        assert_eq!(migration_count, 11);
+        assert_eq!(migration_count, 12);
         assert_eq!(provider_count, 3);
         let table_count: i64 = connection
             .query_row(
