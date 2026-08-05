@@ -2481,7 +2481,7 @@ html[data-cursor="hidden"] * {
   display: grid;
   gap: 18px;
   width: 100%;
-  padding: 16px clamp(24px, 4vw, 48px) 110px;
+  padding: 16px clamp(24px, 4vw, 48px) 24px;
   text-align: left;
 }
 
@@ -2521,9 +2521,17 @@ html[data-cursor="hidden"] * {
 
 .activity-column {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
   gap: 18px;
   min-width: 0;
+  min-height: 0;
+}
+
+.activity-column-left {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.activity-column-right {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .activity-card {
@@ -2669,8 +2677,7 @@ html[data-cursor="hidden"] * {
 .activity-timeline-card {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 100%;
+  min-height: 0;
 }
 
 .activity-data-state {
@@ -2862,7 +2869,18 @@ html[data-cursor="hidden"] * {
 }
 
 @media (min-width: 1101px) {
+  .app-shell-details .app-shell-main:has(.details-activity) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+
   .app-shell-details .view-transition:has(.details-activity),
+  .app-shell-details
+    .view-transition:has(.details-activity)
+    > [data-focus-scope="details"],
   .app-shell-details .details-view:has(.details-activity),
   .app-shell-details .details-tab-content:has(.details-activity) {
     display: flex;
@@ -2871,10 +2889,37 @@ html[data-cursor="hidden"] * {
   }
 
   .app-shell-details .view-transition:has(.details-activity),
+  .app-shell-details
+    .view-transition:has(.details-activity)
+    > [data-focus-scope="details"],
   .app-shell-details .details-view:has(.details-activity),
   .app-shell-details .details-tab-content:has(.details-activity),
   .app-shell-details .details-activity {
     flex: 1 1 auto;
+  }
+
+  .app-shell-details .view-transition:has(.details-activity) {
+    width: 100%;
+  }
+
+  .app-shell-details
+    .view-transition:has(.details-activity)
+    > [data-focus-scope="details"] {
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .app-shell-details .details-view:has(.details-activity) {
+    overflow: hidden;
+  }
+
+  .app-shell-details .details-view:has(.details-activity) > .details-hero,
+  .app-shell-details .details-view:has(.details-activity) > .details-tabs {
+    flex: 0 0 auto;
+  }
+
+  .app-shell-details .details-tab-content:has(.details-activity) {
+    overflow: hidden;
   }
 
   .app-shell-details .details-activity {
@@ -2886,14 +2931,23 @@ html[data-cursor="hidden"] * {
 
   .activity-layout {
     flex: 1 1 auto;
-    height: 100%;
+    height: auto;
     min-height: 0;
+    overflow: hidden;
   }
 
   .activity-column {
     height: 100%;
     min-height: 0;
     overflow: hidden;
+  }
+
+  .activity-column-left {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .activity-column-right {
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .activity-card {
@@ -2903,6 +2957,15 @@ html[data-cursor="hidden"] * {
 
   .activity-session-summary {
     flex: 1 1 auto;
+  }
+
+  .activity-session-art {
+    aspect-ratio: auto;
+  }
+
+  .activity-timeline-card {
+    height: auto;
+    min-height: 0;
   }
 
   .activity-timeline-card > .activity-empty-copy,
@@ -4439,6 +4502,10 @@ html[data-cursor="hidden"] * {
     overflow: visible;
   }
 
+  .activity-column-left {
+    grid-template-rows: auto;
+  }
+
   .activity-column-right {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4459,6 +4526,11 @@ html[data-cursor="hidden"] * {
     flex: none;
     min-height: auto;
     overflow: visible;
+  }
+
+  .activity-session-art {
+    height: auto;
+    aspect-ratio: 16 / 9;
   }
 }
 
@@ -4493,7 +4565,7 @@ html[data-cursor="hidden"] * {
   }
 
   .app-shell-details .details-activity {
-    padding: 16px 18px 96px;
+    padding: 16px 18px 24px;
   }
 
   .activity-layout {
