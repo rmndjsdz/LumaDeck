@@ -29,6 +29,7 @@ function resolveLocalGameAssets(game: Game): Game {
     verticalCoverUrl: resolveAssetUrl(game.verticalCoverUrl),
     logoUrl: resolveAssetUrl(game.logoUrl),
     backgroundUrl: resolveAssetUrl(game.backgroundUrl),
+    iconUrl: resolveAssetUrl(game.iconUrl ?? ""),
     screenshots: game.screenshots.map(resolveAssetUrl),
   };
 }

@@ -31,6 +31,48 @@ export interface SteamGridDbConfigurationStatus {
   enabled: boolean;
 }
 
+export type RapidApiReviewsConfigurationState =
+  "not-configured" | "configured" | "credential-unavailable";
+
+export interface RapidApiReviewsConfigurationStatus {
+  providerId: "rapidapi-reviews";
+  apiKeyConfigured: boolean;
+  apiKeyMasked?: string;
+  credentialAvailable: boolean;
+  status: RapidApiReviewsConfigurationState;
+  enabled: boolean;
+}
+
+export type AIConnectionState =
+  | "not-configured"
+  | "configured"
+  | "connecting"
+  | "connected"
+  | "authentication-error"
+  | "offline"
+  | "timeout"
+  | "invalid-model"
+  | "error"
+  | "credential-unavailable";
+
+export interface AIConfiguration {
+  providerId: "openrouter";
+  model: string;
+}
+
+export interface AIConnectionStatus {
+  state: AIConnectionState;
+  message?: string;
+}
+
+export interface AIConfigurationStatus {
+  configuration: AIConfiguration;
+  apiKeyConfigured: boolean;
+  apiKeyMasked?: string;
+  credentialAvailable: boolean;
+  connection: AIConnectionStatus;
+}
+
 export interface SteamProfile {
   steamId64: string;
   avatarUrl: string;
@@ -162,6 +204,8 @@ export type SettingsLevel =
   | "steam"
   | "hltb"
   | "steamgriddb"
+  | "rapidapi-reviews"
+  | "ai-services"
   | "lossless-scaling"
   | "storage";
 

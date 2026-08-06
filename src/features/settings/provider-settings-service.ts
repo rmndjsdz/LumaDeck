@@ -15,6 +15,9 @@ import type {
   HltbPendingMatch,
   HltbSyncStatus,
   SteamGridDbConfigurationStatus,
+  RapidApiReviewsConfigurationStatus,
+  AIConfigurationStatus,
+  AIConnectionStatus,
   StorageMigrationResult,
   StorageStatus,
 } from "./settings-types";
@@ -52,6 +55,9 @@ export type SettingsErrorCategory =
   | "STORAGE_MIGRATION_DATABASE_INVALID"
   | "STORAGE_MIGRATION_VALIDATION_ERROR"
   | "STORAGE_MIGRATION_INVALID_MODE"
+  | "INVALID_AI_PROVIDER"
+  | "INVALID_AI_MODEL"
+  | "INVALID_AI_API_KEY"
   | "UNKNOWN_ERROR";
 
 export class ProviderSettingsError extends Error {
@@ -124,12 +130,15 @@ function payloadShape(args?: Record<string, unknown>): Record<string, unknown> {
   const steamId64 = args?.steamId64;
   const apiKey = args?.apiKey;
   const correlationId = args?.correlationId;
+  const model = args?.model;
   return {
     steamId64Length:
       typeof steamId64 === "string" ? steamId64.trim().length : undefined,
     apiKeyPresent:
       typeof apiKey === "string" ? apiKey.trim().length > 0 : undefined,
-    providerId: args?.providerId === "steam" ? "steam" : undefined,
+    providerId:
+      typeof args?.providerId === "string" ? args.providerId : undefined,
+    model: typeof model === "string" ? model : undefined,
     accountIdPresent:
       typeof args?.accountId === "string" && args.accountId.length > 0,
     correlationId:
@@ -210,6 +219,9 @@ function classifyError(
     return "STORAGE_MIGRATION_VALIDATION_ERROR";
   if (rawCode === "STORAGE_MIGRATION_INVALID_MODE")
     return "STORAGE_MIGRATION_INVALID_MODE";
+  if (rawCode === "INVALID_AI_PROVIDER") return "INVALID_AI_PROVIDER";
+  if (rawCode === "INVALID_AI_MODEL") return "INVALID_AI_MODEL";
+  if (rawCode === "INVALID_AI_API_KEY") return "INVALID_AI_API_KEY";
   return "UNKNOWN_ERROR";
 }
 
@@ -274,6 +286,19 @@ async function call<T>(
 }
 
 export const providerSettingsService = {
+  getAIConfiguration: () => call<AIConfigurationStatus>("get_ai_configuration"),
+  saveAIConfiguration: (providerId: string, model: string, apiKey: string) =>
+    call<AIConfigurationStatus>("save_ai_configuration", {
+      providerId,
+      model,
+      apiKey,
+    }),
+  testAIConnection: (providerId: string, model: string, apiKey: string) =>
+    call<AIConnectionStatus>("test_ai_connection", {
+      providerId,
+      model,
+      apiKey,
+    }),
   getSteamConfiguration: () =>
     call<SteamConfigurationStatus>("get_provider_configuration", {
       providerId: "steam",
@@ -368,6 +393,16 @@ export const providerSettingsService = {
     }),
   deleteSteamGridDbApiKey: () =>
     call<SteamGridDbConfigurationStatus>("delete_steamgriddb_api_key"),
+  getRapidApiReviewsConfiguration: () =>
+    call<RapidApiReviewsConfigurationStatus>(
+      "get_rapidapi_reviews_configuration",
+    ),
+  saveRapidApiReviewsApiKey: (apiKey: string) =>
+    call<RapidApiReviewsConfigurationStatus>("save_rapidapi_reviews_api_key", {
+      apiKey,
+    }),
+  deleteRapidApiReviewsApiKey: () =>
+    call<RapidApiReviewsConfigurationStatus>("delete_rapidapi_reviews_api_key"),
   refreshSteamGameMetadata: (gameId: string) =>
     call<number>("refresh_steam_game_metadata", { gameId }),
   setGameFavorite: (gameId: string, favorite: boolean) =>

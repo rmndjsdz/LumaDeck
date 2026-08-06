@@ -45,6 +45,61 @@ pub struct SteamGridDbConfigurationStatus {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct RapidApiReviewsConfigurationStatus {
+    pub provider_id: String,
+    pub api_key_configured: bool,
+    pub api_key_masked: Option<String>,
+    pub credential_available: bool,
+    pub status: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIConfiguration {
+    pub provider_id: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIConnectionStatus {
+    pub state: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AIConfigurationStatus {
+    pub configuration: AIConfiguration,
+    pub api_key_configured: bool,
+    pub api_key_masked: Option<String>,
+    pub credential_available: bool,
+    pub connection: AIConnectionStatus,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReviewsCache {
+    pub steam_app_id: i64,
+    pub metacritic_json: Option<String>,
+    pub opencritic_json: Option<String>,
+    pub steam_json: Option<String>,
+    pub steam_updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationConfigurationStatus {
+    pub provider_id: String,
+    pub api_key_configured: bool,
+    pub api_key_masked: Option<String>,
+    pub credential_available: bool,
+    pub status: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DatabaseStatus {
     pub path: String,
     pub schema_version: i64,
@@ -376,6 +431,7 @@ pub struct LocalGame {
     pub vertical_cover_url: String,
     pub logo_url: String,
     pub background_url: String,
+    pub icon_url: String,
     pub screenshots: Vec<String>,
     pub description: String,
     pub genres: Vec<String>,

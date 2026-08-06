@@ -93,4 +93,56 @@ describe("Settings Tauri IPC contract", () => {
       ),
     ).rejects.toMatchObject({ code: "DATABASE_ERROR" });
   });
+
+  it("uses one shared RapidAPI credential for OpenCritic and Metacritic", async () => {
+    await providerSettingsService.getRapidApiReviewsConfiguration();
+    await providerSettingsService.saveRapidApiReviewsApiKey("rapid-api-key");
+    await providerSettingsService.deleteRapidApiReviewsApiKey();
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["get_rapidapi_reviews_configuration", undefined],
+      ["save_rapidapi_reviews_api_key", { apiKey: "rapid-api-key" }],
+      ["delete_rapidapi_reviews_api_key", undefined],
+    ]);
+  });
+
+  it("keeps AI credentials and model arguments in the Rust IPC boundary", async () => {
+    await providerSettingsService.getAIConfiguration();
+    await providerSettingsService.saveAIConfiguration(
+      "openrouter",
+      "google/gemini-2.5-flash",
+      "sk-or-v1-test-key",
+    );
+    await providerSettingsService.testAIConnection(
+      "openrouter",
+      "google/gemini-2.5-flash",
+      "",
+    );
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["get_ai_configuration", undefined],
+      [
+        "save_ai_configuration",
+        {
+          providerId: "openrouter",
+          model: "google/gemini-2.5-flash",
+          apiKey: "sk-or-v1-test-key",
+        },
+      ],
+      [
+        "test_ai_connection",
+        {
+          providerId: "openrouter",
+          model: "google/gemini-2.5-flash",
+          apiKey: "",
+        },
+      ],
+    ]);
+    for (const [, payload] of invokeMock.mock.calls) {
+      if (!payload || typeof payload !== "object") continue;
+      expect(payload).not.toHaveProperty("provider_id");
+      expect(payload).not.toHaveProperty("api_key");
+      expect(payload).toHaveProperty("model");
+    }
+  });
 });

@@ -200,6 +200,13 @@ pub fn is_sync_fresh(last_synced_at: Option<&str>, now: i64) -> bool {
         .unwrap_or(false)
 }
 
+pub fn needs_icon_source_refresh(achievements: &[Achievement]) -> bool {
+    !achievements.is_empty()
+        && achievements.iter().any(|achievement| {
+            achievement.icon_unlocked.is_none() || achievement.icon_locked.is_none()
+        })
+}
+
 pub fn distribute_total(achievements: &[Achievement]) -> AchievementDistribution {
     let (bronze, silver, gold) = distribution_for(achievements.iter());
     AchievementDistribution {
@@ -606,8 +613,8 @@ mod tests {
     use super::{
         api_name_hash, build_icon_client, build_icon_client_with_timeouts, cache_one_icon,
         cache_path, distribute_total, distribute_unlocked, encode_icon, is_sync_fresh,
-        rarity_from_percentage, recent, summarize, Achievement, AchievementRarity, IconTask,
-        ICON_MAX_BYTES,
+        needs_icon_source_refresh, rarity_from_percentage, recent, summarize, Achievement,
+        AchievementRarity, IconTask, ICON_MAX_BYTES,
     };
     use std::{
         fs,
@@ -701,6 +708,15 @@ mod tests {
         assert!(is_sync_fresh(Some("1000"), 1000 + 60));
         assert!(!is_sync_fresh(Some("1000"), 1000 + 900));
         assert!(!is_sync_fresh(None, 1000));
+    }
+
+    #[test]
+    fn detects_achievements_without_steam_icon_sources() {
+        let mut values = vec![achievement("one", false, AchievementRarity::Common)];
+        assert!(needs_icon_source_refresh(&values));
+        values[0].icon_unlocked = Some("https://example.test/unlocked.png".to_string());
+        values[0].icon_locked = Some("https://example.test/locked.png".to_string());
+        assert!(!needs_icon_source_refresh(&values));
     }
 
     #[test]

@@ -26,6 +26,8 @@ pub enum DatabaseError {
     InvalidSteamId,
     #[error("invalid Steam Web API key")]
     InvalidApiKey,
+    #[error("invalid Google Cloud Translation API key")]
+    InvalidTranslationApiKey,
     #[error("invalid Steam library synchronization scope")]
     InvalidSteamSyncScope,
     #[error("Steam account is not configured")]
@@ -36,6 +38,14 @@ pub enum DatabaseError {
     SteamMetadataUnavailable,
     #[error("unsupported provider operation")]
     UnsupportedProvider,
+    #[error("invalid AI provider")]
+    InvalidAIProvider,
+    #[error("invalid AI model")]
+    InvalidAIModel,
+    #[error("invalid AI API key")]
+    InvalidAIApiKey,
+    #[error("stored review consensus is invalid")]
+    ConsensusDataInvalid,
 }
 
 impl DatabaseError {
@@ -46,11 +56,16 @@ impl DatabaseError {
             Self::Credential(_) => "Credential",
             Self::InvalidSteamId => "InvalidSteamId",
             Self::InvalidApiKey => "InvalidApiKey",
+            Self::InvalidTranslationApiKey => "InvalidTranslationApiKey",
             Self::InvalidSteamSyncScope => "InvalidSteamSyncScope",
             Self::AccountNotConfigured => "AccountNotConfigured",
             Self::GameNotFound => "GameNotFound",
             Self::SteamMetadataUnavailable => "SteamMetadataUnavailable",
             Self::UnsupportedProvider => "UnsupportedProvider",
+            Self::InvalidAIProvider => "InvalidAIProvider",
+            Self::InvalidAIModel => "InvalidAIModel",
+            Self::InvalidAIApiKey => "InvalidAIApiKey",
+            Self::ConsensusDataInvalid => "ConsensusDataInvalid",
         }
     }
 
@@ -728,6 +743,204 @@ fn run_migrations(connection: &Connection) -> Result<(), DatabaseError> {
         )?;
         transaction.commit()?;
     }
+    if applied < 13 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS news_items (
+                id TEXT PRIMARY KEY,
+                provider_id TEXT NOT NULL,
+                external_id TEXT NOT NULL,
+                game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                external_game_id TEXT,
+                category TEXT NOT NULL CHECK (category IN (
+                    'official', 'update', 'event', 'community', 'media',
+                    'dlc', 'maintenance', 'other'
+                )),
+                source_url TEXT NOT NULL,
+                canonical_url TEXT,
+                published_at TEXT NOT NULL,
+                updated_at TEXT,
+                first_seen_at TEXT NOT NULL,
+                source_language TEXT NOT NULL,
+                original_title TEXT NOT NULL,
+                original_summary TEXT,
+                original_content TEXT,
+                content_format TEXT NOT NULL CHECK (content_format IN (
+                    'plain_text', 'html', 'markdown', 'unknown'
+                )),
+                source_content_hash TEXT NOT NULL,
+                provider_metadata TEXT,
+                created_at TEXT NOT NULL,
+                persisted_updated_at TEXT NOT NULL,
+                UNIQUE(provider_id, external_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_news_items_game_published
+                ON news_items(game_id, published_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_news_items_category
+                ON news_items(category);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_news_items_provider_canonical
+                ON news_items(provider_id, canonical_url)
+                WHERE canonical_url IS NOT NULL AND canonical_url <> '';
+
+            CREATE TABLE IF NOT EXISTS news_translations (
+                id TEXT PRIMARY KEY,
+                news_item_id TEXT NOT NULL REFERENCES news_items(id) ON DELETE CASCADE,
+                source_language TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                translated_title TEXT,
+                translated_summary TEXT,
+                translated_content TEXT,
+                status TEXT NOT NULL CHECK (status IN (
+                    'pending', 'translating', 'translated', 'failed', 'stale'
+                )),
+                provider_id TEXT NOT NULL,
+                provider_version TEXT NOT NULL DEFAULT '',
+                glossary_version TEXT NOT NULL DEFAULT '',
+                source_content_hash TEXT NOT NULL,
+                translated_content_hash TEXT,
+                translated_at TEXT,
+                last_attempt_at TEXT,
+                error_code TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(
+                    news_item_id, source_language, target_language, provider_id,
+                    provider_version, glossary_version, source_content_hash
+                )
+            );
+            CREATE INDEX IF NOT EXISTS idx_news_translations_news_target
+                ON news_translations(news_item_id, target_language);
+            CREATE INDEX IF NOT EXISTS idx_news_translations_reusable
+                ON news_translations(news_item_id, target_language, source_content_hash, status);
+
+            CREATE TABLE IF NOT EXISTS news_sync_state (
+                provider_id TEXT NOT NULL,
+                game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                last_successful_sync_at TEXT,
+                last_attempt_at TEXT,
+                last_error_code TEXT,
+                cursor TEXT,
+                is_stale INTEGER NOT NULL DEFAULT 0 CHECK (is_stale IN (0, 1)),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(provider_id, game_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_news_sync_state_provider_game
+                ON news_sync_state(provider_id, game_id);
+            INSERT INTO schema_migrations(version, applied_at) VALUES (13, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 14 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "INSERT OR IGNORE INTO providers(id, display_name, enabled, created_at, updated_at)
+                VALUES ('google-cloud-translation', 'Google Cloud Translation', 1, datetime('now'), datetime('now'));
+             INSERT OR IGNORE INTO provider_accounts(
+                id, provider_id, external_account_id, display_name, enabled,
+                configuration_status, created_at, updated_at
+             ) VALUES (
+                'google-cloud-translation-default', 'google-cloud-translation', NULL,
+                'Google Cloud Translation', 1, 'not-configured', datetime('now'), datetime('now')
+             );
+             INSERT INTO schema_migrations(version, applied_at) VALUES (14, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 15 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "INSERT OR IGNORE INTO providers(id, display_name, enabled, created_at, updated_at)
+                VALUES ('rapidapi-reviews', 'OpenCritic / Metacritic', 1, datetime('now'), datetime('now'));
+             INSERT OR IGNORE INTO provider_accounts(
+                id, provider_id, external_account_id, display_name, enabled,
+                configuration_status, created_at, updated_at
+             ) VALUES (
+                'rapidapi-reviews-default', 'rapidapi-reviews', NULL,
+                'OpenCritic / Metacritic', 1, 'not-configured', datetime('now'), datetime('now')
+             );
+             INSERT INTO schema_migrations(version, applied_at) VALUES (15, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 16 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS game_reviews_cache (
+                game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+                steam_app_id INTEGER NOT NULL,
+                metacritic_json TEXT,
+                metacritic_updated_at TEXT,
+                opencritic_json TEXT,
+                opencritic_updated_at TEXT,
+                steam_json TEXT,
+                steam_updated_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            INSERT INTO schema_migrations(version, applied_at) VALUES (16, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 17 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value_json TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+             );
+             INSERT OR IGNORE INTO providers(id, display_name, enabled, created_at, updated_at)
+                VALUES ('openrouter', 'OpenRouter', 1, datetime('now'), datetime('now'));
+             INSERT OR IGNORE INTO provider_accounts(
+                id, provider_id, external_account_id, display_name, enabled,
+                configuration_status, created_at, updated_at
+             ) VALUES (
+                'openrouter-default', 'openrouter', NULL, 'OpenRouter', 1,
+                'not-configured', datetime('now'), datetime('now')
+             );
+             INSERT OR IGNORE INTO app_settings(key, value_json, schema_version, updated_at)
+                VALUES ('ai.configuration', '{\"providerId\":\"openrouter\",\"model\":\"google/gemini-2.5-flash\"}', 1, datetime('now'));
+             INSERT INTO schema_migrations(version, applied_at) VALUES (17, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 18 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS game_review_consensus (
+                game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+                consensus_json TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                prompt_version INTEGER NOT NULL,
+                provider_id TEXT NOT NULL,
+                model_id TEXT,
+                input_fingerprint TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_game_review_consensus_fingerprint
+                ON game_review_consensus(input_fingerprint);
+            INSERT INTO schema_migrations(version, applied_at) VALUES (18, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 19 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute(
+            "UPDATE app_settings
+             SET value_json = REPLACE(value_json, 'openrouter/auto', 'google/gemini-2.5-flash'),
+                 updated_at = datetime('now')
+             WHERE key = 'ai.configuration'
+               AND value_json LIKE '%openrouter/auto%'",
+            [],
+        )?;
+        transaction.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (19, datetime('now'))",
+            [],
+        )?;
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -756,8 +969,8 @@ mod tests {
         let provider_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
             .expect("provider count");
-        assert_eq!(migration_count, 12);
-        assert_eq!(provider_count, 3);
+        assert_eq!(migration_count, 19);
+        assert_eq!(provider_count, 6);
         let table_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'game_details'",
@@ -798,6 +1011,24 @@ mod tests {
             )
             .expect("frame generation profile table");
         assert_eq!(frame_generation_table_count, 1);
+        for table in ["news_items", "news_translations", "news_sync_state"] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("news table");
+            assert_eq!(count, 1, "missing news table {table}");
+        }
+        let reviews_cache_table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'game_reviews_cache'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("reviews cache table");
+        assert_eq!(reviews_cache_table_count, 1);
     }
 
     #[test]
@@ -813,6 +1044,8 @@ mod tests {
         connection
             .execute_batch(
                 "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+                 CREATE TABLE providers(id TEXT PRIMARY KEY, display_name TEXT NOT NULL, enabled INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                 CREATE TABLE provider_accounts(id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, external_account_id TEXT, display_name TEXT, enabled INTEGER NOT NULL, configuration_status TEXT NOT NULL, last_sync_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
                  CREATE TABLE games(id TEXT PRIMARY KEY);
                  CREATE TABLE steam_game_achievements(
                     game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
@@ -887,7 +1120,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration version");
-        assert_eq!(migration_version, 12);
+        assert_eq!(migration_version, 19);
         drop(reopened);
         let _ = fs::remove_file(path);
     }

@@ -8,11 +8,13 @@ pub use crate::display::{DisplayProfile, PendingDisplayRestore};
 pub use artwork_repository::ArtworkApplyResult;
 pub use database::{DatabaseError, DatabaseState};
 pub use models::{
-    ActivityFriend, ActivitySnapshot, DatabaseStatus, FrameGenerationProfile, HltbPendingMatch,
-    HltbSettings, HltbSyncStatus, LocalGame, SteamAchievementSyncResult, SteamConfigurationStatus,
-    SteamCredentials, SteamGameMetrics, SteamGridDbConfigurationStatus, SteamImageSyncResult,
-    SteamImageSyncStatus, SteamLaunchGame, SteamLibrarySyncSettings, SteamSyncResult,
-    SteamSyncStatus, StorageMigrationResult, StorageMigrationStatus, StorageStatus,
+    AIConfigurationStatus, ActivityFriend, ActivitySnapshot, DatabaseStatus,
+    FrameGenerationProfile, HltbPendingMatch, HltbSettings, HltbSyncStatus, LocalGame,
+    RapidApiReviewsConfigurationStatus, ReviewsCache, SteamAchievementSyncResult,
+    SteamConfigurationStatus, SteamCredentials, SteamGameMetrics, SteamGridDbConfigurationStatus,
+    SteamImageSyncResult, SteamImageSyncStatus, SteamLaunchGame, SteamLibrarySyncSettings,
+    SteamSyncResult, SteamSyncStatus, StorageMigrationResult, StorageMigrationStatus,
+    StorageStatus, TranslationConfigurationStatus,
 };
 
 use crate::data_directory::DataDirectoryResolver;
@@ -33,6 +35,23 @@ pub fn get_provider_configuration(
 
 pub fn get_steam_credentials(state: &DatabaseState) -> Result<SteamCredentials, DatabaseError> {
     SettingsRepository::new(state).get_steam_credentials()
+}
+
+pub fn get_ai_configuration(state: &DatabaseState) -> Result<AIConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).get_ai_configuration()
+}
+
+pub fn save_ai_configuration(
+    state: &DatabaseState,
+    provider_id: &str,
+    model: &str,
+    api_key: &str,
+) -> Result<AIConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).save_ai_configuration(provider_id, model, api_key)
+}
+
+pub(crate) fn get_ai_api_key(state: &DatabaseState) -> Result<String, DatabaseError> {
+    SettingsRepository::new(state).get_ai_api_key()
 }
 
 pub fn get_steamgriddb_configuration(
@@ -391,6 +410,101 @@ pub fn get_achievement_distribution(
     game_id: &str,
 ) -> Result<crate::achievements::AchievementDistribution, DatabaseError> {
     SettingsRepository::new(state).get_achievement_distribution(game_id)
+}
+
+pub fn get_rapidapi_reviews_configuration(
+    state: &DatabaseState,
+) -> Result<RapidApiReviewsConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).get_rapidapi_reviews_configuration()
+}
+
+pub fn save_rapidapi_reviews_api_key(
+    state: &DatabaseState,
+    api_key: &str,
+) -> Result<RapidApiReviewsConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).save_rapidapi_reviews_api_key(api_key)
+}
+
+pub fn delete_rapidapi_reviews_api_key(
+    state: &DatabaseState,
+) -> Result<RapidApiReviewsConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).delete_rapidapi_reviews_api_key()
+}
+
+pub(crate) fn get_rapidapi_reviews_api_key(state: &DatabaseState) -> Result<String, DatabaseError> {
+    SettingsRepository::new(state).get_rapidapi_reviews_api_key()
+}
+
+pub(crate) fn get_reviews_cache(
+    state: &DatabaseState,
+    game_id: &str,
+) -> Result<Option<ReviewsCache>, DatabaseError> {
+    SettingsRepository::new(state).get_reviews_cache(game_id)
+}
+
+pub(crate) fn save_reviews_provider_cache(
+    state: &DatabaseState,
+    game_id: &str,
+    steam_app_id: i64,
+    provider: &str,
+    payload_json: &str,
+) -> Result<(), DatabaseError> {
+    SettingsRepository::new(state).save_reviews_provider_cache(
+        game_id,
+        steam_app_id,
+        provider,
+        payload_json,
+    )
+}
+
+pub(crate) fn get_game_review_consensus(
+    state: &DatabaseState,
+    game_id: &str,
+) -> Result<Option<crate::consensus::GameReviewConsensus>, DatabaseError> {
+    SettingsRepository::new(state).get_game_review_consensus(game_id)
+}
+
+pub(crate) fn save_game_review_consensus(
+    state: &DatabaseState,
+    consensus: &crate::consensus::GameReviewConsensus,
+) -> Result<(), DatabaseError> {
+    SettingsRepository::new(state).save_game_review_consensus(consensus)
+}
+
+pub fn get_translation_configuration(
+    state: &DatabaseState,
+) -> Result<TranslationConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).get_translation_configuration()
+}
+
+pub fn save_translation_api_key(
+    state: &DatabaseState,
+    api_key: &str,
+) -> Result<TranslationConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).save_translation_api_key(api_key)
+}
+
+pub fn delete_translation_api_key(
+    state: &DatabaseState,
+) -> Result<TranslationConfigurationStatus, DatabaseError> {
+    SettingsRepository::new(state).delete_translation_api_key()
+}
+
+pub(crate) fn get_translation_api_key(state: &DatabaseState) -> Result<String, DatabaseError> {
+    SettingsRepository::new(state).get_translation_api_key()
+}
+
+pub(crate) fn get_translation_provider_selection(
+    state: &DatabaseState,
+) -> Result<Option<String>, DatabaseError> {
+    SettingsRepository::new(state).get_translation_provider_selection()
+}
+
+pub(crate) fn set_translation_provider_selection(
+    state: &DatabaseState,
+    provider_id: &str,
+) -> Result<String, DatabaseError> {
+    SettingsRepository::new(state).set_translation_provider_selection(provider_id)
 }
 
 pub fn get_achievement_distributions(

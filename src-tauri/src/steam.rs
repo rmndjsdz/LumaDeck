@@ -490,6 +490,7 @@ struct AvailableGameStats {
 }
 #[derive(Debug, Deserialize)]
 struct SchemaAchievement {
+    #[serde(rename = "name")]
     apiname: String,
     #[serde(default, rename = "displayName")]
     displayname: Option<String>,
@@ -2340,7 +2341,7 @@ mod tests {
     #[test]
     fn parses_steam_achievement_schema_fields() {
         let response: SchemaResponse = serde_json::from_str(
-            r#"{"game":{"availableGameStats":{"achievements":[{"apiname":"ACH_WIN","displayName":"Winner","description":"Win once"}]}}}"#,
+            r#"{"game":{"availableGameStats":{"achievements":[{"name":"ACH_WIN","displayName":"Winner","description":"Win once","icon":"https://example.test/unlocked.jpg","icongray":"https://example.test/locked.jpg"}]}}}"#,
         )
         .expect("achievement schema");
         let achievement = &response
@@ -2350,6 +2351,14 @@ mod tests {
             .achievements[0];
         assert_eq!(achievement.apiname, "ACH_WIN");
         assert_eq!(achievement.displayname.as_deref(), Some("Winner"));
+        assert_eq!(
+            achievement.icon.as_deref(),
+            Some("https://example.test/unlocked.jpg")
+        );
+        assert_eq!(
+            achievement.icon_gray.as_deref(),
+            Some("https://example.test/locked.jpg")
+        );
     }
 
     #[test]

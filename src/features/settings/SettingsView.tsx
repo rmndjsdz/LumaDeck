@@ -17,9 +17,11 @@ import { NavigationGrid } from "../../ui/navigation/layouts/NavigationGrid";
 import { NavigationDialog } from "../../ui/navigation/layouts/NavigationDialog";
 import { GamepadTextInput } from "../../ui/keyboard/GamepadTextInput";
 import { useNavigation } from "../../ui/navigation/navigation-context";
+import { useFocusable } from "../../ui/navigation/focus/useFocusable";
 import type { NavigationScreenDefinition } from "../../ui/navigation/screen/navigation-screen-contract";
 import steamLogo from "../../assets/steam-logo.png";
 import steamGridDbLogo from "../../assets/steamgriddb-logo.png";
+import opencriticLogo from "../../assets/opencritic-logo.png";
 import {
   createSettingsSaveCorrelationId,
   logSettingsDiagnostic,
@@ -41,6 +43,9 @@ import type {
   HltbPendingMatch,
   HltbSyncStatus,
   SteamGridDbConfigurationStatus,
+  RapidApiReviewsConfigurationStatus,
+  AIConfigurationStatus,
+  AIConnectionStatus,
   StorageStatus,
 } from "./settings-types";
 import { validateSteamApiKey, validateSteamId64 } from "./settings-validation";
@@ -81,6 +86,18 @@ const PROVIDERS = [
   ["steam", "Steam", "Sincroniza tu biblioteca y progreso", "◉"],
   ["hltb", "HowLongToBeat", "Duraciones estimadas para tus juegos", "H"],
   ["steamgriddb", "SteamGridDB", "Arte para personalizar tu biblioteca", "▦"],
+  [
+    "rapidapi-reviews",
+    "OpenCritic / Metacritic",
+    "Puntuaciones y reseñas de críticos",
+    "R",
+  ],
+  [
+    "ai-services",
+    "Servicios IA",
+    "Los Servicios IA permiten habilitar funciones avanzadas como consenso de reseñas, resúmenes de noticias, recomendaciones y futuras capacidades inteligentes de LumaDeck.",
+    "✦",
+  ],
   ["lossless-scaling", "Lossless Scaling", "Frame Generation por juego", "F"],
   ["epic", "Epic Games", "Sincroniza tu biblioteca", "E"],
   ["xbox", "Xbox", "Sincroniza logros y actividad", "X"],
@@ -99,6 +116,8 @@ function providerAvailability(id: string): ActionAvailability {
   return id === "steam" ||
     id === "hltb" ||
     id === "steamgriddb" ||
+    id === "rapidapi-reviews" ||
+    id === "ai-services" ||
     id === "lossless-scaling"
     ? "available"
     : "coming-soon";
@@ -156,6 +175,26 @@ export function SettingsView({
   const [steamGridDbDeleteConfirm, setSteamGridDbDeleteConfirm] =
     useState(false);
   const [steamGridDbError, setSteamGridDbError] = useState<string | null>(null);
+  const [rapidApiReviewsConfiguration, setRapidApiReviewsConfiguration] =
+    useState<RapidApiReviewsConfigurationStatus | null>(null);
+  const [rapidApiReviewsApiKeyDraft, setRapidApiReviewsApiKeyDraft] =
+    useState("");
+  const [rapidApiReviewsEditing, setRapidApiReviewsEditing] = useState(false);
+  const [rapidApiReviewsSaving, setRapidApiReviewsSaving] = useState(false);
+  const [rapidApiReviewsDeleteConfirm, setRapidApiReviewsDeleteConfirm] =
+    useState(false);
+  const [rapidApiReviewsError, setRapidApiReviewsError] = useState<
+    string | null
+  >(null);
+  const [aiConfiguration, setAiConfiguration] =
+    useState<AIConfigurationStatus | null>(null);
+  const [aiApiKeyDraft, setAiApiKeyDraft] = useState("");
+  const [aiModelDraft, setAiModelDraft] = useState("google/gemini-2.5-flash");
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiConnectionStatus, setAiConnectionStatus] =
+    useState<AIConnectionStatus | null>(null);
   const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(
     null,
   );
@@ -306,6 +345,44 @@ export function SettingsView({
     void loadSteamGridDbConfiguration();
   }, [level, loadSteamGridDbConfiguration]);
 
+  const loadRapidApiReviewsConfiguration = useCallback(async () => {
+    setRapidApiReviewsError(null);
+    try {
+      setRapidApiReviewsConfiguration(
+        await providerSettingsService.getRapidApiReviewsConfiguration(),
+      );
+    } catch (error) {
+      setRapidApiReviewsError(toSafeErrorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (level !== "rapidapi-reviews") return;
+    setRapidApiReviewsApiKeyDraft("");
+    setRapidApiReviewsEditing(false);
+    setRapidApiReviewsDeleteConfirm(false);
+    void loadRapidApiReviewsConfiguration();
+  }, [level, loadRapidApiReviewsConfiguration]);
+
+  const loadAIConfiguration = useCallback(async () => {
+    setAiError(null);
+    try {
+      const configuration = await providerSettingsService.getAIConfiguration();
+      setAiConfiguration(configuration);
+      setAiModelDraft(configuration.configuration.model);
+      setAiConnectionStatus(configuration.connection);
+    } catch (error) {
+      setAiError(toSafeErrorMessage(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (level !== "ai-services") return;
+    setAiApiKeyDraft("");
+    setAiConnectionStatus(null);
+    void loadAIConfiguration();
+  }, [level, loadAIConfiguration]);
+
   const loadHltb = useCallback(async () => {
     setHltbError(null);
     try {
@@ -364,6 +441,17 @@ export function SettingsView({
       }
       return "steamgriddb-change-key";
     }
+    if (level === "rapidapi-reviews") {
+      if (rapidApiReviewsDeleteConfirm) return "rapidapi-reviews-delete-cancel";
+      if (
+        rapidApiReviewsEditing ||
+        !rapidApiReviewsConfiguration?.apiKeyConfigured
+      ) {
+        return "rapidapi-reviews-api-key-input";
+      }
+      return "rapidapi-reviews-change-key";
+    }
+    if (level === "ai-services") return "ai-model-input";
     if (level === "lossless-scaling") return "lossless-scaling-open";
     if (level === "storage") return "storage-migrate";
     if (editingSteamId) return "steam-id-input";
@@ -378,6 +466,9 @@ export function SettingsView({
     steamGridDbConfiguration?.apiKeyConfigured,
     steamGridDbDeleteConfirm,
     steamGridDbEditing,
+    rapidApiReviewsConfiguration?.apiKeyConfigured,
+    rapidApiReviewsDeleteConfirm,
+    rapidApiReviewsEditing,
   ]);
 
   useLayoutEffect(() => {
@@ -421,6 +512,19 @@ export function SettingsView({
       setSteamGridDbApiKeyDraft("");
       return true;
     }
+    if (rapidApiReviewsDeleteConfirm) {
+      setRapidApiReviewsDeleteConfirm(false);
+      return true;
+    }
+    if (rapidApiReviewsEditing) {
+      setRapidApiReviewsEditing(false);
+      setRapidApiReviewsApiKeyDraft("");
+      return true;
+    }
+    if (level === "ai-services") {
+      onLevelChange("integrations");
+      return true;
+    }
     if (editingSteamId || editingApiKey) {
       setEditingSteamId(false);
       setEditingApiKey(false);
@@ -437,6 +541,10 @@ export function SettingsView({
       return true;
     }
     if (level === "steamgriddb") {
+      onLevelChange("integrations");
+      return true;
+    }
+    if (level === "rapidapi-reviews") {
       onLevelChange("integrations");
       return true;
     }
@@ -464,6 +572,8 @@ export function SettingsView({
     storageConfirm,
     steamGridDbDeleteConfirm,
     steamGridDbEditing,
+    rapidApiReviewsDeleteConfirm,
+    rapidApiReviewsEditing,
   ]);
 
   useLayoutEffect(() => {
@@ -532,6 +642,92 @@ export function SettingsView({
       setSteamGridDbDeleteConfirm(false);
     } catch (error) {
       setSteamGridDbError(toSafeErrorMessage(error));
+    }
+  };
+
+  const openRapidApiReviewsApiKeyEditor = () => {
+    setRapidApiReviewsError(null);
+    setRapidApiReviewsApiKeyDraft("");
+    setRapidApiReviewsEditing(true);
+  };
+
+  const saveRapidApiReviewsApiKey = async () => {
+    if (rapidApiReviewsSaving) return;
+    setRapidApiReviewsSaving(true);
+    setRapidApiReviewsError(null);
+    try {
+      setRapidApiReviewsConfiguration(
+        await providerSettingsService.saveRapidApiReviewsApiKey(
+          rapidApiReviewsApiKeyDraft,
+        ),
+      );
+      setRapidApiReviewsApiKeyDraft("");
+      setRapidApiReviewsEditing(false);
+    } catch (error) {
+      setRapidApiReviewsError(toSafeErrorMessage(error));
+    } finally {
+      setRapidApiReviewsSaving(false);
+    }
+  };
+
+  const openRapidApiReviewsDeleteDialog = () => {
+    engine.prepareScopeOpen(
+      "rapidapi-reviews-confirm-dialog",
+      "rapidapi-reviews-delete-cancel",
+    );
+    setRapidApiReviewsDeleteConfirm(true);
+  };
+
+  const deleteRapidApiReviewsApiKey = async () => {
+    setRapidApiReviewsError(null);
+    try {
+      setRapidApiReviewsConfiguration(
+        await providerSettingsService.deleteRapidApiReviewsApiKey(),
+      );
+      setRapidApiReviewsDeleteConfirm(false);
+    } catch (error) {
+      setRapidApiReviewsError(toSafeErrorMessage(error));
+    }
+  };
+
+  const saveAIConfiguration = async () => {
+    if (aiSaving) return;
+    setAiSaving(true);
+    setAiError(null);
+    try {
+      const configuration = await providerSettingsService.saveAIConfiguration(
+        "openrouter",
+        aiModelDraft,
+        aiApiKeyDraft,
+      );
+      setAiConfiguration(configuration);
+      setAiModelDraft(configuration.configuration.model);
+      setAiApiKeyDraft("");
+      setAiConnectionStatus(configuration.connection);
+    } catch (error) {
+      setAiError(toSafeErrorMessage(error));
+    } finally {
+      setAiSaving(false);
+    }
+  };
+
+  const testAIConnection = async () => {
+    if (aiTesting) return;
+    setAiTesting(true);
+    setAiError(null);
+    setAiConnectionStatus({ state: "connecting" });
+    try {
+      const status = await providerSettingsService.testAIConnection(
+        "openrouter",
+        aiModelDraft,
+        aiApiKeyDraft,
+      );
+      setAiConnectionStatus(status);
+    } catch (error) {
+      setAiConnectionStatus({ state: "error" });
+      setAiError(toSafeErrorMessage(error));
+    } finally {
+      setAiTesting(false);
     }
   };
 
@@ -973,6 +1169,8 @@ export function SettingsView({
           onOpenSteam={() => onLevelChange("steam")}
           onOpenHltb={() => onLevelChange("hltb")}
           onOpenSteamGridDb={() => onLevelChange("steamgriddb")}
+          onOpenRapidApiReviews={() => onLevelChange("rapidapi-reviews")}
+          onOpenAIServices={() => onLevelChange("ai-services")}
           onOpenLosslessScaling={() => onLevelChange("lossless-scaling")}
           onAvailability={setAvailabilityFeedback}
         />
@@ -1036,6 +1234,38 @@ export function SettingsView({
           onOpenDelete={openSteamGridDbDeleteDialog}
           onCancelDelete={() => setSteamGridDbDeleteConfirm(false)}
           onConfirmDelete={() => void deleteSteamGridDbApiKey()}
+        />
+      )}
+      {level === "rapidapi-reviews" && (
+        <RapidApiReviewsView
+          configuration={rapidApiReviewsConfiguration}
+          apiKeyDraft={rapidApiReviewsApiKeyDraft}
+          editing={rapidApiReviewsEditing}
+          saving={rapidApiReviewsSaving}
+          errorMessage={rapidApiReviewsError}
+          deleteConfirm={rapidApiReviewsDeleteConfirm}
+          onApiKeyDraftChange={setRapidApiReviewsApiKeyDraft}
+          onOpenApiKey={openRapidApiReviewsApiKeyEditor}
+          onSaveApiKey={() => void saveRapidApiReviewsApiKey()}
+          onCancelEdit={handleBack}
+          onOpenDelete={openRapidApiReviewsDeleteDialog}
+          onCancelDelete={() => setRapidApiReviewsDeleteConfirm(false)}
+          onConfirmDelete={() => void deleteRapidApiReviewsApiKey()}
+        />
+      )}
+      {level === "ai-services" && (
+        <AIServicesView
+          configuration={aiConfiguration}
+          apiKeyDraft={aiApiKeyDraft}
+          modelDraft={aiModelDraft}
+          connectionStatus={aiConnectionStatus}
+          saving={aiSaving}
+          testing={aiTesting}
+          errorMessage={aiError}
+          onApiKeyDraftChange={setAiApiKeyDraft}
+          onModelDraftChange={setAiModelDraft}
+          onSave={() => void saveAIConfiguration()}
+          onTestConnection={() => void testAIConnection()}
         />
       )}
       {level === "hltb" && (
@@ -1185,12 +1415,16 @@ function IntegrationsView({
   onOpenSteam,
   onOpenHltb,
   onOpenSteamGridDb,
+  onOpenRapidApiReviews,
+  onOpenAIServices,
   onOpenLosslessScaling,
   onAvailability,
 }: {
   onOpenSteam: () => void;
   onOpenHltb: () => void;
   onOpenSteamGridDb: () => void;
+  onOpenRapidApiReviews: () => void;
+  onOpenAIServices: () => void;
   onOpenLosslessScaling: () => void;
   onAvailability: (
     availability: Exclude<ActionAvailability, "available" | "unavailable">,
@@ -1231,7 +1465,11 @@ function IntegrationsView({
                       ? onOpenHltb
                       : id === "steamgriddb"
                         ? onOpenSteamGridDb
-                        : onOpenLosslessScaling
+                        : id === "rapidapi-reviews"
+                          ? onOpenRapidApiReviews
+                          : id === "ai-services"
+                            ? onOpenAIServices
+                            : onOpenLosslessScaling
                   : undefined
               }
               onAvailabilityFeedback={onAvailability}
@@ -1266,7 +1504,9 @@ function ProviderIcon({
       ? steamLogo
       : providerId === "steamgriddb"
         ? steamGridDbLogo
-        : undefined;
+        : providerId === "rapidapi-reviews"
+          ? opencriticLogo
+          : undefined;
 
   return (
     <span
@@ -1508,6 +1748,412 @@ function SteamGridDbView({
         />
       )}
     </>
+  );
+}
+
+function RapidApiReviewsView({
+  configuration,
+  apiKeyDraft,
+  editing,
+  saving,
+  errorMessage,
+  deleteConfirm,
+  onApiKeyDraftChange,
+  onOpenApiKey,
+  onSaveApiKey,
+  onCancelEdit,
+  onOpenDelete,
+  onCancelDelete,
+  onConfirmDelete,
+}: {
+  configuration: RapidApiReviewsConfigurationStatus | null;
+  apiKeyDraft: string;
+  editing: boolean;
+  saving: boolean;
+  errorMessage: string | null;
+  deleteConfirm: boolean;
+  onApiKeyDraftChange: (value: string) => void;
+  onOpenApiKey: () => void;
+  onSaveApiKey: () => void;
+  onCancelEdit: () => void;
+  onOpenDelete: () => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: () => void;
+}) {
+  const configured = configuration?.apiKeyConfigured ?? false;
+  return (
+    <>
+      <SettingsHeading
+        eyebrow="Configuración · Integraciones · Reviews"
+        title="OpenCritic / Metacritic"
+        description="Configura la credencial compartida para consultar las puntuaciones de críticos."
+      />
+      <div className="steam-settings-layout">
+        <div className="steam-settings-main">
+          <article className="settings-panel">
+            <div className="steam-account-heading">
+              <ProviderIcon providerId="rapidapi-reviews" fallback="R" />
+              <div>
+                <p className="eyebrow">Proveedor de puntuaciones</p>
+                <h2>OpenCritic / Metacritic</h2>
+              </div>
+              <strong
+                className={`steam-config-status status-${rapidApiReviewsStatusLabel(configuration?.status)}`}
+              >
+                {rapidApiReviewsStatusLabel(configuration?.status)}
+              </strong>
+            </div>
+            <div className="steam-summary-row">
+              <span>Servicios</span>
+              <strong>OpenCritic y Metacritic</strong>
+            </div>
+            <div className="steam-summary-row">
+              <span>API Key</span>
+              <strong>{configuration?.apiKeyMasked ?? "No configurada"}</strong>
+            </div>
+          </article>
+          {editing || !configured ? (
+            <article className="settings-panel settings-editor-panel">
+              <p className="eyebrow">RapidAPI Key</p>
+              <p className="settings-helper">
+                Se guarda cifrada con DPAPI de Windows y nunca se envía al
+                frontend. Esta misma clave se utiliza para OpenCritic y
+                Metacritic.
+              </p>
+              <GamepadTextInput
+                focusId="rapidapi-reviews-api-key-input"
+                scopeId="settings-shell"
+                value={apiKeyDraft}
+                onChange={onApiKeyDraftChange}
+                placeholder="Ingresa tu API Key de RapidAPI"
+                ariaLabel="RapidAPI Key para OpenCritic y Metacritic"
+                secure
+                maxLength={256}
+                className="settings-input"
+              />
+              <div className="settings-action-row">
+                <Focusable
+                  focusId="rapidapi-reviews-api-key-save"
+                  scopeId="settings-shell"
+                  className="settings-button primary"
+                  disabled={saving}
+                  onConfirm={onSaveApiKey}
+                >
+                  {saving ? "Guardando…" : "Guardar API Key"}
+                </Focusable>
+                {editing && (
+                  <Focusable
+                    focusId="rapidapi-reviews-api-key-cancel"
+                    scopeId="settings-shell"
+                    className="settings-button secondary"
+                    onConfirm={onCancelEdit}
+                  >
+                    Cancelar
+                  </Focusable>
+                )}
+              </div>
+            </article>
+          ) : (
+            <Focusable
+              focusId="rapidapi-reviews-change-key"
+              scopeId="settings-shell"
+              className="settings-action settings-action-primary"
+              onConfirm={onOpenApiKey}
+            >
+              Cambiar API Key
+            </Focusable>
+          )}
+          {configured && (
+            <Focusable
+              focusId="rapidapi-reviews-delete-key"
+              scopeId="settings-shell"
+              className="settings-action settings-action-danger"
+              onConfirm={onOpenDelete}
+            >
+              Eliminar API Key
+            </Focusable>
+          )}
+          {errorMessage && (
+            <p className="settings-feedback is-error" role="alert">
+              {errorMessage}
+            </p>
+          )}
+        </div>
+        <aside className="settings-panel settings-security-note">
+          <strong>Almacenamiento seguro</strong>
+          <p>
+            La credencial se protege con DPAPI CurrentUser y solo permanece en
+            el backend. La interfaz recibe únicamente su estado y máscara.
+          </p>
+          <small>
+            El backend envía los headers X-RapidAPI-Key y X-RapidAPI-Host al
+            proveedor correspondiente.
+          </small>
+        </aside>
+      </div>
+      {deleteConfirm && (
+        <RapidApiReviewsDeleteDialog
+          onCancel={onCancelDelete}
+          onConfirm={onConfirmDelete}
+        />
+      )}
+    </>
+  );
+}
+
+function AIServicesView({
+  configuration,
+  apiKeyDraft,
+  modelDraft,
+  connectionStatus,
+  saving,
+  testing,
+  errorMessage,
+  onApiKeyDraftChange,
+  onModelDraftChange,
+  onSave,
+  onTestConnection,
+}: {
+  configuration: AIConfigurationStatus | null;
+  apiKeyDraft: string;
+  modelDraft: string;
+  connectionStatus: AIConnectionStatus | null;
+  saving: boolean;
+  testing: boolean;
+  errorMessage: string | null;
+  onApiKeyDraftChange: (value: string) => void;
+  onModelDraftChange: (value: string) => void;
+  onSave: () => void;
+  onTestConnection: () => void;
+}) {
+  const providerFocus = useFocusable<HTMLSelectElement>({
+    focusId: "ai-provider-select",
+    scopeId: "settings-shell",
+    onConfirm: () => undefined,
+  });
+  const status = connectionStatus ??
+    configuration?.connection ?? { state: "not-configured" as const };
+  const configured = configuration?.apiKeyConfigured ?? false;
+
+  return (
+    <>
+      <SettingsHeading
+        eyebrow="Configuración · Integraciones · Servicios IA"
+        title="Servicios IA"
+        description="Los Servicios IA permiten habilitar funciones avanzadas como consenso de reseñas, resúmenes de noticias, recomendaciones y futuras capacidades inteligentes de LumaDeck."
+      />
+      <div className="steam-settings-layout">
+        <div className="steam-settings-main">
+          <article className="settings-panel ai-settings-panel">
+            <div className="steam-account-heading">
+              <span className="provider-icon" aria-hidden="true">
+                ✦
+              </span>
+              <div>
+                <p className="eyebrow">Capacidad transversal</p>
+                <h2>Configuración de Servicios IA</h2>
+              </div>
+              <strong
+                className={`steam-config-status ai-status-${status.state}`}
+              >
+                {aiConnectionStatusLabel(status.state)}
+              </strong>
+            </div>
+            <label className="ai-field-label" htmlFor="ai-provider-select">
+              Proveedor
+            </label>
+            <select
+              ref={providerFocus.ref}
+              id="ai-provider-select"
+              className="settings-input ai-provider-select"
+              value="openrouter"
+              aria-label="Proveedor de Servicios IA"
+              data-focusable="true"
+              data-focus-id="ai-provider-select"
+              data-active={providerFocus.isActive ? "true" : "false"}
+              tabIndex={providerFocus.tabIndex}
+              onMouseEnter={providerFocus.onMouseEnter}
+              onClick={providerFocus.onClick}
+              onChange={() => undefined}
+            >
+              <option value="openrouter">OpenRouter</option>
+              <option value="ollama" disabled>
+                Ollama (Próximamente)
+              </option>
+              <option value="lm-studio" disabled>
+                LM Studio (Próximamente)
+              </option>
+              <option value="openai" disabled>
+                OpenAI (Próximamente)
+              </option>
+              <option value="gemini" disabled>
+                Gemini (Próximamente)
+              </option>
+              <option value="claude" disabled>
+                Claude (Próximamente)
+              </option>
+            </select>
+            <div className="steam-summary-row">
+              <span>Estado</span>
+              <strong>{aiConnectionStatusLabel(status.state)}</strong>
+            </div>
+            <div className="steam-summary-row">
+              <span>API Key</span>
+              <strong>{configuration?.apiKeyMasked ?? "No configurada"}</strong>
+            </div>
+          </article>
+
+          <article className="settings-panel settings-editor-panel">
+            <p className="eyebrow">OpenRouter</p>
+            <p className="settings-helper">
+              La API Key se protege con DPAPI y nunca se devuelve al frontend.
+              {configured
+                ? " Déjala vacía para conservar la clave actual."
+                : " Configúrala para habilitar la prueba de conexión."}
+            </p>
+            <label className="ai-field-label" htmlFor="ai-api-key-input">
+              API Key
+            </label>
+            <GamepadTextInput
+              focusId="ai-api-key-input"
+              scopeId="settings-shell"
+              value={apiKeyDraft}
+              onChange={onApiKeyDraftChange}
+              placeholder={
+                configured
+                  ? "Conservar API Key actual"
+                  : "Ingresa tu API Key de OpenRouter"
+              }
+              ariaLabel="API Key de OpenRouter"
+              secure
+              maxLength={256}
+              className="settings-input"
+            />
+            <label className="ai-field-label" htmlFor="ai-model-input">
+              Modelo
+            </label>
+            <GamepadTextInput
+              focusId="ai-model-input"
+              scopeId="settings-shell"
+              value={modelDraft}
+              onChange={onModelDraftChange}
+              placeholder="google/gemini-2.5-flash"
+              ariaLabel="Modelo de OpenRouter"
+              maxLength={256}
+              className="settings-input"
+            />
+            <div className="settings-action-row">
+              <Focusable
+                focusId="ai-save"
+                scopeId="settings-shell"
+                className="settings-button primary"
+                disabled={saving || testing}
+                onConfirm={onSave}
+              >
+                {saving ? "Guardando…" : "Guardar configuración"}
+              </Focusable>
+              <Focusable
+                focusId="ai-test-connection"
+                scopeId="settings-shell"
+                className="settings-button secondary"
+                disabled={saving || testing}
+                onConfirm={onTestConnection}
+              >
+                {testing ? "Conectando…" : "Probar conexión"}
+              </Focusable>
+            </div>
+            {status.message && (
+              <p
+                className={`settings-feedback ${status.state === "connected" ? "is-success" : status.state === "not-configured" || status.state === "configured" ? "" : "is-error"}`}
+                role="status"
+              >
+                {status.message}
+              </p>
+            )}
+            {errorMessage && (
+              <p className="settings-feedback is-error" role="alert">
+                {errorMessage}
+              </p>
+            )}
+          </article>
+        </div>
+        <aside className="settings-panel settings-security-note">
+          <strong>Almacenamiento seguro</strong>
+          <p>
+            La API Key se guarda cifrada con DPAPI CurrentUser dentro de{" "}
+            <code>provider_credentials</code>.
+          </p>
+          <small>
+            La prueba de conexión valida OpenRouter desde Rust y no genera
+            contenido, chat ni streaming.
+          </small>
+        </aside>
+      </div>
+    </>
+  );
+}
+
+function aiConnectionStatusLabel(status: AIConnectionStatus["state"]): string {
+  if (status === "connecting") return "Conectando";
+  if (status === "connected") return "Conectado";
+  if (status === "authentication-error") return "Error de autenticación";
+  if (status === "offline") return "Sin conexión";
+  if (status === "timeout") return "Timeout";
+  if (status === "invalid-model") return "Modelo no válido";
+  if (status === "credential-unavailable") return "Credencial no disponible";
+  if (status === "error") return "Error";
+  if (status === "configured") return "Configurado";
+  return "No configurado";
+}
+
+function rapidApiReviewsStatusLabel(
+  status: RapidApiReviewsConfigurationStatus["status"] | undefined,
+): string {
+  if (status === "configured") return "Configurada";
+  if (status === "credential-unavailable") return "Credencial no disponible";
+  return "No configurada";
+}
+
+function RapidApiReviewsDeleteDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="settings-modal-backdrop">
+      <NavigationDialog
+        scopeId="rapidapi-reviews-confirm-dialog"
+        initialFocusId="rapidapi-reviews-delete-cancel"
+        className="settings-modal"
+        onBack={onCancel}
+      >
+        <p className="eyebrow">Confirmar eliminación</p>
+        <h2>¿Eliminar API Key?</h2>
+        <p>
+          Se eliminará la credencial compartida para OpenCritic y Metacritic.
+        </p>
+        <div className="settings-action-row">
+          <Focusable
+            focusId="rapidapi-reviews-delete-confirm"
+            scopeId="rapidapi-reviews-confirm-dialog"
+            className="settings-button danger"
+            onConfirm={onConfirm}
+          >
+            Eliminar
+          </Focusable>
+          <Focusable
+            focusId="rapidapi-reviews-delete-cancel"
+            scopeId="rapidapi-reviews-confirm-dialog"
+            className="settings-button secondary"
+            onConfirm={onCancel}
+          >
+            Cancelar
+          </Focusable>
+        </div>
+      </NavigationDialog>
+    </div>
   );
 }
 

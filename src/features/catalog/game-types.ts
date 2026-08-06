@@ -90,6 +90,7 @@ export type Game = {
   verticalCoverUrl: string;
   logoUrl: string;
   backgroundUrl: string;
+  iconUrl?: string;
   screenshots: string[];
   description: string;
   genres: string[];

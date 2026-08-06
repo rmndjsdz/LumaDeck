@@ -5,10 +5,11 @@ use super::{
         ActivityEvent, ActivitySession, ActivitySnapshot, ActivitySourceStatus, ActivityStat,
         ActivityStreak, DatabaseStatus, FrameGenerationProfile, HltbGameData, HltbLocalGame,
         HltbPendingMatch, HltbSettings, HltbSyncStatus, LocalGame, LocalGameAchievements,
-        LocalGameDetails, LocalSteamDetails, SteamConfigurationStatus, SteamCredentials,
-        SteamGameMetrics, SteamGridDbConfigurationStatus, SteamImageSyncResult,
-        SteamImageSyncStatus, SteamLaunchGame, SteamLibrarySyncSettings, SteamSyncResult,
-        SteamSyncStatus,
+        LocalGameDetails, LocalSteamDetails, RapidApiReviewsConfigurationStatus, ReviewsCache,
+        SteamConfigurationStatus, SteamCredentials, SteamGameMetrics,
+        SteamGridDbConfigurationStatus, SteamImageSyncResult, SteamImageSyncStatus,
+        SteamLaunchGame, SteamLibrarySyncSettings, SteamSyncResult, SteamSyncStatus,
+        TranslationConfigurationStatus,
     },
     DatabaseState,
 };
@@ -17,6 +18,7 @@ use crate::achievements::{
     Achievement, AchievementDistribution, AchievementDistributions, AchievementSummary,
     GameAchievements, DEFAULT_RECENT_LIMIT,
 };
+use crate::ai::{self, DEFAULT_MODEL, OPENROUTER_PROVIDER_ID};
 use crate::display::{DisplayProfile, PendingDisplayRestore};
 use crate::steam::{
     SteamGameDetails, SteamImageRecord, SteamImageSource, SteamLibraryGame, SteamStat,
@@ -39,6 +41,16 @@ const HLTB_SOURCE: &str = "HowLongToBeat Community Database";
 const STEAMGRIDDB_PROVIDER_ID: &str = "steamgriddb";
 const STEAMGRIDDB_ACCOUNT_ID: &str = "steamgriddb-default";
 const STEAMGRIDDB_CREDENTIAL_TYPE: &str = "steamgriddb_api_key";
+const RAPIDAPI_REVIEWS_PROVIDER_ID: &str = "rapidapi-reviews";
+const RAPIDAPI_REVIEWS_ACCOUNT_ID: &str = "rapidapi-reviews-default";
+const RAPIDAPI_REVIEWS_CREDENTIAL_TYPE: &str = "rapidapi_reviews_api_key";
+const TRANSLATION_PROVIDER_ID: &str = "google-cloud-translation";
+const TRANSLATION_ACCOUNT_ID: &str = "google-cloud-translation-default";
+const TRANSLATION_CREDENTIAL_TYPE: &str = "google_cloud_translation_api_key";
+const AI_ACCOUNT_ID: &str = "openrouter-default";
+const AI_CREDENTIAL_TYPE: &str = "openrouter_api_key";
+const AI_CONFIGURATION_SETTING: &str = "ai.configuration";
+const TRANSLATION_PROVIDER_SETTING: &str = "news.translation.provider";
 
 fn steam_achievements_source_hash(
     achievements: &[Achievement],
@@ -64,6 +76,134 @@ pub struct SettingsRepository<'a> {
 impl<'a> SettingsRepository<'a> {
     pub fn new(state: &'a DatabaseState) -> Self {
         Self { state }
+    }
+
+    pub fn get_ai_configuration(
+        &self,
+    ) -> Result<super::models::AIConfigurationStatus, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let setting = connection
+            .query_row(
+                "SELECT value_json FROM app_settings WHERE key = ?1",
+                [AI_CONFIGURATION_SETTING],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let configuration = setting
+            .and_then(|value| serde_json::from_str::<super::models::AIConfiguration>(&value).ok())
+            .unwrap_or_else(|| super::models::AIConfiguration {
+                provider_id: OPENROUTER_PROVIDER_ID.to_string(),
+                model: DEFAULT_MODEL.to_string(),
+            });
+        let credential = connection
+            .query_row(
+                "SELECT encrypted_value, masked_suffix FROM provider_credentials
+                 WHERE provider_account_id = ?1 AND credential_type = ?2",
+                params![AI_ACCOUNT_ID, AI_CREDENTIAL_TYPE],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        let (configured, masked, available, state) = match credential {
+            Some((encrypted, suffix)) => match crypto::unprotect(&encrypted) {
+                Ok(_) => (
+                    true,
+                    suffix.map(|value| format!("************{value}")),
+                    true,
+                    "configured",
+                ),
+                Err(_) => (
+                    true,
+                    suffix.map(|value| format!("************{value}")),
+                    false,
+                    "credential-unavailable",
+                ),
+            },
+            None => (false, None, false, "not-configured"),
+        };
+        Ok(super::models::AIConfigurationStatus {
+            configuration,
+            api_key_configured: configured,
+            api_key_masked: masked,
+            credential_available: available,
+            connection: super::models::AIConnectionStatus {
+                state: state.to_string(),
+                message: None,
+            },
+        })
+    }
+
+    pub fn get_ai_api_key(&self) -> Result<String, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let encrypted = connection
+            .query_row(
+                "SELECT encrypted_value FROM provider_credentials
+                 WHERE provider_account_id = ?1 AND credential_type = ?2",
+                params![AI_ACCOUNT_ID, AI_CREDENTIAL_TYPE],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?
+            .ok_or(DatabaseError::AccountNotConfigured)?;
+        crypto::unprotect(&encrypted).map_err(DatabaseError::from)
+    }
+
+    pub fn save_ai_configuration(
+        &self,
+        provider_id: &str,
+        model: &str,
+        api_key: &str,
+    ) -> Result<super::models::AIConfigurationStatus, DatabaseError> {
+        if !ai::is_valid_provider(provider_id) {
+            return Err(DatabaseError::InvalidAIProvider);
+        }
+        if !ai::is_valid_model(model) {
+            return Err(DatabaseError::InvalidAIModel);
+        }
+        let normalized_key = if api_key.trim().is_empty() {
+            self.get_ai_api_key().ok()
+        } else if ai::is_valid_api_key(api_key) {
+            Some(api_key.trim().to_string())
+        } else {
+            return Err(DatabaseError::InvalidAIApiKey);
+        };
+        let now = timestamp();
+        let mut connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO app_settings(key, value_json, schema_version, updated_at)
+             VALUES (?1, ?2, 1, ?3)
+             ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at",
+            params![AI_CONFIGURATION_SETTING, serde_json::json!({"providerId": provider_id, "model": model.trim()}).to_string(), now],
+        )?;
+        if let Some(key) = normalized_key {
+            let encrypted = crypto::protect(&key)?;
+            upsert_provider_credential(
+                &transaction,
+                AI_ACCOUNT_ID,
+                AI_CREDENTIAL_TYPE,
+                &encrypted,
+                &key,
+                &now,
+            )?;
+            transaction.execute(
+                "UPDATE provider_accounts SET configuration_status = 'configured', updated_at = ?1 WHERE id = ?2 AND provider_id = ?3",
+                params![now, AI_ACCOUNT_ID, OPENROUTER_PROVIDER_ID],
+            )?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.get_ai_configuration()
     }
 
     pub fn get_provider_configuration(
@@ -233,6 +373,470 @@ impl<'a> SettingsRepository<'a> {
         transaction.commit()?;
         drop(connection);
         self.get_steamgriddb_configuration()
+    }
+
+    pub fn get_rapidapi_reviews_configuration(
+        &self,
+    ) -> Result<RapidApiReviewsConfigurationStatus, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let enabled = connection
+            .query_row(
+                "SELECT enabled FROM provider_accounts WHERE id = ?1 AND provider_id = ?2",
+                params![RAPIDAPI_REVIEWS_ACCOUNT_ID, RAPIDAPI_REVIEWS_PROVIDER_ID],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(|value| value != 0)
+            .unwrap_or(true);
+        let credential = connection
+            .query_row(
+                "SELECT encrypted_value, masked_suffix FROM provider_credentials
+                 WHERE provider_account_id = ?1 AND credential_type = ?2",
+                params![
+                    RAPIDAPI_REVIEWS_ACCOUNT_ID,
+                    RAPIDAPI_REVIEWS_CREDENTIAL_TYPE
+                ],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        let (configured, masked, available, status) = match credential {
+            Some((encrypted, suffix)) => match crypto::unprotect(&encrypted) {
+                Ok(_) => (
+                    true,
+                    suffix.map(|value| format!("************{value}")),
+                    true,
+                    "configured",
+                ),
+                Err(_) => (
+                    true,
+                    suffix.map(|value| format!("************{value}")),
+                    false,
+                    "credential-unavailable",
+                ),
+            },
+            None => (false, None, false, "not-configured"),
+        };
+        Ok(RapidApiReviewsConfigurationStatus {
+            provider_id: RAPIDAPI_REVIEWS_PROVIDER_ID.to_string(),
+            api_key_configured: configured,
+            api_key_masked: masked,
+            credential_available: available,
+            status: status.to_string(),
+            enabled,
+        })
+    }
+
+    pub fn get_rapidapi_reviews_api_key(&self) -> Result<String, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let encrypted = connection
+            .query_row(
+                "SELECT encrypted_value FROM provider_credentials
+                 WHERE provider_account_id = ?1 AND credential_type = ?2",
+                params![
+                    RAPIDAPI_REVIEWS_ACCOUNT_ID,
+                    RAPIDAPI_REVIEWS_CREDENTIAL_TYPE
+                ],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?
+            .ok_or(DatabaseError::AccountNotConfigured)?;
+        crypto::unprotect(&encrypted).map_err(DatabaseError::from)
+    }
+
+    pub fn get_reviews_cache(&self, game_id: &str) -> Result<Option<ReviewsCache>, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        connection
+            .query_row(
+                "SELECT steam_app_id, metacritic_json, opencritic_json, steam_json, steam_updated_at
+                 FROM game_reviews_cache WHERE game_id = ?1",
+                params![game_id],
+                |row| {
+                    Ok(ReviewsCache {
+                        steam_app_id: row.get(0)?,
+                        metacritic_json: row.get(1)?,
+                        opencritic_json: row.get(2)?,
+                        steam_json: row.get(3)?,
+                        steam_updated_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DatabaseError::from)
+    }
+
+    pub fn get_game_review_consensus(
+        &self,
+        game_id: &str,
+    ) -> Result<Option<crate::consensus::GameReviewConsensus>, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let payload = connection
+            .query_row(
+                "SELECT consensus_json FROM game_review_consensus WHERE game_id = ?1",
+                params![game_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        payload
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|_| DatabaseError::ConsensusDataInvalid)
+            })
+            .transpose()
+    }
+
+    pub fn save_game_review_consensus(
+        &self,
+        consensus: &crate::consensus::GameReviewConsensus,
+    ) -> Result<(), DatabaseError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let payload =
+            serde_json::to_string(consensus).map_err(|_| DatabaseError::ConsensusDataInvalid)?;
+        let mut connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "INSERT INTO game_review_consensus(
+                game_id, consensus_json, generated_at, prompt_version,
+                provider_id, model_id, input_fingerprint, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(game_id) DO UPDATE SET
+                consensus_json = excluded.consensus_json,
+                generated_at = excluded.generated_at,
+                prompt_version = excluded.prompt_version,
+                provider_id = excluded.provider_id,
+                model_id = excluded.model_id,
+                input_fingerprint = excluded.input_fingerprint,
+                updated_at = excluded.updated_at",
+            params![
+                consensus.game_id,
+                payload,
+                consensus.generated_at,
+                consensus.prompt_version,
+                consensus.provider_id,
+                consensus.model_id,
+                consensus.input_fingerprint,
+                now,
+            ],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn save_reviews_provider_cache(
+        &self,
+        game_id: &str,
+        steam_app_id: i64,
+        provider: &str,
+        payload_json: &str,
+    ) -> Result<(), DatabaseError> {
+        let now = chrono::Local::now().to_rfc3339();
+        let mut connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO game_reviews_cache(
+                game_id, steam_app_id, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?3)",
+            params![game_id, steam_app_id, now],
+        )?;
+        let update_sql = match provider {
+            "metacritic" => {
+                "UPDATE game_reviews_cache
+                 SET steam_app_id = ?1, metacritic_json = ?2,
+                     metacritic_updated_at = ?3, updated_at = ?3
+                 WHERE game_id = ?4"
+            }
+            "opencritic" => {
+                "UPDATE game_reviews_cache
+                 SET steam_app_id = ?1, opencritic_json = ?2,
+                     opencritic_updated_at = ?3, updated_at = ?3
+                 WHERE game_id = ?4"
+            }
+            "steam" => {
+                "UPDATE game_reviews_cache
+                 SET steam_app_id = ?1, steam_json = ?2,
+                     steam_updated_at = ?3, updated_at = ?3
+                 WHERE game_id = ?4"
+            }
+            _ => return Err(DatabaseError::UnsupportedProvider),
+        };
+        transaction.execute(
+            update_sql,
+            params![steam_app_id, payload_json, now, game_id],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn save_rapidapi_reviews_api_key(
+        &self,
+        api_key: &str,
+    ) -> Result<RapidApiReviewsConfigurationStatus, DatabaseError> {
+        let api_key = normalize_rapidapi_reviews_api_key(api_key)?;
+        let encrypted = crypto::protect(&api_key)?;
+        let now = timestamp();
+        let mut connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.transaction()?;
+        let exists: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE id = ?1 AND provider_id = ?2)",
+            params![RAPIDAPI_REVIEWS_ACCOUNT_ID, RAPIDAPI_REVIEWS_PROVIDER_ID],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(DatabaseError::AccountNotConfigured);
+        }
+        upsert_provider_credential(
+            &transaction,
+            RAPIDAPI_REVIEWS_ACCOUNT_ID,
+            RAPIDAPI_REVIEWS_CREDENTIAL_TYPE,
+            &encrypted,
+            &api_key,
+            &now,
+        )?;
+        transaction.execute(
+            "UPDATE provider_accounts SET configuration_status = 'configured', updated_at = ?1
+             WHERE id = ?2 AND provider_id = ?3",
+            params![
+                now,
+                RAPIDAPI_REVIEWS_ACCOUNT_ID,
+                RAPIDAPI_REVIEWS_PROVIDER_ID
+            ],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.get_rapidapi_reviews_configuration()
+    }
+
+    pub fn delete_rapidapi_reviews_api_key(
+        &self,
+    ) -> Result<RapidApiReviewsConfigurationStatus, DatabaseError> {
+        let now = timestamp();
+        let mut connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM provider_credentials WHERE provider_account_id = ?1 AND credential_type = ?2",
+            params![RAPIDAPI_REVIEWS_ACCOUNT_ID, RAPIDAPI_REVIEWS_CREDENTIAL_TYPE],
+        )?;
+        transaction.execute(
+            "UPDATE provider_accounts SET configuration_status = 'not-configured', updated_at = ?1
+             WHERE id = ?2 AND provider_id = ?3",
+            params![
+                now,
+                RAPIDAPI_REVIEWS_ACCOUNT_ID,
+                RAPIDAPI_REVIEWS_PROVIDER_ID
+            ],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.get_rapidapi_reviews_configuration()
+    }
+
+    pub fn get_translation_configuration(
+        &self,
+    ) -> Result<TranslationConfigurationStatus, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let enabled = connection
+            .query_row(
+                "SELECT enabled FROM provider_accounts WHERE id = ?1 AND provider_id = ?2",
+                params![TRANSLATION_ACCOUNT_ID, TRANSLATION_PROVIDER_ID],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .map(|value| value != 0)
+            .unwrap_or(true);
+        let credential = connection
+            .query_row(
+                "SELECT encrypted_value, masked_suffix FROM provider_credentials
+                 WHERE provider_account_id = ?1 AND credential_type = ?2",
+                params![TRANSLATION_ACCOUNT_ID, TRANSLATION_CREDENTIAL_TYPE],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        let (configured, masked, available, status) = match credential {
+            Some((encrypted, suffix)) => match crypto::unprotect(&encrypted) {
+                Ok(_) => (
+                    true,
+                    suffix.map(|value| format!("************{value}")),
+                    true,
+                    "configured",
+                ),
+                Err(_) => (
+                    true,
+                    suffix.map(|value| format!("************{value}")),
+                    false,
+                    "credential-unavailable",
+                ),
+            },
+            None => (false, None, false, "not-configured"),
+        };
+        Ok(TranslationConfigurationStatus {
+            provider_id: TRANSLATION_PROVIDER_ID.to_string(),
+            api_key_configured: configured,
+            api_key_masked: masked,
+            credential_available: available,
+            status: status.to_string(),
+            enabled,
+        })
+    }
+
+    pub fn get_translation_api_key(&self) -> Result<String, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let encrypted = connection
+            .query_row(
+                "SELECT encrypted_value FROM provider_credentials
+                 WHERE provider_account_id = ?1 AND credential_type = ?2",
+                params![TRANSLATION_ACCOUNT_ID, TRANSLATION_CREDENTIAL_TYPE],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()?
+            .ok_or(DatabaseError::AccountNotConfigured)?;
+        crypto::unprotect(&encrypted).map_err(DatabaseError::from)
+    }
+
+    pub fn save_translation_api_key(
+        &self,
+        api_key: &str,
+    ) -> Result<TranslationConfigurationStatus, DatabaseError> {
+        let api_key = normalize_translation_api_key(api_key)?;
+        let encrypted = crypto::protect(&api_key)?;
+        let now = timestamp();
+        let mut connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.transaction()?;
+        let exists: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM provider_accounts WHERE id = ?1 AND provider_id = ?2)",
+            params![TRANSLATION_ACCOUNT_ID, TRANSLATION_PROVIDER_ID],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(DatabaseError::AccountNotConfigured);
+        }
+        upsert_provider_credential(
+            &transaction,
+            TRANSLATION_ACCOUNT_ID,
+            TRANSLATION_CREDENTIAL_TYPE,
+            &encrypted,
+            &api_key,
+            &now,
+        )?;
+        transaction.execute(
+            "UPDATE provider_accounts SET configuration_status = 'configured', updated_at = ?1
+             WHERE id = ?2 AND provider_id = ?3",
+            params![now, TRANSLATION_ACCOUNT_ID, TRANSLATION_PROVIDER_ID],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.get_translation_configuration()
+    }
+
+    pub fn delete_translation_api_key(
+        &self,
+    ) -> Result<TranslationConfigurationStatus, DatabaseError> {
+        let now = timestamp();
+        let mut connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM provider_credentials WHERE provider_account_id = ?1 AND credential_type = ?2",
+            params![TRANSLATION_ACCOUNT_ID, TRANSLATION_CREDENTIAL_TYPE],
+        )?;
+        transaction.execute(
+            "UPDATE provider_accounts SET configuration_status = 'not-configured', updated_at = ?1
+             WHERE id = ?2 AND provider_id = ?3",
+            params![now, TRANSLATION_ACCOUNT_ID, TRANSLATION_PROVIDER_ID],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.get_translation_configuration()
+    }
+
+    pub fn get_translation_provider_selection(&self) -> Result<Option<String>, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let value = connection
+            .query_row(
+                "SELECT value_json FROM app_settings WHERE key = ?1",
+                params![TRANSLATION_PROVIDER_SETTING],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        value
+            .map(|value| {
+                serde_json::from_str::<String>(&value)
+                    .map_err(|_| DatabaseError::UnsupportedProvider)
+            })
+            .transpose()
+    }
+
+    pub fn set_translation_provider_selection(
+        &self,
+        provider_id: &str,
+    ) -> Result<String, DatabaseError> {
+        if !matches!(provider_id, "google-public" | "google-cloud-translation") {
+            return Err(DatabaseError::UnsupportedProvider);
+        }
+        let value_json =
+            serde_json::to_string(provider_id).map_err(|_| DatabaseError::UnsupportedProvider)?;
+        let now = timestamp();
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        connection.execute(
+            "INSERT INTO app_settings(key, value_json, schema_version, updated_at)
+             VALUES (?1, ?2, 1, ?3)
+             ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json,
+               schema_version = excluded.schema_version, updated_at = excluded.updated_at",
+            params![TRANSLATION_PROVIDER_SETTING, value_json, now],
+        )?;
+        Ok(provider_id.to_string())
     }
 
     pub fn get_steam_credentials(&self) -> Result<SteamCredentials, DatabaseError> {
@@ -1422,7 +2026,8 @@ impl<'a> SettingsRepository<'a> {
                  COALESCE(d.steam_header_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'horizontal_cover' ORDER BY updated_at DESC LIMIT 1), d.steam_logo_url, '') AS cover_fallback,
                  COALESCE((SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'vertical_cover' ORDER BY updated_at DESC LIMIT 1), d.steam_header_url, '') AS vertical_cover_fallback,
                  COALESCE(d.steam_logo_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'logo' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/logo.png' ELSE '' END) AS logo_fallback,
-                 COALESCE(d.steam_background_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/library_hero_2x.jpg' ELSE '' END) AS background_fallback
+                 COALESCE(d.steam_background_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/library_hero_2x.jpg' ELSE '' END) AS background_fallback,
+                 COALESCE((SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'icon' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_icon_url, '') AS icon_fallback
              FROM games g LEFT JOIN game_details d ON d.game_id = g.id ORDER BY g.sort_title",
         )?;
         let mut games = statement
@@ -1440,6 +2045,7 @@ impl<'a> SettingsRepository<'a> {
                 let vertical_cover_fallback: String = row.get(21)?;
                 let logo_fallback: String = row.get(22)?;
                 let background_fallback: String = row.get(23)?;
+                let icon_fallback: String = row.get(24)?;
                 Ok(LocalGame {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -1459,6 +2065,7 @@ impl<'a> SettingsRepository<'a> {
                         &background_fallback,
                     ),
                     screenshots: Vec::new(),
+                    icon_url: resolve_local_asset_path(self.state, &icon_fallback, ""),
                     description: row.get(9)?,
                     genres: Vec::new(),
                     release_year,
@@ -3012,6 +3619,32 @@ fn normalize_steamgriddb_api_key(value: &str) -> Result<String, DatabaseError> {
     Ok(normalized)
 }
 
+fn normalize_rapidapi_reviews_api_key(value: &str) -> Result<String, DatabaseError> {
+    let normalized = value.trim().to_string();
+    if normalized.len() < 10
+        || normalized.len() > 256
+        || normalized
+            .chars()
+            .any(|character| character == '\r' || character == '\n')
+    {
+        return Err(DatabaseError::InvalidApiKey);
+    }
+    Ok(normalized)
+}
+
+fn normalize_translation_api_key(value: &str) -> Result<String, DatabaseError> {
+    let normalized = value.trim().to_string();
+    if normalized.len() < 10
+        || normalized.len() > 256
+        || normalized
+            .chars()
+            .any(|character| character == '\r' || character == '\n')
+    {
+        return Err(DatabaseError::InvalidTranslationApiKey);
+    }
+    Ok(normalized)
+}
+
 fn suffix(value: &str) -> String {
     value
         .chars()
@@ -3175,6 +3808,7 @@ fn mask_steam_id(value: &str) -> String {
 #[cfg(all(test, windows))]
 mod tests {
     use super::{DatabaseError, SettingsRepository};
+    use crate::consensus::{ConsensusSources, GameReviewConsensus};
     use crate::data_directory::DataDirectoryResolver;
     use crate::display::{DisplayProfile, PendingDisplayRestore};
     use crate::settings::DatabaseState;
@@ -3253,8 +3887,8 @@ mod tests {
 
         let database_status = repository.get_database_status().expect("database status");
         assert!(database_status.path.ends_with("lumadeck.db"));
-        assert_eq!(database_status.schema_version, 12);
-        assert_eq!(database_status.provider_count, 3);
+        assert_eq!(database_status.schema_version, 19);
+        assert_eq!(database_status.provider_count, 6);
         let connection = state.connection.lock().expect("database lock");
         let foreign_keys: i64 = connection
             .pragma_query_value(None, "foreign_keys", |row| row.get(0))
@@ -3921,6 +4555,89 @@ mod tests {
             .get_pending_display_restore()
             .expect("pending read")
             .is_none());
+        drop(state);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn review_consensus_is_upserted_and_recoverable_without_duplicates() {
+        let directory = std::env::temp_dir().join(format!(
+            "lumadeck-review-consensus-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let state =
+            DatabaseState::open(DataDirectoryResolver::for_app_data(&directory)).expect("database");
+        {
+            let connection = state.connection.lock().expect("database lock");
+            connection
+                .execute(
+                    "INSERT INTO games(id, title, sort_title, provider, platform, created_at, updated_at)
+                     VALUES ('consensus-game', 'Consensus Game', 'Consensus Game', 'Steam', 'Windows', '0', '0')",
+                    [],
+                )
+                .expect("game");
+        }
+
+        let repository = SettingsRepository::new(&state);
+        let consensus = |conclusion: &str, fingerprint: &str| GameReviewConsensus {
+            game_id: "consensus-game".to_string(),
+            overall_rating: Some(4.0),
+            agreement: "high".to_string(),
+            agreement_label: "Alto acuerdo".to_string(),
+            strengths: vec!["Combate".to_string()],
+            weaknesses: vec!["Ritmo".to_string()],
+            conclusion: conclusion.to_string(),
+            sources: ConsensusSources {
+                metacritic_included: true,
+                opencritic_included: true,
+                steam_included: true,
+                critic_review_count: Some(20),
+                player_review_count: Some(100),
+                sampled_steam_reviews: 6,
+            },
+            generated_at: "2026-01-01T00:00:00Z".to_string(),
+            prompt_version: 1,
+            provider_id: "openrouter".to_string(),
+            model_id: Some("google/gemini-2.5-flash".to_string()),
+            input_fingerprint: fingerprint.to_string(),
+        };
+
+        repository
+            .save_game_review_consensus(&consensus("Primera conclusión", "fingerprint-a"))
+            .expect("save consensus");
+        assert_eq!(
+            repository
+                .get_game_review_consensus("consensus-game")
+                .expect("read consensus")
+                .expect("stored consensus")
+                .conclusion,
+            "Primera conclusión"
+        );
+
+        repository
+            .save_game_review_consensus(&consensus("Conclusión actualizada", "fingerprint-b"))
+            .expect("replace consensus");
+        let stored = repository
+            .get_game_review_consensus("consensus-game")
+            .expect("read replacement")
+            .expect("replacement");
+        assert_eq!(stored.conclusion, "Conclusión actualizada");
+        assert_eq!(stored.input_fingerprint, "fingerprint-b");
+        let count: i64 = state
+            .connection
+            .lock()
+            .expect("database lock")
+            .query_row(
+                "SELECT COUNT(*) FROM game_review_consensus WHERE game_id = 'consensus-game'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("consensus count");
+        assert_eq!(count, 1);
+
         drop(state);
         let _ = fs::remove_dir_all(directory);
     }

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActivitySnapshot } from "./activity-types";
+import type { ActivityFriend, ActivitySnapshot } from "./activity-types";
 
 export const activityService = {
   get(gameId: string): Promise<ActivitySnapshot> {
@@ -7,6 +7,10 @@ export const activityService = {
       return Promise.reject(new Error("ACTIVITY_RUNTIME_UNAVAILABLE"));
     }
     return invoke<ActivitySnapshot>("get_game_activity", { gameId });
+  },
+
+  getFriends(gameId: string): Promise<ActivityFriend[]> {
+    return invoke<ActivityFriend[]>("get_game_activity_friends", { gameId });
   },
 
   startSession(gameId: string): Promise<number> {

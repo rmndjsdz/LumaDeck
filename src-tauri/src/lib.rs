@@ -1,22 +1,31 @@
 mod achievements;
+mod ai;
 mod artwork;
+mod consensus;
 mod data_directory;
 mod display;
 mod frame_generation;
 mod game_session;
 mod hltb;
 mod lossless_scaling;
+pub mod news;
+mod news_steam;
+mod reviews;
 mod settings;
 mod steam;
 pub mod steamgriddb;
 mod storage_migration;
+mod translation;
 
+use ai::AIProvider;
 use artwork::{ApplyArtworkRequest, ArtworkDownloadError};
+use chrono::{DateTime, Local};
 use data_directory::DataDirectoryMode;
 use frame_generation::FrameGenerationProvider;
 use game_session::{GameSessionStatus, SessionCommandError, SteamGameSessionService};
 use settings::{
-    DatabaseState, DatabaseStatus, SteamConfigurationStatus, StorageMigrationResult, StorageStatus,
+    AIConfigurationStatus, DatabaseState, DatabaseStatus, SteamConfigurationStatus,
+    StorageMigrationResult, StorageStatus,
 };
 use std::{
     sync::atomic::Ordering,
@@ -49,6 +58,78 @@ fn get_provider_configuration(
         "get_provider_configuration",
         settings::get_provider_configuration(&state, &provider_id),
     )
+}
+
+#[tauri::command]
+fn get_ai_configuration(state: State<'_, DatabaseState>) -> Result<AIConfigurationStatus, String> {
+    map_command_result(
+        &state,
+        "ai-settings",
+        "get_ai_configuration",
+        settings::get_ai_configuration(&state),
+    )
+}
+
+#[tauri::command]
+fn save_ai_configuration(
+    state: State<'_, DatabaseState>,
+    provider_id: String,
+    model: String,
+    api_key: String,
+) -> Result<AIConfigurationStatus, String> {
+    map_command_result(
+        &state,
+        "ai-settings",
+        "save_ai_configuration",
+        settings::save_ai_configuration(&state, &provider_id, &model, &api_key),
+    )
+}
+
+#[tauri::command]
+async fn test_ai_connection(
+    state: State<'_, DatabaseState>,
+    provider_id: String,
+    model: String,
+    api_key: String,
+) -> Result<ai::AIConnectionStatus, String> {
+    if !ai::is_valid_provider(&provider_id) {
+        return Ok(ai::AIConnectionStatus {
+            state: "error".to_string(),
+            message: Some("El proveedor seleccionado aún no está disponible".to_string()),
+        });
+    }
+    if !ai::is_valid_model(&model) {
+        return Ok(ai::AIConnectionStatus {
+            state: "invalid-model".to_string(),
+            message: Some("El modelo configurado no es válido".to_string()),
+        });
+    }
+    let resolved_api_key = if api_key.trim().is_empty() {
+        match settings::get_ai_api_key(&state) {
+            Ok(value) => value,
+            Err(_) => {
+                return Ok(ai::AIConnectionStatus {
+                    state: "not-configured".to_string(),
+                    message: Some("API Key no configurada".to_string()),
+                });
+            }
+        }
+    } else if ai::is_valid_api_key(&api_key) {
+        api_key
+    } else {
+        return Ok(ai::AIConnectionStatus {
+            state: "authentication-error".to_string(),
+            message: Some("La API Key no es válida".to_string()),
+        });
+    };
+    state.log(
+        "ai-connection-test",
+        "COMMAND_ENTER",
+        "command=test_ai_connection provider=openrouter",
+    );
+    Ok(ai::OpenRouterProvider::new(model, resolved_api_key)
+        .test_connection()
+        .await)
 }
 
 #[tauri::command]
@@ -488,6 +569,135 @@ fn delete_steamgriddb_api_key(
 }
 
 #[tauri::command]
+fn get_rapidapi_reviews_configuration(
+    state: State<'_, DatabaseState>,
+) -> Result<settings::RapidApiReviewsConfigurationStatus, String> {
+    map_command_result(
+        &state,
+        "rapidapi-reviews-settings-read",
+        "get_rapidapi_reviews_configuration",
+        settings::get_rapidapi_reviews_configuration(&state),
+    )
+}
+
+#[tauri::command]
+fn save_rapidapi_reviews_api_key(
+    state: State<'_, DatabaseState>,
+    api_key: String,
+) -> Result<settings::RapidApiReviewsConfigurationStatus, String> {
+    state.log(
+        "rapidapi-reviews-settings-save",
+        "DTO_RECEIVED",
+        &format!(
+            "api_key_present={} api_key_length={}",
+            !api_key.trim().is_empty(),
+            api_key.trim().len()
+        ),
+    );
+    map_command_result(
+        &state,
+        "rapidapi-reviews-settings-save",
+        "save_rapidapi_reviews_api_key",
+        settings::save_rapidapi_reviews_api_key(&state, &api_key),
+    )
+}
+
+#[tauri::command]
+fn delete_rapidapi_reviews_api_key(
+    state: State<'_, DatabaseState>,
+) -> Result<settings::RapidApiReviewsConfigurationStatus, String> {
+    map_command_result(
+        &state,
+        "rapidapi-reviews-settings-delete",
+        "delete_rapidapi_reviews_api_key",
+        settings::delete_rapidapi_reviews_api_key(&state),
+    )
+}
+
+#[tauri::command]
+fn get_translation_settings_status(
+    state: State<'_, DatabaseState>,
+) -> Result<settings::TranslationConfigurationStatus, String> {
+    map_command_result(
+        &state,
+        "translation-settings-read",
+        "get_translation_settings_status",
+        settings::get_translation_configuration(&state),
+    )
+}
+
+#[tauri::command]
+fn save_translation_provider_credentials(
+    state: State<'_, DatabaseState>,
+    api_key: String,
+) -> Result<settings::TranslationConfigurationStatus, String> {
+    state.log(
+        "translation-settings-save",
+        "DTO_RECEIVED",
+        &format!(
+            "api_key_present={} api_key_length={}",
+            !api_key.trim().is_empty(),
+            api_key.trim().len()
+        ),
+    );
+    map_command_result(
+        &state,
+        "translation-settings-save",
+        "save_translation_provider_credentials",
+        settings::save_translation_api_key(&state, &api_key),
+    )
+}
+
+#[tauri::command]
+fn disconnect_translation_provider(
+    state: State<'_, DatabaseState>,
+) -> Result<settings::TranslationConfigurationStatus, String> {
+    map_command_result(
+        &state,
+        "translation-settings-delete",
+        "disconnect_translation_provider",
+        settings::delete_translation_api_key(&state),
+    )
+}
+
+#[tauri::command]
+fn get_translation_providers(
+    state: State<'_, DatabaseState>,
+) -> Result<Vec<translation::TranslationProviderDescriptor>, String> {
+    map_command_result(
+        &state,
+        "translation-providers-read",
+        "get_translation_providers",
+        translation::get_translation_providers(&state),
+    )
+}
+
+#[tauri::command]
+fn get_active_translation_provider(
+    state: State<'_, DatabaseState>,
+) -> Result<translation::ActiveTranslationProvider, String> {
+    map_command_result(
+        &state,
+        "translation-active-provider-read",
+        "get_active_translation_provider",
+        translation::get_active_translation_provider(&state),
+    )
+}
+
+#[tauri::command]
+fn set_active_translation_provider(
+    state: State<'_, DatabaseState>,
+    provider_id: String,
+) -> Result<translation::ActiveTranslationProvider, String> {
+    map_command_result(
+        &state,
+        "translation-active-provider-save",
+        "set_active_translation_provider",
+        translation::set_active_translation_provider(&state, &provider_id),
+    )
+}
+
+#[tauri::command]
 fn get_hltb_sync_status(
     state: State<'_, DatabaseState>,
 ) -> Result<settings::HltbSyncStatus, String> {
@@ -755,6 +965,139 @@ fn set_game_favorite(
 }
 
 #[tauri::command]
+async fn refresh_game_news(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+    count: Option<u32>,
+    max_length: Option<u32>,
+    force_refresh: Option<bool>,
+) -> Result<news_steam::NewsSyncResult, String> {
+    let correlation_id = "steam-news-refresh";
+    if game_id.trim().is_empty()
+        || count.is_some_and(|value| value == 0)
+        || max_length.is_some_and(|value| value == 0)
+    {
+        return Err("STEAM_NEWS_INVALID_REQUEST".to_string());
+    }
+    let use_case = news_steam::RefreshGameNewsUseCase::new(&state)
+        .map_err(|error| error.code().to_string())?;
+    match use_case
+        .refresh(&game_id, count, max_length, force_refresh.unwrap_or(false))
+        .await
+    {
+        Ok(result) => {
+            state.log(
+                correlation_id,
+                "STEAM_NEWS_REFRESH_SUCCESS",
+                &format!(
+                    "game_id={} app_id={} fetched={} accepted={} discarded={} deduplicated={}",
+                    result.game_id,
+                    result.steam_app_id,
+                    result.fetched_count,
+                    result.accepted_count,
+                    result.discarded_count,
+                    result.deduplicated_count
+                ),
+            );
+            Ok(result)
+        }
+        Err(error) => {
+            state.log(
+                correlation_id,
+                "STEAM_NEWS_REFRESH_ERROR",
+                &format!("game_id={} error_code={}", game_id, error.code()),
+            );
+            Err(error.code().to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn get_game_news_feed(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+    categories: Option<Vec<news::NewsCategory>>,
+    limit: Option<u32>,
+    target_language: Option<String>,
+) -> Result<translation::NewsFeedViewModel, String> {
+    if game_id.trim().is_empty() || limit.is_some_and(|value| value == 0) {
+        return Err("STEAM_NEWS_INVALID_REQUEST".to_string());
+    }
+    map_command_result(
+        &state,
+        "steam-news-feed-read",
+        "get_game_news_feed",
+        translation::get_news_feed_view_model(
+            &state,
+            &game_id,
+            categories.unwrap_or_default(),
+            limit,
+            target_language,
+        ),
+    )
+}
+
+#[tauri::command]
+async fn translate_news_items(
+    state: State<'_, DatabaseState>,
+    news_item_ids: Vec<String>,
+    target_language: Option<String>,
+    force_retranslate: Option<bool>,
+    glossary_version: Option<String>,
+) -> Result<translation::TranslationBatchSummary, String> {
+    if news_item_ids.is_empty() || news_item_ids.len() > 500 {
+        return Err(translation::TranslationErrorKind::Unknown
+            .as_str()
+            .to_string());
+    }
+    let service = translation::TranslationService::from_settings(&state)
+        .map_err(|error| error.kind().as_str().to_string())?;
+    service
+        .translate_news_items(
+            &news_item_ids,
+            target_language
+                .as_deref()
+                .unwrap_or(translation::DEFAULT_TARGET_LANGUAGE),
+            force_retranslate.unwrap_or(false),
+            glossary_version,
+        )
+        .await
+        .map_err(|error| error.kind().as_str().to_string())
+}
+
+#[tauri::command]
+fn get_news_translation_status(
+    state: State<'_, DatabaseState>,
+    news_item_id: String,
+) -> Result<Vec<news::NewsTranslation>, String> {
+    if news_item_id.trim().is_empty() {
+        return Err("TRANSLATION_INVALID_REQUEST".to_string());
+    }
+    map_command_result(
+        &state,
+        "translation-status-read",
+        "get_news_translation_status",
+        news::NewsRepository::new(&state).get_translations_for_news(&news_item_id),
+    )
+}
+
+#[tauri::command]
+fn get_game_news_sync_state(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<Option<news::NewsSyncState>, String> {
+    if game_id.trim().is_empty() {
+        return Err("STEAM_NEWS_INVALID_REQUEST".to_string());
+    }
+    map_command_result(
+        &state,
+        "steam-news-sync-state-read",
+        "get_game_news_sync_state",
+        news_steam::get_game_news_sync_state(&state, &game_id),
+    )
+}
+
+#[tauri::command]
 async fn refresh_steam_game_metadata(
     state: State<'_, DatabaseState>,
     game_id: String,
@@ -807,7 +1150,7 @@ async fn refresh_steam_game_metadata(
             })
             .count();
         state.log(
-            correlation_id,
+            "game-review-consensus-save",
             "STEAM_TRAILER_SOURCES_RECEIVED",
             &format!(
                 "app_id={} movie_count={} hls_count={}",
@@ -843,6 +1186,243 @@ async fn refresh_steam_game_metadata(
     result
 }
 
+fn review_cache_is_same_local_day(timestamp: Option<&str>) -> bool {
+    timestamp
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Local).date_naive() == Local::now().date_naive())
+        .unwrap_or(false)
+}
+
+fn decode_review_cache<T: serde::de::DeserializeOwned>(payload: Option<&String>) -> Option<T> {
+    payload.and_then(|value| serde_json::from_str(value).ok())
+}
+
+async fn load_game_reviews_sources(
+    state: &DatabaseState,
+    game_id: String,
+) -> Result<reviews::ReviewsSourcesDto, String> {
+    let correlation_id = "game-reviews-sources";
+    let game = settings::get_steam_game_for_metadata(&state, &game_id)
+        .map_err(|error| {
+            command_error(&state, correlation_id, "get_steam_game_for_reviews", error)
+        })?
+        .ok_or_else(|| "GAME_IDENTIFIER_MISSING".to_string())?;
+    let rapidapi_key = settings::get_rapidapi_reviews_api_key(&state).ok();
+    let cache = settings::get_reviews_cache(&state, &game_id).ok().flatten();
+    let cache_matches_app = cache
+        .as_ref()
+        .is_some_and(|value| value.steam_app_id == game.app_id);
+    let cached_metacritic = cache_matches_app
+        .then(|| {
+            cache
+                .as_ref()
+                .and_then(|value| decode_review_cache(value.metacritic_json.as_ref()))
+        })
+        .flatten();
+    let cached_opencritic = cache_matches_app
+        .then(|| {
+            cache
+                .as_ref()
+                .and_then(|value| decode_review_cache(value.opencritic_json.as_ref()))
+        })
+        .flatten();
+    let cached_steam = cache_matches_app
+        .then(|| {
+            cache
+                .as_ref()
+                .and_then(|value| decode_review_cache(value.steam_json.as_ref()))
+        })
+        .flatten();
+    let steam_cache_fresh = cache_matches_app
+        && review_cache_is_same_local_day(
+            cache
+                .as_ref()
+                .and_then(|value| value.steam_updated_at.as_deref()),
+        )
+        && cached_steam.is_some();
+    state.log(
+        correlation_id,
+        "REVIEWS_REQUEST_START",
+        &format!(
+            "game_id={} app_id={} title={:?} rapidapi_key_present={} cache_metacritic={} cache_opencritic={} cache_steam={} steam_cache_fresh={}",
+            game_id,
+            game.app_id,
+            game.name,
+            rapidapi_key.is_some(),
+            cached_metacritic.is_some(),
+            cached_opencritic.is_some(),
+            cached_steam.is_some(),
+            steam_cache_fresh
+        ),
+    );
+    let logger = |checkpoint: &str, details: &str| {
+        state.log(correlation_id, checkpoint, details);
+    };
+    let result = reviews::fetch_reviews(
+        &game_id,
+        &game.name,
+        game.app_id,
+        rapidapi_key.as_deref(),
+        cached_metacritic.clone(),
+        cached_opencritic.clone(),
+        cached_steam.clone(),
+        steam_cache_fresh,
+        &logger,
+    )
+    .await;
+    match &result {
+        Ok(value) => {
+            if cached_metacritic.is_none() {
+                if let Some(source) = value.metacritic.as_ref() {
+                    if let Ok(payload) = serde_json::to_string(source) {
+                        let _ = settings::save_reviews_provider_cache(
+                            &state,
+                            &game_id,
+                            game.app_id,
+                            "metacritic",
+                            &payload,
+                        );
+                    }
+                }
+            }
+            if cached_opencritic.is_none() {
+                if let Some(source) = value.opencritic.as_ref() {
+                    if let Ok(payload) = serde_json::to_string(source) {
+                        let _ = settings::save_reviews_provider_cache(
+                            &state,
+                            &game_id,
+                            game.app_id,
+                            "opencritic",
+                            &payload,
+                        );
+                    }
+                }
+            }
+            let steam_refresh_failed = value.errors.iter().any(|error| error.provider == "steam");
+            if !steam_cache_fresh && !steam_refresh_failed {
+                if let Some(source) = value.steam.as_ref() {
+                    if let Ok(payload) = serde_json::to_string(source) {
+                        let _ = settings::save_reviews_provider_cache(
+                            &state,
+                            &game_id,
+                            game.app_id,
+                            "steam",
+                            &payload,
+                        );
+                    }
+                }
+            }
+            state.log(
+                correlation_id,
+                "REVIEWS_REQUEST_COMPLETE",
+                &format!(
+                    "metacritic_score={:?} opencritic_score={:?} steam_cache_fresh={} errors={}",
+                    value.metacritic.as_ref().and_then(|source| source.score),
+                    value.opencritic.as_ref().and_then(|source| source.score),
+                    steam_cache_fresh,
+                    value.errors.len()
+                ),
+            );
+        }
+        Err(error) => state.log(
+            correlation_id,
+            "REVIEWS_REQUEST_ERROR",
+            &format!("error={error}"),
+        ),
+    }
+    let mut result = result;
+    if let Ok(value) = result.as_mut() {
+        value.input_fingerprint = Some(consensus::build_input(&game_id, value).fingerprint);
+    }
+    result
+}
+
+#[tauri::command]
+async fn get_game_reviews_sources(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<reviews::ReviewsSourcesDto, String> {
+    load_game_reviews_sources(&state, game_id).await
+}
+
+#[tauri::command]
+fn get_game_review_consensus(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<Option<consensus::GameReviewConsensus>, String> {
+    map_command_result(
+        &state,
+        "game-review-consensus-read",
+        "get_game_review_consensus",
+        settings::get_game_review_consensus(&state, &game_id),
+    )
+}
+
+#[tauri::command]
+async fn generate_game_review_consensus(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+    force_refresh: bool,
+) -> Result<consensus::GameReviewConsensus, String> {
+    let correlation_id = "game-review-consensus-generate";
+    state.log(
+        correlation_id,
+        "COMMAND_ENTER",
+        &format!("command=generate_game_review_consensus force_refresh={force_refresh}"),
+    );
+    let sources = match load_game_reviews_sources(&state, game_id.clone()).await {
+        Ok(sources) => sources,
+        Err(error) => {
+            state.log(
+                correlation_id,
+                "COMMAND_ERROR",
+                &format!("stage=load_sources error_code={error}"),
+            );
+            return Err(error);
+        }
+    };
+    let input = consensus::build_input(&game_id, &sources);
+    if !force_refresh {
+        if let Some(existing) =
+            settings::get_game_review_consensus(&state, &game_id).map_err(|error| {
+                command_error(
+                    &state,
+                    "game-review-consensus-read",
+                    "generate_game_review_consensus",
+                    error,
+                )
+            })?
+        {
+            return Ok(existing);
+        }
+    }
+    let generated = match consensus::generate(&state, &input).await {
+        Ok(generated) => generated,
+        Err(error) => {
+            state.log(
+                correlation_id,
+                "COMMAND_ERROR",
+                &format!("stage=ai_generation error_code={}", error.code()),
+            );
+            return Err(error.code().to_string());
+        }
+    };
+    settings::save_game_review_consensus(&state, &generated).map_err(|error| {
+        command_error(
+            &state,
+            "game-review-consensus-save",
+            "generate_game_review_consensus",
+            error,
+        )
+    })?;
+    state.log(
+        correlation_id,
+        "COMMAND_RETURN_SUCCESS",
+        "command=generate_game_review_consensus",
+    );
+    Ok(generated)
+}
+
 #[tauri::command]
 async fn get_game_activity(
     state: State<'_, DatabaseState>,
@@ -855,30 +1435,37 @@ async fn get_game_activity(
         "get_game_activity",
         settings::get_game_activity(&state, &game_id),
     )?;
+    snapshot.friends_status = "pending".to_string();
+    return Ok(snapshot);
+}
+
+#[tauri::command]
+async fn get_game_activity_friends(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<Vec<settings::ActivityFriend>, String> {
+    let correlation_id = "game-activity-friends-read";
     let credentials = match settings::get_steam_credentials(&state) {
         Ok(credentials) => credentials,
         Err(error) => {
             let code = command_error(&state, correlation_id, "get_steam_credentials", error);
-            mark_activity_steam_unavailable(&mut snapshot, &code);
-            return Ok(snapshot);
+            return Err(code);
         }
     };
     let app_id = match settings::get_steam_app_id(&state, &game_id) {
         Ok(Some(app_id)) => app_id,
         Ok(None) => {
-            mark_activity_steam_unavailable(&mut snapshot, "STEAM_METADATA_NOT_AVAILABLE");
-            return Ok(snapshot);
+            return Err("STEAM_METADATA_NOT_AVAILABLE".to_string());
         }
         Err(error) => {
             let code = command_error(&state, correlation_id, "get_steam_app_id", error);
-            mark_activity_steam_unavailable(&mut snapshot, &code);
-            return Ok(snapshot);
+            return Err(code);
         }
     };
     match steam::fetch_friends_playing(&credentials.steam_id64, &credentials.api_key, app_id).await
     {
         Ok(friends) => {
-            snapshot.friends = friends
+            let friends = friends
                 .into_iter()
                 .map(|friend| settings::ActivityFriend {
                     steam_id64: friend.steam_id64,
@@ -889,12 +1476,7 @@ async fn get_game_activity(
                     game_id: friend.game_id,
                 })
                 .collect();
-            snapshot.friends_status = if snapshot.friends.is_empty() {
-                "no-data".to_string()
-            } else {
-                "ready".to_string()
-            };
-            mark_activity_steam_ready(&mut snapshot);
+            Ok(friends)
         }
         Err(error) => {
             let code = steam_command_error(error);
@@ -903,15 +1485,9 @@ async fn get_game_activity(
                 "STEAM_FRIENDS_ERROR",
                 &format!("game_id={} error_code={code}", game_id),
             );
-            snapshot.friends_status = if code == "STEAM_OFFLINE" {
-                "offline".to_string()
-            } else {
-                "unavailable".to_string()
-            };
-            mark_activity_steam_unavailable(&mut snapshot, &code);
+            Err(code)
         }
     }
-    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -1366,6 +1942,7 @@ async fn refresh_game_achievements(
                             .parse::<i64>()
                             .unwrap_or_default(),
                     )
+                    && !achievements::needs_icon_source_refresh(&value.achievements)
             })
         {
             return cached.ok_or_else(|| "GAME_NOT_FOUND".to_string());
@@ -1484,10 +2061,15 @@ async fn download_steam_game_media(
         let selected_sources = all_sources
             .into_iter()
             .filter(|source| {
-                source.game_id == game_id
+                        source.game_id == game_id
                     && matches!(
                         source.asset_type.as_str(),
-                        "vertical_cover" | "horizontal_cover" | "logo" | "hero" | "icon"
+                        "vertical_cover"
+                            | "horizontal_cover"
+                            | "logo"
+                            | "hero"
+                            | "icon"
+                            | "screenshot"
                     )
             })
             .collect::<Vec<_>>();
@@ -1523,7 +2105,12 @@ async fn download_steam_game_media(
             .filter(|source| {
                 matches!(
                     source.asset_type.as_str(),
-                    "vertical_cover" | "horizontal_cover" | "logo" | "hero" | "icon"
+                    "vertical_cover"
+                        | "horizontal_cover"
+                        | "logo"
+                        | "hero"
+                        | "icon"
+                        | "screenshot"
                 )
             })
             .collect::<Vec<_>>();
@@ -2184,33 +2771,6 @@ fn unix_timestamp() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
-fn mark_activity_steam_ready(snapshot: &mut settings::ActivitySnapshot) {
-    if let Some(source) = snapshot
-        .sources
-        .iter_mut()
-        .find(|source| source.source == "steam")
-    {
-        source.status = "ready".to_string();
-        source.error = None;
-    }
-}
-
-fn mark_activity_steam_unavailable(snapshot: &mut settings::ActivitySnapshot, error: &str) {
-    snapshot.friends_status = if error == "STEAM_OFFLINE" {
-        "offline".to_string()
-    } else {
-        "unavailable".to_string()
-    };
-    if let Some(source) = snapshot
-        .sources
-        .iter_mut()
-        .find(|source| source.source == "steam")
-    {
-        source.status = snapshot.friends_status.clone();
-        source.error = Some(error.to_string());
-    }
-}
-
 fn steam_command_error(error: SteamError) -> String {
     match error {
         SteamError::Offline => "STEAM_OFFLINE".to_string(),
@@ -2309,6 +2869,9 @@ fn command_error(
     match error {
         settings::DatabaseError::InvalidSteamId => "INVALID_STEAM_ID".to_string(),
         settings::DatabaseError::InvalidApiKey => "INVALID_API_KEY".to_string(),
+        settings::DatabaseError::InvalidTranslationApiKey => {
+            "INVALID_TRANSLATION_API_KEY".to_string()
+        }
         settings::DatabaseError::InvalidSteamSyncScope => "INVALID_STEAM_SYNC_SCOPE".to_string(),
         settings::DatabaseError::GameNotFound => "GAME_NOT_FOUND".to_string(),
         settings::DatabaseError::SteamMetadataUnavailable => {
@@ -2316,6 +2879,10 @@ fn command_error(
         }
         settings::DatabaseError::AccountNotConfigured => "ACCOUNT_NOT_CONFIGURED".to_string(),
         settings::DatabaseError::UnsupportedProvider => "UNSUPPORTED_PROVIDER".to_string(),
+        settings::DatabaseError::InvalidAIProvider => "INVALID_AI_PROVIDER".to_string(),
+        settings::DatabaseError::InvalidAIModel => "INVALID_AI_MODEL".to_string(),
+        settings::DatabaseError::InvalidAIApiKey => "INVALID_AI_API_KEY".to_string(),
+        settings::DatabaseError::ConsensusDataInvalid => "CONSENSUS_DATA_INVALID".to_string(),
         settings::DatabaseError::Credential(_) => "CREDENTIAL_UNAVAILABLE".to_string(),
         settings::DatabaseError::Path(_) => "DATABASE_PATH_UNAVAILABLE".to_string(),
         settings::DatabaseError::Sqlite(_) => "DATABASE_ERROR".to_string(),
@@ -2431,6 +2998,9 @@ pub fn run() {
             restore_steamgriddb_artwork,
             get_current_steamgriddb_artwork,
             get_provider_configuration,
+            get_ai_configuration,
+            save_ai_configuration,
+            test_ai_connection,
             save_steam_account_configuration,
             update_steam_id,
             replace_steam_api_key,
@@ -2444,6 +3014,15 @@ pub fn run() {
             get_steamgriddb_configuration,
             save_steamgriddb_api_key,
             delete_steamgriddb_api_key,
+            get_rapidapi_reviews_configuration,
+            save_rapidapi_reviews_api_key,
+            delete_rapidapi_reviews_api_key,
+            get_translation_settings_status,
+            save_translation_provider_credentials,
+            disconnect_translation_provider,
+            get_translation_providers,
+            get_active_translation_provider,
+            set_active_translation_provider,
             get_hltb_sync_status,
             get_hltb_pending_matches,
             search_hltb_candidates,
@@ -2454,7 +3033,16 @@ pub fn run() {
             cancel_hltb_sync,
             get_library_games,
             set_game_favorite,
+            refresh_game_news,
+            get_game_news_feed,
+            translate_news_items,
+            get_news_translation_status,
+            get_game_news_sync_state,
+            get_game_reviews_sources,
+            get_game_review_consensus,
+            generate_game_review_consensus,
             get_game_activity,
+            get_game_activity_friends,
             start_game_session,
             end_game_session,
             get_display_modes,
