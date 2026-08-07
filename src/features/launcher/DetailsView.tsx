@@ -14,6 +14,7 @@ import type {
   SteamGameDetails,
   SteamGameMetrics,
 } from "../catalog/game-types";
+import { toPlainText } from "../catalog/text-utils";
 import { useProductStore } from "../../stores/product-store";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import { FocusScope } from "../../ui/navigation/focus/FocusScope";
@@ -23,6 +24,7 @@ import {
   NavigationTab,
   NavigationTabs,
 } from "../../ui/navigation/layouts/NavigationTabs";
+import { NavigationContent } from "../../ui/navigation/layouts/NavigationContent";
 import { providerSettingsService } from "../settings/provider-settings-service";
 import { SteamTrailer } from "./SteamTrailer";
 import { formatHltbDuration } from "./hltb-format";
@@ -51,12 +53,16 @@ import {
   frameGenerationService,
   type FrameGenerationProfile,
 } from "./frame-generation-service";
+import { DlcView } from "../dlc/DlcView";
+import { RelatedGamesView } from "../related/RelatedGamesView";
 
 export function DetailsView({
   game,
+  games,
   onClose,
 }: {
   game: Game | undefined;
+  games: readonly Game[];
   onClose?: () => void;
 }) {
   const closeDetails = useProductStore((state) => state.closeDetails);
@@ -86,7 +92,13 @@ export function DetailsView({
   const [isUpdatingFavorite, setIsUpdatingFavorite] = useState(false);
   const [artworkModifierOpen, setArtworkModifierOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<
-    "summary" | "activity" | "achievements" | "news" | "reviews"
+    | "summary"
+    | "activity"
+    | "achievements"
+    | "news"
+    | "dlc"
+    | "related"
+    | "reviews"
   >("summary");
   const [detailsContentDirection, setDetailsContentDirection] = useState<
     "forward" | "backward"
@@ -586,6 +598,21 @@ export function DetailsView({
     }
   };
 
+  const addRecommendedToWishlist = async (candidate: Game) => {
+    if (candidate.favorite) {
+      setMessage(`${candidate.title} ya está en tu lista de deseos.`);
+      return;
+    }
+    try {
+      await providerSettingsService.setGameFavorite(candidate.id, true);
+      await queryClient.invalidateQueries({ queryKey: ["games"] });
+      setMessage(`${candidate.title} se añadió a tu lista de deseos.`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown error";
+      setMessage(`No se pudo añadir ${candidate.title} a tu lista: ${detail}`);
+    }
+  };
+
   const launchGame = () => {
     if (!game) return;
     const steamAppId = game.details?.steam?.appId;
@@ -610,9 +637,13 @@ export function DetailsView({
           ? "achievements"
           : focusId === "details-tab-news"
             ? "news"
-            : focusId === "details-tab-reviews"
-              ? "reviews"
-              : "summary";
+            : focusId === "details-tab-dlc"
+              ? "dlc"
+              : focusId === "details-tab-related"
+                ? "related"
+                : focusId === "details-tab-reviews"
+                  ? "reviews"
+                  : "summary";
     if (nextSection === activeSection) return;
     setDetailsContentDirection(
       activeSection === "summary" && nextSection === "activity"
@@ -630,6 +661,9 @@ export function DetailsView({
       "details-tab-activity",
       "details-tab-achievements",
       "details-tab-news",
+      "details-tab-dlc",
+      "details-tab-related",
+      "details-tab-reviews",
     ] as const;
     const currentIndex =
       activeSection === "summary"
@@ -638,7 +672,13 @@ export function DetailsView({
           ? 1
           : activeSection === "achievements"
             ? 2
-            : 3;
+            : activeSection === "news"
+              ? 3
+              : activeSection === "dlc"
+                ? 4
+                : activeSection === "related"
+                  ? 5
+                  : 6;
     const offset = action === "page-next" ? 1 : -1;
     const nextTab = navigableTabs[currentIndex + offset];
     if (!nextTab) return true;
@@ -1204,6 +1244,11 @@ export function DetailsView({
           onSelect={selectDetailsSection}
           activationMode="automatic"
           upTargetId="details-play"
+          navigationRegion={{
+            regionId: "details-sections",
+            childRegionId: "details-content",
+            entryFocusPolicy: "first",
+          }}
           ariaLabel="Game sections"
         >
           <NavigationTab
@@ -1241,7 +1286,6 @@ export function DetailsView({
             focusId="details-tab-dlc"
             scopeId="details"
             className="details-tab"
-            disabled
           >
             DLC
           </NavigationTab>
@@ -1249,7 +1293,6 @@ export function DetailsView({
             focusId="details-tab-related"
             scopeId="details"
             className="details-tab"
-            disabled
           >
             Relacionados
           </NavigationTab>
@@ -1261,63 +1304,81 @@ export function DetailsView({
             Reseñas
           </NavigationTab>
         </NavigationTabs>
-        <div
-          key={activeSection}
-          className={`details-tab-content is-${detailsContentDirection}`}
-          data-transition-direction={detailsContentDirection}
-          data-active-section={activeSection}
+        <NavigationContent
+          navigationRegion={{
+            regionId: "details-content",
+            parentRegionId: "details-sections",
+          }}
         >
-          {activeSection === "activity" ? (
-            <ActivityView game={game} />
-          ) : activeSection === "achievements" ? (
-            <AchievementsView gameId={game.id} />
-          ) : activeSection === "news" ? (
-            <NewsView game={game} />
-          ) : activeSection === "reviews" ? (
-            <ReviewsView game={game} />
-          ) : (
-            <section
-              className="details-summary"
-              aria-labelledby="details-summary-heading"
-            >
-              <div className="details-summary-copy">
-                <h2 id="details-summary-heading" className="visually-hidden">
-                  Resumen
-                </h2>
-                <p className="details-summary-description">
-                  {summaryDescription}
-                </p>
-                <h3>Características</h3>
-                <ul className="details-feature-list">
-                  {features.map((feature) => (
-                    <li key={feature}>{feature}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="details-summary-screenshots">
-                <p className="eyebrow">Capturas de pantalla</p>
-                {screenshotUrls.length > 0 ? (
-                  <div className="details-screenshot-grid">
-                    {screenshotUrls.map((screenshot, index) => (
-                      <img
-                        key={`${game.id}-screenshot-${index}`}
-                        src={screenshot}
-                        alt={`${game.title} screenshot ${index + 1}`}
-                        className="details-screenshot"
-                        loading="lazy"
-                        draggable={false}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="details-empty-media">
-                    No screenshots available.
+          <div
+            key={activeSection}
+            className={`details-tab-content is-${detailsContentDirection}`}
+            data-transition-direction={detailsContentDirection}
+            data-active-section={activeSection}
+          >
+            {activeSection === "activity" ? (
+              <ActivityView game={game} />
+            ) : activeSection === "achievements" ? (
+              <AchievementsView gameId={game.id} />
+            ) : activeSection === "news" ? (
+              <NewsView game={game} />
+            ) : activeSection === "dlc" ? (
+              <DlcView game={game} />
+            ) : activeSection === "related" ? (
+              <RelatedGamesView
+                game={game}
+                games={games}
+                onMessage={setMessage}
+                onAddToWishlist={(candidate) =>
+                  void addRecommendedToWishlist(candidate)
+                }
+              />
+            ) : activeSection === "reviews" ? (
+              <ReviewsView game={game} />
+            ) : (
+              <section
+                className="details-summary"
+                aria-labelledby="details-summary-heading"
+              >
+                <div className="details-summary-copy">
+                  <h2 id="details-summary-heading" className="visually-hidden">
+                    Resumen
+                  </h2>
+                  <p className="details-summary-description">
+                    {summaryDescription}
                   </p>
-                )}
-              </div>
-            </section>
-          )}
-        </div>
+                  <h3>Características</h3>
+                  <ul className="details-feature-list">
+                    {features.map((feature) => (
+                      <li key={feature}>{feature}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="details-summary-screenshots">
+                  <p className="eyebrow">Capturas de pantalla</p>
+                  {screenshotUrls.length > 0 ? (
+                    <div className="details-screenshot-grid">
+                      {screenshotUrls.map((screenshot, index) => (
+                        <img
+                          key={`${game.id}-screenshot-${index}`}
+                          src={screenshot}
+                          alt={`${game.title} screenshot ${index + 1}`}
+                          className="details-screenshot"
+                          loading="lazy"
+                          draggable={false}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="details-empty-media">
+                      No screenshots available.
+                    </p>
+                  )}
+                </div>
+              </section>
+            )}
+          </div>
+        </NavigationContent>
       </section>
       {artworkModifierOpen && (
         <ArtworkModifierView game={game} onClose={closeArtworkModifier} />
@@ -1449,19 +1510,6 @@ function parseSteamDate(value: string): Date {
     );
   }
   return new Date(value);
-}
-
-function toPlainText(value: string): string {
-  return value
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function getFeatureList(

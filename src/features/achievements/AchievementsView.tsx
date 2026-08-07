@@ -343,7 +343,7 @@ function AchievementsAside({
         <div className="achievement-summary-values" aria-label="Valores">
           <strong>{summary?.unlocked ?? "—"}</strong>
           <strong>—</strong>
-          <strong>—</strong>
+          <strong>{summary?.locked ?? "—"}</strong>
         </div>
       </section>
       <DistributionPanel achievements={achievements} />
@@ -380,9 +380,12 @@ export function DistributionPanel({
 }: {
   achievements: Achievement[];
 }) {
-  const total = achievements.length;
+  const unlockedAchievements = achievements.filter(
+    (achievement) => achievement.unlocked,
+  );
+  const total = unlockedAchievements.length;
   const values = RARITY_DISTRIBUTION.map((rarity) => {
-    const count = achievements.filter((achievement) =>
+    const count = unlockedAchievements.filter((achievement) =>
       rarity.rarityIds.some((rarityId) => rarityId === achievement.rarity),
     ).length;
     return {
@@ -394,7 +397,7 @@ export function DistributionPanel({
   return (
     <section className="achievement-panel">
       <p className="achievement-distribution-heading">
-        Distribución por rareza
+        Distribución por rareza · desbloqueados
       </p>
       <div className="achievement-distribution-list">
         {values.map(({ id, label, range, count, percentage }) => (

@@ -4,7 +4,10 @@ import {
   RowNavigationGroupContext,
   type RowNavigationGroupContextValue,
 } from "./row-navigation-group-context";
-import { NavigationRegionContext } from "./linear-navigation-context";
+import {
+  NavigationRegionContext,
+  useNavigationRegion,
+} from "./linear-navigation-context";
 import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
 
 export interface NavigationRowGroupProps extends PropsWithChildren {
@@ -31,6 +34,7 @@ export function NavigationRowGroup({
   className,
   children,
 }: NavigationRowGroupProps) {
+  const inheritedRegion = useNavigationRegion();
   const value = useMemo<RowNavigationGroupContextValue>(
     () => ({
       groupId,
@@ -42,8 +46,10 @@ export function NavigationRowGroup({
   );
   const regionValue = useMemo<NavigationRegionConfig | null>(
     () =>
-      regionId ? { regionId, parentRegionId, entryFocusId, exitFocusId } : null,
-    [entryFocusId, exitFocusId, parentRegionId, regionId],
+      regionId
+        ? { regionId, parentRegionId, entryFocusId, exitFocusId }
+        : inheritedRegion,
+    [entryFocusId, exitFocusId, inheritedRegion, parentRegionId, regionId],
   );
 
   return (

@@ -88,6 +88,7 @@ export type Game = {
   provider: string;
   coverUrl: string;
   verticalCoverUrl: string;
+  squareCoverUrl?: string;
   logoUrl: string;
   backgroundUrl: string;
   iconUrl?: string;

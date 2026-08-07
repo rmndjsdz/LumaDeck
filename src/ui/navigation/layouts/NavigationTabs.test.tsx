@@ -7,6 +7,7 @@ import { FocusScope } from "../focus/FocusScope";
 import { Focusable } from "../focus/Focusable";
 import { NavigationProvider } from "../NavigationProvider";
 import { useNavigation } from "../navigation-context";
+import { NavigationContent } from "./NavigationContent";
 import { NavigationTab, NavigationTabs } from "./NavigationTabs";
 import type { NavigationEngine } from "../core/navigation-engine";
 import type { NavigationAction } from "../core/navigation-types";
@@ -110,6 +111,11 @@ function DetailsTabsHarness({
         onSelect={selectTab}
         activationMode={activationMode}
         upTargetId="details-play"
+        navigationRegion={{
+          regionId: "details-sections",
+          childRegionId: "details-content",
+          entryFocusPolicy: "first",
+        }}
         ariaLabel="Game sections"
       >
         <NavigationTab focusId="details-tab-summary" scopeId="details">
@@ -126,6 +132,27 @@ function DetailsTabsHarness({
           Disabled
         </NavigationTab>
       </NavigationTabs>
+      <NavigationContent
+        navigationRegion={{
+          regionId: "details-content",
+          parentRegionId: "details-sections",
+        }}
+      >
+        {selectedId === "details-tab-summary" ? (
+          <>
+            <Focusable focusId="details-summary-first" scopeId="details">
+              Summary first
+            </Focusable>
+            <Focusable focusId="details-summary-second" scopeId="details">
+              Summary second
+            </Focusable>
+          </>
+        ) : (
+          <Focusable focusId="details-activity-first" scopeId="details">
+            Activity first
+          </Focusable>
+        )}
+      </NavigationContent>
       <output data-testid="transition-direction">{transitionDirection}</output>
       <output data-testid="selected-tab">{selectedId}</output>
       <output data-testid="game-id">{gameId}</output>
@@ -218,6 +245,31 @@ describe("NavigationTabs", () => {
     expect(useNavigationStore.getState().activeFocusId).toBe(
       "details-tab-activity",
     );
+    cleanup(root, host);
+  });
+
+  it("enters the first interactive item of the active tab every time", async () => {
+    const { root, host, engineRef } = renderTabs();
+    await flushEffects();
+
+    act(() => dispatchKey("ArrowDown"));
+    act(() => dispatchKey("ArrowDown"));
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-summary-first",
+    );
+
+    act(() => engineRef.current?.focus("details-summary-second"));
+    act(() => dispatchKey("ArrowUp"));
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-tab-summary",
+    );
+
+    act(() => dispatchKey("ArrowRight"));
+    act(() => dispatchKey("ArrowDown"));
+    expect(useNavigationStore.getState().activeFocusId).toBe(
+      "details-activity-first",
+    );
+
     cleanup(root, host);
   });
 

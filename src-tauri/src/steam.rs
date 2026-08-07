@@ -18,6 +18,7 @@ const STEAM_API_BASE_URL: &str = "https://api.steampowered.com";
 const STEAM_STORE_BASE_URL: &str = "https://store.steampowered.com";
 const MAX_SCREENSHOTS_PER_GAME: usize = 8;
 const STEAM_STORE_REFRESH_CONCURRENCY: usize = 2;
+const STEAM_LIBRARY_REFRESH_CONCURRENCY: usize = 2;
 const HORIZONTAL_COVER_MIN_WIDTH: i64 = 920;
 const HORIZONTAL_COVER_MIN_HEIGHT: i64 = 430;
 const VERTICAL_COVER_MIN_WIDTH: i64 = 600;
@@ -543,7 +544,20 @@ struct GlobalAchievementPercentages {
 #[derive(Debug, Deserialize)]
 struct GlobalAchievementPercentage {
     name: String,
+    #[serde(deserialize_with = "deserialize_percentage")]
     percent: Option<f64>,
+}
+
+fn deserialize_percentage<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    Ok(match value {
+        Some(Value::Number(value)) => value.as_f64(),
+        Some(Value::String(value)) => value.trim().parse::<f64>().ok(),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -887,7 +901,7 @@ async fn fetch_library_from_bases(
     progress_completed.store(0, Ordering::SeqCst);
     progress_total.store(owned_games.len(), Ordering::SeqCst);
     let mut games = Vec::with_capacity(owned_games.len());
-    for chunk in owned_games.chunks(8) {
+    for chunk in owned_games.chunks(STEAM_LIBRARY_REFRESH_CONCURRENCY) {
         ensure_not_cancelled(cancel_requested.as_ref())?;
         let mut handles = Vec::new();
         for game in chunk
@@ -1221,21 +1235,8 @@ async fn fetch_game_details(
 ) -> Result<SteamGameDetails, SteamError> {
     ensure_not_cancelled(cancel_requested)?;
     let app_id = game.appid.to_string();
-    let app_details_result = request_json::<HashMap<String, AppDetailsEnvelope>>(
-        client,
-        &format!("{}/api/appdetails/", store_base.trim_end_matches('/')),
-        &[("appids", &app_id), ("l", "english"), ("cc", "us")],
-    )
-    .await
-    .ok()
-    .and_then(|mut responses| responses.remove(&game.appid.to_string()))
-    .and_then(|response| {
-        if response.success {
-            response.data
-        } else {
-            None
-        }
-    });
+    let app_details_result =
+        fetch_store_app_details(client, store_base, &app_id, cancel_requested).await?;
     let details_complete = app_details_result.is_some();
     let app_details = app_details_result.unwrap_or_default();
     ensure_not_cancelled(cancel_requested)?;
@@ -1504,6 +1505,39 @@ async fn fetch_game_details(
         details.name = Some(game.name.clone());
     }
     Ok(details)
+}
+
+async fn fetch_store_app_details(
+    client: &reqwest::Client,
+    store_base: &str,
+    app_id: &str,
+    cancel_requested: &AtomicBool,
+) -> Result<Option<AppDetails>, SteamError> {
+    let url = format!("{}/api/appdetails/", store_base.trim_end_matches('/'));
+    let query = [("appids", app_id), ("l", "english"), ("cc", "us")];
+
+    for attempt in 0..2 {
+        ensure_not_cancelled(cancel_requested)?;
+        let result = request_json::<HashMap<String, AppDetailsEnvelope>>(client, &url, &query)
+            .await
+            .ok()
+            .and_then(|mut responses| responses.remove(app_id))
+            .and_then(|response| response.success.then_some(response.data).flatten());
+
+        if result.is_some() {
+            return Ok(result);
+        }
+
+        if attempt == 0 {
+            let _ = tauri::async_runtime::spawn_blocking(|| {
+                std::thread::sleep(Duration::from_millis(400));
+            })
+            .await;
+        }
+    }
+
+    ensure_not_cancelled(cancel_requested)?;
+    Ok(None)
 }
 
 fn image_assets_for(
@@ -2364,15 +2398,16 @@ mod tests {
     #[test]
     fn parses_global_achievement_percentages() {
         let response: GlobalAchievementPercentagesResponse = serde_json::from_str(
-            r#"{"achievementpercentages":{"achievements":[{"name":"ACH_WIN","percent":12.5}]}}"#,
+            r#"{"achievementpercentages":{"achievements":[{"name":"ACH_WIN","percent":"12.5"},{"name":"ACH_NULL","percent":null}]}}"#,
         )
         .expect("global achievement percentages");
-        let achievement = &response
+        let percentages = response
             .achievement_percentages
-            .expect("achievement percentages")
-            .achievements[0];
+            .expect("achievement percentages");
+        let achievement = &percentages.achievements[0];
         assert_eq!(achievement.name, "ACH_WIN");
         assert_eq!(achievement.percent, Some(12.5));
+        assert_eq!(percentages.achievements[1].percent, None);
     }
 
     #[test]

@@ -27,6 +27,7 @@ function resolveLocalGameAssets(game: Game): Game {
     ...game,
     coverUrl: resolveAssetUrl(game.coverUrl),
     verticalCoverUrl: resolveAssetUrl(game.verticalCoverUrl),
+    squareCoverUrl: resolveAssetUrl(game.squareCoverUrl ?? ""),
     logoUrl: resolveAssetUrl(game.logoUrl),
     backgroundUrl: resolveAssetUrl(game.backgroundUrl),
     iconUrl: resolveAssetUrl(game.iconUrl ?? ""),

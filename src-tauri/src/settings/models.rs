@@ -429,6 +429,7 @@ pub struct LocalGame {
     pub provider: String,
     pub cover_url: String,
     pub vertical_cover_url: String,
+    pub square_cover_url: String,
     pub logo_url: String,
     pub background_url: String,
     pub icon_url: String,

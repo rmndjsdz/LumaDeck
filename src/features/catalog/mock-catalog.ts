@@ -49,6 +49,7 @@ export function createMockCatalog(): Game[] {
       provider: providers[index % providers.length],
       coverUrl: createCover(index, title),
       verticalCoverUrl: createCover(index, title),
+      squareCoverUrl: "",
       logoUrl: createCover(index, title),
       backgroundUrl: createBackground(index),
       screenshots: [],

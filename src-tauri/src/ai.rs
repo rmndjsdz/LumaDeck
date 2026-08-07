@@ -140,7 +140,7 @@ impl OpenRouterProvider {
             base_url: OPENROUTER_BASE_URL.to_string(),
             model,
             api_key,
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(30),
         }
     }
 
@@ -233,6 +233,7 @@ impl AIProvider for OpenRouterProvider {
                 { "role": "system", "content": request.system_prompt },
                 { "role": "user", "content": request.user_prompt }
             ],
+            "stream": false,
             "temperature": 0.1,
             "response_format": {
                 "type": "json_schema",

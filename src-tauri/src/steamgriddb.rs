@@ -433,7 +433,10 @@ fn build_asset_query(slot: ArtworkSlot, style_filter: ArtworkFilterKind) -> Vec<
     } else if matches!(slot, ArtworkSlot::GridVertical) {
         query.push(("dimensions".to_string(), "600x900".to_string()));
     } else if matches!(slot, ArtworkSlot::GridSquare) {
-        query.push(("dimensions".to_string(), "1024x1024".to_string()));
+        query.push((
+            "dimensions".to_string(),
+            "1024x1024,512x512".to_string(),
+        ));
     } else if matches!(slot, ArtworkSlot::Hero) {
         query.push(("dimensions".to_string(), "3840x1240,1920x620".to_string()));
     }
@@ -706,6 +709,13 @@ mod tests {
         assert_eq!(
             build_asset_query(ArtworkSlot::Hero, ArtworkFilterKind::All),
             vec![("dimensions".to_string(), "3840x1240,1920x620".to_string())]
+        );
+        assert_eq!(
+            build_asset_query(ArtworkSlot::GridSquare, ArtworkFilterKind::All),
+            vec![(
+                "dimensions".to_string(),
+                "1024x1024,512x512".to_string()
+            )]
         );
     }
 

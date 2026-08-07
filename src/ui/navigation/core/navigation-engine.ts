@@ -1253,11 +1253,13 @@ export class NavigationEngine {
         this.hierarchyNavigation.getLastFocusedFocusId(region.childRegionId))
       : null;
     const targetFocusId =
+      region.entryFocusPolicy !== "first" &&
       hasGridMaterializer &&
       rememberedFocusId &&
       !childEntries.some((entry) => entry.focusId === rememberedFocusId)
         ? rememberedFocusId
-        : hasGridMaterializer &&
+        : region.entryFocusPolicy !== "first" &&
+            hasGridMaterializer &&
             region.entryFocusId &&
             !childEntries.some((entry) => entry.focusId === region.entryFocusId)
           ? region.entryFocusId

@@ -1943,6 +1943,7 @@ async fn refresh_game_achievements(
                             .unwrap_or_default(),
                     )
                     && !achievements::needs_icon_source_refresh(&value.achievements)
+                    && !achievements::needs_community_percentage_refresh(&value.achievements)
             })
         {
             return cached.ok_or_else(|| "GAME_NOT_FOUND".to_string());
@@ -2308,6 +2309,30 @@ async fn sync_steam_library(
                 games.len()
             ),
         );
+        let incomplete_metadata_app_ids = games
+            .iter()
+            .filter_map(|game| {
+                game.details
+                    .as_ref()
+                    .filter(|details| !details.complete)
+                    .map(|_| game.app_id)
+            })
+            .collect::<Vec<_>>();
+        if !incomplete_metadata_app_ids.is_empty() {
+            state.log(
+                "steam-sync",
+                "STEAM_METADATA_INCOMPLETE",
+                &format!(
+                    "app_id_count={} app_ids={}",
+                    incomplete_metadata_app_ids.len(),
+                    incomplete_metadata_app_ids
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+            );
+        }
         state
             .steam_sync_progress
             .store(games.len(), Ordering::SeqCst);

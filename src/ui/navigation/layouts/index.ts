@@ -1,4 +1,5 @@
 export { NavigationDialog } from "./NavigationDialog";
+export { NavigationContent } from "./NavigationContent";
 export { NavigationGrid } from "./NavigationGrid";
 export { NavigationList } from "./NavigationList";
 export { NavigationRow } from "./NavigationRow";

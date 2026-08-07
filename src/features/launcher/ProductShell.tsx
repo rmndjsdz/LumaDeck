@@ -348,7 +348,11 @@ export function ProductShell() {
               )}
               {activeView === "library" && <LibraryView onOpen={handleOpen} />}
               {activeView === "details" && (
-                <DetailsView game={selectedGame} onClose={handleCloseDetails} />
+                <DetailsView
+                  game={selectedGame}
+                  games={games}
+                  onClose={handleCloseDetails}
+                />
               )}
             </ViewTransition>
           )}

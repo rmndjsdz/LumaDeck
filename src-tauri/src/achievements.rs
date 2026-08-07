@@ -207,6 +207,13 @@ pub fn needs_icon_source_refresh(achievements: &[Achievement]) -> bool {
         })
 }
 
+pub fn needs_community_percentage_refresh(achievements: &[Achievement]) -> bool {
+    !achievements.is_empty()
+        && achievements
+            .iter()
+            .any(|achievement| achievement.unlock_percentage.is_none())
+}
+
 pub fn distribute_total(achievements: &[Achievement]) -> AchievementDistribution {
     let (bronze, silver, gold) = distribution_for(achievements.iter());
     AchievementDistribution {
@@ -613,8 +620,8 @@ mod tests {
     use super::{
         api_name_hash, build_icon_client, build_icon_client_with_timeouts, cache_one_icon,
         cache_path, distribute_total, distribute_unlocked, encode_icon, is_sync_fresh,
-        needs_icon_source_refresh, rarity_from_percentage, recent, summarize, Achievement,
-        AchievementRarity, IconTask, ICON_MAX_BYTES,
+        needs_community_percentage_refresh, needs_icon_source_refresh, rarity_from_percentage,
+        recent, summarize, Achievement, AchievementRarity, IconTask, ICON_MAX_BYTES,
     };
     use std::{
         fs,
@@ -717,6 +724,14 @@ mod tests {
         values[0].icon_unlocked = Some("https://example.test/unlocked.png".to_string());
         values[0].icon_locked = Some("https://example.test/locked.png".to_string());
         assert!(!needs_icon_source_refresh(&values));
+    }
+
+    #[test]
+    fn detects_achievements_without_community_percentages() {
+        let mut values = vec![achievement("one", false, AchievementRarity::Common)];
+        assert!(needs_community_percentage_refresh(&values));
+        values[0].unlock_percentage = Some(4.0);
+        assert!(!needs_community_percentage_refresh(&values));
     }
 
     #[test]

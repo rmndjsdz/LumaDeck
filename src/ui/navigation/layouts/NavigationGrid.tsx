@@ -7,6 +7,7 @@ import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
 import {
   GridNavigationContext,
   NavigationRegionContext,
+  useNavigationRegion,
 } from "./linear-navigation-context";
 
 interface NavigationGridProps extends NavigationLayoutProps {
@@ -45,6 +46,7 @@ export function NavigationGrid({
   children,
 }: NavigationGridProps) {
   const generatedGroupId = useId();
+  const inheritedRegion = useNavigationRegion();
   const gridNavigation = useMemo(
     () => ({
       groupId: groupId ?? `${scopeId ?? "grid"}-${generatedGroupId}`,
@@ -74,7 +76,7 @@ export function NavigationGrid({
             gamepadParentRegionId,
             gamepadExitFocusId,
           }
-        : null,
+        : inheritedRegion,
     [
       entryFocusId,
       exitFocusId,
@@ -82,6 +84,7 @@ export function NavigationGrid({
       gamepadParentRegionId,
       parentRegionId,
       regionId,
+      inheritedRegion,
     ],
   );
   const content = (

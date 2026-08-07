@@ -5,6 +5,7 @@ import { Focusable, type FocusableProps } from "../focus/Focusable";
 import {
   LinearNavigationContext,
   NavigationRegionContext,
+  useNavigationRegion,
 } from "./linear-navigation-context";
 import type { NavigationLayoutProps } from "./layout-types";
 import type { NavigationRegionConfig } from "../core/navigation-hierarchy";
@@ -50,6 +51,7 @@ export function NavigationTabs({
   ariaLabel = "Sections",
 }: NavigationTabsProps) {
   const generatedGroupId = useId();
+  const inheritedRegion = useNavigationRegion();
   const linearNavigation = useMemo(
     () => ({
       groupId: groupId ?? `${scopeId ?? "tabs"}-${generatedGroupId}`,
@@ -62,7 +64,9 @@ export function NavigationTabs({
     <NavigationTabsContext.Provider
       value={{ selectedId, onSelect, activationMode, upTargetId }}
     >
-      <NavigationRegionContext.Provider value={navigationRegion ?? null}>
+      <NavigationRegionContext.Provider
+        value={navigationRegion ?? inheritedRegion}
+      >
         <LinearNavigationContext.Provider value={linearNavigation}>
           <nav
             className={`navigation-tabs ${className ?? ""}`}

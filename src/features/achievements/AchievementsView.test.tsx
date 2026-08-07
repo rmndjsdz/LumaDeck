@@ -42,7 +42,7 @@ describe("achievements progress header", () => {
     host.remove();
   });
 
-  it("renders four rarity bands and merges very common into common", async () => {
+  it("renders unlocked achievements across four rarity bands", async () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root: Root = createRoot(host);
@@ -57,9 +57,12 @@ describe("achievements progress header", () => {
     await act(async () => {
       root.render(
         <DistributionPanel
-          achievements={rarities.map((rarity, index) =>
-            createAchievement(`achievement-${index}`, rarity),
-          )}
+          achievements={[
+            ...rarities.map((rarity, index) =>
+              createAchievement(`achievement-${index}`, rarity, true),
+            ),
+            createAchievement("locked-achievement", "very-rare", false),
+          ]}
         />,
       );
     });
@@ -72,6 +75,7 @@ describe("achievements progress header", () => {
         host.querySelectorAll(".achievement-distribution-row strong"),
       ).map((element) => element.textContent),
     ).toEqual(["1", "20%", "1", "20%", "1", "20%", "2", "40%"]);
+    expect(host.textContent).toContain("desbloqueados");
 
     await act(async () => {
       root.unmount();
@@ -83,13 +87,14 @@ describe("achievements progress header", () => {
 function createAchievement(
   apiName: string,
   rarity: Achievement["rarity"],
+  unlocked = false,
 ): Achievement {
   return {
     apiName,
     displayName: apiName,
     description: "",
     hidden: false,
-    unlocked: false,
+    unlocked,
     unlockTime: null,
     unlockPercentage: null,
     rarity,

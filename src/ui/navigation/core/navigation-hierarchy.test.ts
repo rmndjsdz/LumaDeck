@@ -31,6 +31,23 @@ describe("NavigationLevelCoordinator", () => {
     );
   });
 
+  it("can always enter the first available child focus", () => {
+    const coordinator = new NavigationLevelCoordinator();
+    const detailsTabs = entry("details-tab-activity", "details-sections", {
+      childRegionId: "details-content",
+      entryFocusPolicy: "first",
+    });
+    const contentEntries = [
+      entry("details-activity-first", "details-content"),
+      entry("details-activity-second", "details-content"),
+    ];
+
+    coordinator.recordFocus(contentEntries[1]!, contentEntries[1]!.focusId);
+    expect(coordinator.resolveChild(detailsTabs, contentEntries)).toBe(
+      "details-activity-first",
+    );
+  });
+
   it("resolves the parent through an explicit exit focus", () => {
     const coordinator = new NavigationLevelCoordinator();
     const entries = [

@@ -3,6 +3,7 @@ export interface NavigationRegionConfig {
   parentRegionId?: string;
   childRegionId?: string;
   entryFocusId?: string;
+  entryFocusPolicy?: "remembered" | "first";
   exitFocusId?: string;
   gamepadParentRegionId?: string;
   gamepadExitFocusId?: string;
@@ -62,8 +63,12 @@ export class NavigationLevelCoordinator {
       (entry) => entry.regionId === childRegionId && isValid(entry),
     );
     if (childEntries.length === 0) {
+      if (parent.entryFocusPolicy === "first") return null;
       return this.lastFocusedByRegion.get(childRegionId) ?? null;
     }
+
+    if (parent.entryFocusPolicy === "first")
+      return childEntries[0]?.focusId ?? null;
 
     const lastFocused = this.lastFocusedByRegion.get(childRegionId);
     if (

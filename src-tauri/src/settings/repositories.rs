@@ -2027,7 +2027,14 @@ impl<'a> SettingsRepository<'a> {
                  COALESCE((SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'vertical_cover' ORDER BY updated_at DESC LIMIT 1), d.steam_header_url, '') AS vertical_cover_fallback,
                  COALESCE(d.steam_logo_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'logo' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/logo.png' ELSE '' END) AS logo_fallback,
                  COALESCE(d.steam_background_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/library_hero_2x.jpg' ELSE '' END) AS background_fallback,
-                 COALESCE((SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'icon' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_icon_url, '') AS icon_fallback
+                 COALESCE((SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'icon' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_icon_url, '') AS icon_fallback,
+                 COALESCE((SELECT a.cached_path
+                           FROM game_artwork_selections s
+                           JOIN artwork_assets a ON a.id = s.artwork_asset_id
+                           WHERE s.game_id = g.id
+                             AND s.slot = 'grid_square'
+                             AND ((a.width = 1024 AND a.height = 1024) OR (a.width = 512 AND a.height = 512))
+                           ORDER BY s.updated_at DESC LIMIT 1), '') AS square_cover
              FROM games g LEFT JOIN game_details d ON d.game_id = g.id ORDER BY g.sort_title",
         )?;
         let mut games = statement
@@ -2046,6 +2053,7 @@ impl<'a> SettingsRepository<'a> {
                 let logo_fallback: String = row.get(22)?;
                 let background_fallback: String = row.get(23)?;
                 let icon_fallback: String = row.get(24)?;
+                let square_cover_url: String = row.get(25)?;
                 Ok(LocalGame {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -2057,6 +2065,11 @@ impl<'a> SettingsRepository<'a> {
                         self.state,
                         &vertical_cover_url,
                         &vertical_cover_fallback,
+                    ),
+                    square_cover_url: resolve_local_asset_path(
+                        self.state,
+                        &square_cover_url,
+                        "",
                     ),
                     logo_url: resolve_local_asset_path(self.state, &logo_url, &logo_fallback),
                     background_url: resolve_local_asset_path(
