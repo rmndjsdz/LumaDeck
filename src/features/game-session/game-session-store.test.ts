@@ -14,10 +14,19 @@ describe("game session store", () => {
         sessionId: "session-1",
         gameId: "game-1",
         steamAppId: 123,
+        source: "steam",
         state,
         occurredAt: "100",
         elapsedSeconds: 4,
         message: "state",
+        monitoringMode: "full",
+        capabilities: {
+          playtime: true,
+          startTime: true,
+          endTime: true,
+          processTracking: true,
+          advancedProcessMetrics: true,
+        },
       });
       expect(useGameSessionStore.getState().inputFrozen).toBe(true);
     }
@@ -30,10 +39,19 @@ describe("game session store", () => {
         sessionId: "session-1",
         gameId: "game-1",
         steamAppId: 123,
+        source: "steam",
         state,
         occurredAt: "100",
         elapsedSeconds: 4,
         message: "state",
+        monitoringMode: "full",
+        capabilities: {
+          playtime: true,
+          startTime: true,
+          endTime: true,
+          processTracking: true,
+          advancedProcessMetrics: true,
+        },
       });
       expect(useGameSessionStore.getState().inputFrozen).toBe(false);
     }

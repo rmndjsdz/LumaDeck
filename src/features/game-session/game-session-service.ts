@@ -19,20 +19,30 @@ function idleStatus(): GameSessionStatus {
     sessionId: "",
     gameId: "",
     steamAppId: 0,
+    source: "none",
     state: "idle",
     occurredAt: new Date().toISOString(),
     elapsedSeconds: 0,
     message: "",
     unsupportedReason: null,
+    monitoringMode: "full",
+    antiCheatProvider: null,
+    compatibleReason: null,
+    capabilities: {
+      playtime: true,
+      startTime: true,
+      endTime: true,
+      processTracking: true,
+      advancedProcessMetrics: true,
+    },
   };
 }
 
 export const gameSessionService = {
-  start(gameId: string, steamAppId: number): Promise<GameSessionStatus> {
+  start(gameId: string): Promise<GameSessionStatus> {
     ensureDesktopRuntime();
-    return invoke<GameSessionStatus>("start_steam_game_session", {
+    return invoke<GameSessionStatus>("start_game_play", {
       gameId,
-      steamAppId,
     });
   },
 
@@ -41,12 +51,12 @@ export const gameSessionService = {
       return Promise.resolve(idleStatus());
     }
     ensureDesktopRuntime();
-    return invoke<GameSessionStatus>("get_steam_game_session");
+    return invoke<GameSessionStatus>("get_game_session");
   },
 
   dismiss(): Promise<GameSessionStatus> {
     ensureDesktopRuntime();
-    return invoke<GameSessionStatus>("dismiss_steam_game_session");
+    return invoke<GameSessionStatus>("dismiss_game_session");
   },
 
   minimize(): Promise<void> {

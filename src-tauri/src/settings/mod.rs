@@ -4,17 +4,17 @@ mod database;
 mod models;
 mod repositories;
 
-pub use crate::display::{DisplayProfile, PendingDisplayRestore};
+pub use crate::display::{DisplayProfile, PendingDisplayProfileRestore, PendingDisplayRestore};
 pub use artwork_repository::ArtworkApplyResult;
-pub use database::{DatabaseError, DatabaseState};
+pub use database::{DatabaseError, DatabaseState, LaunchBoxCatalogPhase, LaunchBoxCatalogProgress};
 pub use models::{
     AIConfigurationStatus, ActivityFriend, ActivitySnapshot, DatabaseStatus,
-    FrameGenerationProfile, HltbPendingMatch, HltbSettings, HltbSyncStatus, LocalGame,
-    RapidApiReviewsConfigurationStatus, ReviewsCache, SteamAchievementSyncResult,
-    SteamConfigurationStatus, SteamCredentials, SteamGameMetrics, SteamGridDbConfigurationStatus,
-    SteamImageSyncResult, SteamImageSyncStatus, SteamLaunchGame, SteamLibrarySyncSettings,
-    SteamSyncResult, SteamSyncStatus, StorageMigrationResult, StorageMigrationStatus,
-    StorageStatus, TranslationConfigurationStatus,
+    FrameGenerationProfile, HltbPendingMatch, HltbSettings, HltbSyncStatus, LaunchGame, LocalGame,
+    LocalLaunchBoxDetails, RapidApiReviewsConfigurationStatus, ReviewsCache,
+    SteamAchievementSyncResult, SteamConfigurationStatus, SteamCredentials, SteamGameMetrics,
+    SteamGridDbConfigurationStatus, SteamImageSyncResult, SteamImageSyncStatus, SteamLaunchGame,
+    SteamLibrarySyncSettings, SteamSyncResult, SteamSyncStatus, StorageMigrationResult,
+    StorageMigrationStatus, StorageStatus, TranslationConfigurationStatus,
 };
 
 use crate::data_directory::DataDirectoryResolver;
@@ -22,7 +22,28 @@ use repositories::SettingsRepository;
 
 pub fn initialize(data_directory: DataDirectoryResolver) -> Result<DatabaseState, DatabaseError> {
     let state = DatabaseState::open(data_directory)?;
+    match crate::eden::reconcile_existing_identities(&state) {
+        Ok(attempted) if attempted > 0 => state.log(
+            "eden-identity",
+            "EDEN_IDENTITY_STARTUP_CLEANUP_COMPLETED",
+            "reconciliation=existing-title-id-records",
+        ),
+        Err(error) => state.log(
+            "eden-identity",
+            "EDEN_IDENTITY_STARTUP_CLEANUP_FAILED",
+            &format!("error={error}"),
+        ),
+        _ => {}
+    }
     SettingsRepository::new(&state).recover_interrupted_syncs()?;
+    let recovered_sessions = recover_stale_game_sessions(&state)?;
+    if recovered_sessions > 0 {
+        state.log(
+            "game-session-recovery",
+            "STALE_RUNNING_STATE_RECOVERED",
+            &format!("sessions={recovered_sessions} duration_seconds=0"),
+        );
+    }
     Ok(state)
 }
 
@@ -163,6 +184,13 @@ pub fn get_steam_launch_game(
     SettingsRepository::new(state).get_steam_launch_game(game_id)
 }
 
+pub fn get_launch_game(
+    state: &DatabaseState,
+    game_id: &str,
+) -> Result<Option<LaunchGame>, DatabaseError> {
+    SettingsRepository::new(state).get_launch_game(game_id)
+}
+
 pub fn get_display_profile(
     state: &DatabaseState,
     game_id: &str,
@@ -220,6 +248,23 @@ pub fn clear_pending_display_restore(state: &DatabaseState) -> Result<(), Databa
     SettingsRepository::new(state).clear_pending_display_restore()
 }
 
+pub fn get_pending_display_profile_restore(
+    state: &DatabaseState,
+) -> Result<Option<PendingDisplayProfileRestore>, DatabaseError> {
+    SettingsRepository::new(state).get_pending_display_profile_restore()
+}
+
+pub fn save_pending_display_profile_restore(
+    state: &DatabaseState,
+    pending: &PendingDisplayProfileRestore,
+) -> Result<(), DatabaseError> {
+    SettingsRepository::new(state).save_pending_display_profile_restore(pending)
+}
+
+pub fn clear_pending_display_profile_restore(state: &DatabaseState) -> Result<(), DatabaseError> {
+    SettingsRepository::new(state).clear_pending_display_profile_restore()
+}
+
 pub fn start_game_session(state: &DatabaseState, game_id: &str) -> Result<i64, DatabaseError> {
     SettingsRepository::new(state).start_game_session(game_id)
 }
@@ -231,6 +276,10 @@ pub fn end_game_session(
     interrupted: bool,
 ) -> Result<(), DatabaseError> {
     SettingsRepository::new(state).end_game_session(game_id, session_id, interrupted)
+}
+
+pub fn recover_stale_game_sessions(state: &DatabaseState) -> Result<i64, DatabaseError> {
+    SettingsRepository::new(state).recover_stale_game_sessions()
 }
 
 pub fn get_steam_library_sync_settings(
@@ -256,6 +305,14 @@ pub fn set_game_favorite(
     favorite: bool,
 ) -> Result<bool, DatabaseError> {
     SettingsRepository::new(state).set_game_favorite(game_id, favorite)
+}
+
+pub fn set_game_hidden(
+    state: &DatabaseState,
+    game_id: &str,
+    hidden: bool,
+) -> Result<bool, DatabaseError> {
+    SettingsRepository::new(state).set_game_hidden(game_id, hidden)
 }
 
 pub fn get_hltb_settings(state: &DatabaseState) -> Result<HltbSettings, DatabaseError> {

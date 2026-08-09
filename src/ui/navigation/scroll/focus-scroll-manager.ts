@@ -8,13 +8,7 @@ export class FocusScrollManager {
 
   public ensureVisible(element: HTMLElement, focusId: string): ScrollResult {
     const rect = element.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const viewportWidth = window.innerWidth;
-    const visible =
-      rect.top >= 0 &&
-      rect.left >= 0 &&
-      rect.bottom <= viewportHeight &&
-      rect.right <= viewportWidth;
+    const visible = this.isVisibleInViewportAndScrollAncestors(element, rect);
 
     if (!visible && typeof element.scrollIntoView === "function") {
       const phase =
@@ -29,6 +23,39 @@ export class FocusScrollManager {
     }
 
     return { scrolled: !visible, focusId };
+  }
+
+  private isVisibleInViewportAndScrollAncestors(
+    element: HTMLElement,
+    rect: DOMRect,
+  ): boolean {
+    const visibleInViewport =
+      rect.top >= 0 &&
+      rect.left >= 0 &&
+      rect.bottom <= window.innerHeight &&
+      rect.right <= window.innerWidth;
+    if (!visibleInViewport) return false;
+
+    let ancestor = element.parentElement;
+    while (ancestor) {
+      const style = window.getComputedStyle(ancestor);
+      const scrollable =
+        /(auto|scroll|overlay)/.test(style.overflowY) &&
+        ancestor.scrollHeight > ancestor.clientHeight;
+      if (scrollable) {
+        const ancestorRect = ancestor.getBoundingClientRect();
+        if (
+          rect.top < ancestorRect.top ||
+          rect.bottom > ancestorRect.bottom ||
+          rect.left < ancestorRect.left ||
+          rect.right > ancestorRect.right
+        ) {
+          return false;
+        }
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return true;
   }
 
   public remember(scopeId: string, element: HTMLElement): void {

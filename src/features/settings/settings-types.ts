@@ -200,6 +200,10 @@ export type HltbPendingMatch = {
 
 export type SettingsLevel =
   | "settings"
+  | "display"
+  | "network"
+  | "bluetooth"
+  | "library"
   | "integrations"
   | "steam"
   | "hltb"
@@ -207,7 +211,54 @@ export type SettingsLevel =
   | "rapidapi-reviews"
   | "ai-services"
   | "lossless-scaling"
-  | "storage";
+  | "launchbox"
+  | "storage"
+  | "eden";
+
+export type EdenLibraryRootStatus = {
+  path: string;
+  deepScan: boolean;
+  available: boolean;
+  gameCount: number;
+  error: string | null;
+};
+
+export type EdenProfile = {
+  id: string;
+  name: string;
+  avatarDataUrl: string | null;
+  isCurrent: boolean;
+};
+
+export type EdenStatus = {
+  providerId: "eden";
+  status: "not-configured" | "ready" | "configuration-missing" | string;
+  executablePath: string | null;
+  dataPath: string | null;
+  configPath: string | null;
+  portable: boolean;
+  configurationFound: boolean;
+  libraryRoots: EdenLibraryRootStatus[];
+  profiles: EdenProfile[];
+  gamesDetected: number;
+  duplicateGames: number;
+  playtimeSynced: number;
+  playtimeUnavailable: number;
+  playtimeFileFound: boolean;
+  warnings: string[];
+};
+
+export type EdenExecutableInspection = {
+  executablePath: string;
+  valid: boolean;
+  dataPath: string | null;
+  configPath: string | null;
+  portable: boolean;
+  configurationFound: boolean;
+  libraryRoots: { path: string; deepScan: boolean }[];
+  profiles: EdenProfile[];
+  warnings: string[];
+};
 
 export type StorageMigrationStatus = {
   status: "idle" | "running" | "completed" | "error";

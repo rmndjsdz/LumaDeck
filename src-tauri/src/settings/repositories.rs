@@ -4,12 +4,12 @@ use super::{
     models::{
         ActivityEvent, ActivitySession, ActivitySnapshot, ActivitySourceStatus, ActivityStat,
         ActivityStreak, DatabaseStatus, FrameGenerationProfile, HltbGameData, HltbLocalGame,
-        HltbPendingMatch, HltbSettings, HltbSyncStatus, LocalGame, LocalGameAchievements,
-        LocalGameDetails, LocalSteamDetails, RapidApiReviewsConfigurationStatus, ReviewsCache,
-        SteamConfigurationStatus, SteamCredentials, SteamGameMetrics,
-        SteamGridDbConfigurationStatus, SteamImageSyncResult, SteamImageSyncStatus,
-        SteamLaunchGame, SteamLibrarySyncSettings, SteamSyncResult, SteamSyncStatus,
-        TranslationConfigurationStatus,
+        HltbPendingMatch, HltbSettings, HltbSyncStatus, LaunchGame, LocalGame,
+        LocalGameAchievements, LocalGameDetails, LocalSteamDetails,
+        RapidApiReviewsConfigurationStatus, ReviewsCache, SteamConfigurationStatus,
+        SteamCredentials, SteamGameMetrics, SteamGridDbConfigurationStatus, SteamImageSyncResult,
+        SteamImageSyncStatus, SteamLaunchGame, SteamLibrarySyncSettings, SteamSyncResult,
+        SteamSyncStatus, TranslationConfigurationStatus,
     },
     DatabaseState,
 };
@@ -19,7 +19,10 @@ use crate::achievements::{
     GameAchievements, DEFAULT_RECENT_LIMIT,
 };
 use crate::ai::{self, DEFAULT_MODEL, OPENROUTER_PROVIDER_ID};
-use crate::display::{DisplayProfile, PendingDisplayRestore};
+use crate::display::{
+    DisplayHdrMode, DisplayProfile, DisplayProfileSnapshot, DisplayRefreshRateMode,
+    DisplayResolutionMode, PendingDisplayProfileRestore, PendingDisplayRestore,
+};
 use crate::steam::{
     SteamGameDetails, SteamImageRecord, SteamImageSource, SteamLibraryGame, SteamStat,
 };
@@ -1216,6 +1219,37 @@ impl<'a> SettingsRepository<'a> {
             .map_err(DatabaseError::from)
     }
 
+    pub fn get_launch_game(&self, game_id: &str) -> Result<Option<LaunchGame>, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        connection
+            .query_row(
+                "SELECT g.provider, g.platform, g.installed, d.steam_app_id,
+                        g.source, g.emulator_id, g.game_path, g.title_id
+                 FROM games g
+                 LEFT JOIN game_details d ON d.game_id = g.id
+                 WHERE g.id = ?1",
+                params![game_id],
+                |row| {
+                    Ok(LaunchGame {
+                        provider: row.get(0)?,
+                        platform: row.get(1)?,
+                        installed: row.get(2)?,
+                        steam_app_id: row.get(3)?,
+                        source: row.get(4)?,
+                        emulator_id: row.get(5)?,
+                        game_path: row.get(6)?,
+                        title_id: row.get(7)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DatabaseError::from)
+    }
+
     pub fn get_display_profile(&self, game_id: &str) -> Result<DisplayProfile, DatabaseError> {
         let connection = self
             .state
@@ -1225,7 +1259,8 @@ impl<'a> SettingsRepository<'a> {
         connection
             .query_row(
                 "SELECT enabled, display_id, device_name, width, height, refresh_rate,
-                        restore_on_exit, updated_at
+                        restore_on_exit, updated_at, resolution_mode, refresh_rate_mode, hdr_mode,
+                        rtx_hdr_preset, rtx_hdr_peak_nits
                  FROM game_display_profiles WHERE game_id = ?1",
                 params![game_id],
                 |row| {
@@ -1239,6 +1274,11 @@ impl<'a> SettingsRepository<'a> {
                         refresh_rate: row.get::<_, Option<i64>>(5)?.map(|value| value as u32),
                         restore_on_exit: row.get::<_, i64>(6)? != 0,
                         updated_at: row.get(7)?,
+                        resolution_mode: parse_resolution_mode(&row.get::<_, String>(8)?),
+                        refresh_rate_mode: parse_refresh_rate_mode(&row.get::<_, String>(9)?),
+                        hdr_mode: parse_hdr_mode(&row.get::<_, String>(10)?),
+                        rtx_hdr_preset: parse_rtx_hdr_preset(&row.get::<_, Option<String>>(11)?),
+                        rtx_hdr_peak_nits: row.get::<_, i64>(12)? as u32,
                     })
                 },
             )
@@ -1254,6 +1294,11 @@ impl<'a> SettingsRepository<'a> {
                     refresh_rate: None,
                     restore_on_exit: true,
                     updated_at: None,
+                    resolution_mode: DisplayResolutionMode::System,
+                    refresh_rate_mode: DisplayRefreshRateMode::System,
+                    hdr_mode: DisplayHdrMode::System,
+                    rtx_hdr_preset: None,
+                    rtx_hdr_peak_nits: crate::rtx_hdr::RTX_HDR_PEAK_NITS_DEFAULT,
                 })
             })
             .map_err(DatabaseError::from)
@@ -1272,8 +1317,9 @@ impl<'a> SettingsRepository<'a> {
         connection.execute(
             "INSERT INTO game_display_profiles(
                 game_id, enabled, display_id, device_name, width, height, refresh_rate,
-                restore_on_exit, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                restore_on_exit, updated_at, resolution_mode, refresh_rate_mode, hdr_mode,
+                rtx_hdr_preset, rtx_hdr_peak_nits
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT(game_id) DO UPDATE SET
                 enabled = excluded.enabled,
                 display_id = excluded.display_id,
@@ -1282,7 +1328,12 @@ impl<'a> SettingsRepository<'a> {
                 height = excluded.height,
                 refresh_rate = excluded.refresh_rate,
                 restore_on_exit = excluded.restore_on_exit,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                resolution_mode = excluded.resolution_mode,
+                refresh_rate_mode = excluded.refresh_rate_mode,
+                hdr_mode = excluded.hdr_mode,
+                rtx_hdr_preset = excluded.rtx_hdr_preset,
+                rtx_hdr_peak_nits = excluded.rtx_hdr_peak_nits",
             params![
                 profile.game_id,
                 bool_value(Some(profile.enabled)),
@@ -1293,6 +1344,11 @@ impl<'a> SettingsRepository<'a> {
                 profile.refresh_rate.map(i64::from),
                 bool_value(Some(profile.restore_on_exit)),
                 now,
+                display_resolution_mode_name(profile.resolution_mode),
+                display_refresh_rate_mode_name(profile.refresh_rate_mode),
+                display_hdr_mode_name(profile.hdr_mode),
+                profile.rtx_hdr_preset.map(rtx_hdr_preset_name),
+                i64::from(profile.rtx_hdr_peak_nits),
             ],
         )?;
         drop(connection);
@@ -1465,6 +1521,118 @@ impl<'a> SettingsRepository<'a> {
         Ok(())
     }
 
+    pub fn get_pending_display_profile_restore(
+        &self,
+    ) -> Result<Option<PendingDisplayProfileRestore>, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        connection
+            .query_row(
+                "SELECT session_id, game_id, display_id, width, height, refresh_rate,
+                        hdr_enabled, captured_at, changed_resolution,
+                        changed_refresh_rate, changed_hdr, rtx_hdr_snapshot_json,
+                        auto_hdr_snapshot_json, rtx_hdr_executable, changed_rtx_hdr,
+                        changed_auto_hdr
+                 FROM pending_display_profile_restore WHERE id = 1",
+                [],
+                |row| {
+                    Ok(PendingDisplayProfileRestore {
+                        session_id: row.get(0)?,
+                        game_id: row.get(1)?,
+                        snapshot: DisplayProfileSnapshot {
+                            display_id: row.get(2)?,
+                            width: row.get::<_, i64>(3)? as u32,
+                            height: row.get::<_, i64>(4)? as u32,
+                            refresh_rate: row.get::<_, i64>(5)? as u32,
+                            hdr_enabled: row.get::<_, i64>(6)? != 0,
+                            captured_at: row.get(7)?,
+                        },
+                        changed_resolution: row.get::<_, i64>(8)? != 0,
+                        changed_refresh_rate: row.get::<_, i64>(9)? != 0,
+                        changed_hdr: row.get::<_, i64>(10)? != 0,
+                        rtx_hdr_snapshot: row.get(11)?,
+                        auto_hdr_snapshot: row.get(12)?,
+                        rtx_hdr_executable: row.get(13)?,
+                        changed_rtx_hdr: row.get::<_, i64>(14)? != 0,
+                        changed_auto_hdr: row.get::<_, i64>(15)? != 0,
+                    })
+                },
+            )
+            .optional()
+            .map_err(DatabaseError::from)
+    }
+
+    pub fn save_pending_display_profile_restore(
+        &self,
+        pending: &PendingDisplayProfileRestore,
+    ) -> Result<(), DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        connection.execute(
+            "INSERT INTO pending_display_profile_restore(
+                id, session_id, game_id, display_id, width, height, refresh_rate,
+                hdr_enabled, captured_at, changed_resolution, changed_refresh_rate, changed_hdr,
+                rtx_hdr_snapshot_json, auto_hdr_snapshot_json, rtx_hdr_executable,
+                changed_rtx_hdr, changed_auto_hdr
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(id) DO UPDATE SET
+                session_id = excluded.session_id,
+                game_id = excluded.game_id,
+                display_id = excluded.display_id,
+                width = excluded.width,
+                height = excluded.height,
+                refresh_rate = excluded.refresh_rate,
+                hdr_enabled = excluded.hdr_enabled,
+                captured_at = excluded.captured_at,
+                changed_resolution = excluded.changed_resolution,
+                changed_refresh_rate = excluded.changed_refresh_rate,
+                changed_hdr = excluded.changed_hdr,
+                rtx_hdr_snapshot_json = excluded.rtx_hdr_snapshot_json,
+                auto_hdr_snapshot_json = excluded.auto_hdr_snapshot_json,
+                rtx_hdr_executable = excluded.rtx_hdr_executable,
+                changed_rtx_hdr = excluded.changed_rtx_hdr,
+                changed_auto_hdr = excluded.changed_auto_hdr",
+            params![
+                pending.session_id,
+                pending.game_id,
+                pending.snapshot.display_id,
+                i64::from(pending.snapshot.width),
+                i64::from(pending.snapshot.height),
+                i64::from(pending.snapshot.refresh_rate),
+                bool_value(Some(pending.snapshot.hdr_enabled)),
+                pending.snapshot.captured_at,
+                bool_value(Some(pending.changed_resolution)),
+                bool_value(Some(pending.changed_refresh_rate)),
+                bool_value(Some(pending.changed_hdr)),
+                pending.rtx_hdr_snapshot,
+                pending.auto_hdr_snapshot,
+                pending.rtx_hdr_executable,
+                bool_value(Some(pending.changed_rtx_hdr)),
+                bool_value(Some(pending.changed_auto_hdr)),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_pending_display_profile_restore(&self) -> Result<(), DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        connection.execute(
+            "DELETE FROM pending_display_profile_restore WHERE id = 1",
+            [],
+        )?;
+        Ok(())
+    }
+
     pub fn start_game_session(&self, game_id: &str) -> Result<i64, DatabaseError> {
         let connection = self
             .state
@@ -1550,8 +1718,50 @@ impl<'a> SettingsRepository<'a> {
                 serde_json::json!({ "durationSeconds": duration_seconds }).to_string(),
             ],
         )?;
+        transaction.execute(
+            "UPDATE games SET last_played_at = ?1, updated_at = ?1 WHERE id = ?2",
+            params![now, game_id],
+        )?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn recover_stale_game_sessions(&self) -> Result<i64, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let transaction = connection.unchecked_transaction()?;
+        let now = timestamp();
+        let active_ids: Vec<(i64, String, String)> = {
+            let mut statement = transaction.prepare(
+                "SELECT id, game_id, started_at FROM game_sessions WHERE status = 'active'",
+            )?;
+            let rows =
+                statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (session_id, game_id, started_at) in &active_ids {
+            transaction.execute(
+                "UPDATE game_sessions
+                 SET ended_at = ?1, duration_seconds = 0, status = 'interrupted', updated_at = ?1
+                 WHERE id = ?2 AND status = 'active'",
+                params![started_at, session_id],
+            )?;
+            transaction.execute(
+                "INSERT INTO game_activity_events(game_id, event_type, occurred_at, title, description, value_json, source, created_at)
+                 VALUES (?1, 'stale_session', ?2, 'Sesión recuperada', ?3, ?4, 'local', ?2)",
+                params![
+                    game_id,
+                    now,
+                    "La sesión activa anterior se cerró sin sumar tiempo durante el cierre de LumaDeck.",
+                    serde_json::json!({ "reason": "stale_running_state_recovered", "sessionId": session_id }).to_string(),
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(active_ids.len() as i64)
     }
 
     pub fn get_steam_library_sync_settings(
@@ -1994,16 +2204,29 @@ impl<'a> SettingsRepository<'a> {
             == Some("installed");
         let mut statement = connection.prepare(
             "SELECT g.id, g.title, g.sort_title, g.platform, g.provider,
-                COALESCE((SELECT a.cached_path FROM game_artwork_selections s JOIN artwork_assets a ON a.id = s.artwork_asset_id WHERE s.game_id = g.id AND s.slot = 'grid_horizontal'), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'horizontal_cover' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'vertical_cover' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_header_url, d.steam_logo_url, ''),
+                COALESCE((SELECT a.cached_path FROM game_artwork_selections s JOIN artwork_assets a ON a.id = s.artwork_asset_id WHERE s.game_id = g.id AND s.slot = 'grid_horizontal'), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'horizontal_cover' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'vertical_cover' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_header_url, d.steam_logo_url, (SELECT r.media_url FROM launchbox_media_refs r JOIN launchbox_catalog_state c ON c.id = 1 AND c.catalog_version = r.catalog_version WHERE g.source = 'emulator' AND r.provider_game_id IN (SELECT m.provider_game_id FROM external_identity_mappings m WHERE m.provider = 'launchbox' AND m.native_id = g.title_id AND m.platform = CASE WHEN lower(g.platform) LIKE '%switch%' THEN 'nintendo_switch' ELSE replace(lower(g.platform), ' ', '_') END) AND r.media_type = 'box_front' LIMIT 1), ''),
                 COALESCE((SELECT a.cached_path FROM game_artwork_selections s JOIN artwork_assets a ON a.id = s.artwork_asset_id WHERE s.game_id = g.id AND s.slot = 'grid_vertical'), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'vertical_cover' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), ''),
-                COALESCE((SELECT a.cached_path FROM game_artwork_selections s JOIN artwork_assets a ON a.id = s.artwork_asset_id WHERE s.game_id = g.id AND s.slot = 'logo'), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'logo' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_logo_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'logo' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/logo.png' ELSE '' END),
-                COALESCE((SELECT a.cached_path FROM game_artwork_selections s JOIN artwork_assets a ON a.id = s.artwork_asset_id WHERE s.game_id = g.id AND s.slot = 'hero'), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_background_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/library_hero_2x.jpg' ELSE '' END),
+                COALESCE((SELECT a.cached_path FROM game_artwork_selections s JOIN artwork_assets a ON a.id = s.artwork_asset_id WHERE s.game_id = g.id AND s.slot = 'logo'), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'logo' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_logo_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'logo' ORDER BY updated_at DESC LIMIT 1), (SELECT r.media_url FROM launchbox_media_refs r JOIN launchbox_catalog_state c ON c.id = 1 AND c.catalog_version = r.catalog_version WHERE g.source = 'emulator' AND r.provider_game_id IN (SELECT m.provider_game_id FROM external_identity_mappings m WHERE m.provider = 'launchbox' AND m.native_id = g.title_id AND m.platform = CASE WHEN lower(g.platform) LIKE '%switch%' THEN 'nintendo_switch' ELSE replace(lower(g.platform), ' ', '_') END) AND r.media_type = 'clear_logo' LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/logo.png' ELSE '' END),
+                COALESCE((SELECT a.cached_path FROM game_artwork_selections s JOIN artwork_assets a ON a.id = s.artwork_asset_id WHERE s.game_id = g.id AND s.slot = 'hero'), (SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), NULLIF(d.steam_background_url, ''), (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' ORDER BY updated_at DESC LIMIT 1), (SELECT r.media_url FROM launchbox_media_refs r JOIN launchbox_catalog_state c ON c.id = 1 AND c.catalog_version = r.catalog_version WHERE g.source = 'emulator' AND r.provider_game_id IN (SELECT m.provider_game_id FROM external_identity_mappings m WHERE m.provider = 'launchbox' AND m.native_id = g.title_id AND m.platform = CASE WHEN lower(g.platform) LIKE '%switch%' THEN 'nintendo_switch' ELSE replace(lower(g.platform), ' ', '_') END) AND r.media_type IN ('fanart', 'banner') LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/library_hero_2x.jpg' ELSE '' END),
                 COALESCE(d.steam_description, d.steam_short_description, ''), COALESCE(d.steam_release_date, ''),
-                COALESCE(d.steam_total_playtime_minutes, 0) +
-                    COALESCE((SELECT SUM(COALESCE(duration_seconds, 0)) / 60
-                              FROM game_sessions
-                              WHERE game_id = g.id AND source = 'lumadeck'), 0),
                 CASE
+                    WHEN g.source = 'emulator' AND g.emulator_id = 'eden' THEN
+                        COALESCE((SELECT total_seconds / 60
+                                  FROM external_playtime_snapshots
+                                  WHERE game_id = g.id AND provider = 'eden'
+                                  ORDER BY observed_at DESC LIMIT 1),
+                                 COALESCE(g.playtime_minutes, 0) +
+                                 COALESCE((SELECT SUM(COALESCE(duration_seconds, 0)) / 60
+                                           FROM game_sessions
+                                           WHERE game_id = g.id AND source = 'lumadeck'), 0))
+                    ELSE
+                        COALESCE(g.playtime_minutes, 0) +
+                        COALESCE((SELECT SUM(COALESCE(duration_seconds, 0)) / 60
+                                  FROM game_sessions
+                                  WHERE game_id = g.id AND source = 'lumadeck'), 0)
+                END + COALESCE(d.steam_total_playtime_minutes, 0),
+                CASE
+                    WHEN g.last_played_at IS NOT NULL THEN g.last_played_at
                     WHEN d.steam_last_played_at IS NULL THEN
                         (SELECT CAST(MAX(CAST(ended_at AS INTEGER)) AS TEXT)
                          FROM game_sessions
@@ -2026,7 +2249,7 @@ impl<'a> SettingsRepository<'a> {
                  COALESCE(d.steam_header_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'horizontal_cover' ORDER BY updated_at DESC LIMIT 1), d.steam_logo_url, '') AS cover_fallback,
                  COALESCE((SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'vertical_cover' ORDER BY updated_at DESC LIMIT 1), d.steam_header_url, '') AS vertical_cover_fallback,
                  COALESCE(d.steam_logo_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'logo' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/logo.png' ELSE '' END) AS logo_fallback,
-                 COALESCE(d.steam_background_url, (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/library_hero_2x.jpg' ELSE '' END) AS background_fallback,
+                 COALESCE(NULLIF(d.steam_background_url, ''), (SELECT source_url FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'hero' ORDER BY updated_at DESC LIMIT 1), CASE WHEN d.steam_app_id IS NOT NULL THEN 'https://cdn.cloudflare.steamstatic.com/steam/apps/' || d.steam_app_id || '/library_hero_2x.jpg' ELSE '' END) AS background_fallback,
                  COALESCE((SELECT local_path FROM steam_game_assets WHERE game_id = g.id AND asset_type = 'icon' AND local_path IS NOT NULL ORDER BY updated_at DESC LIMIT 1), d.steam_icon_url, '') AS icon_fallback,
                  COALESCE((SELECT a.cached_path
                            FROM game_artwork_selections s
@@ -2035,6 +2258,7 @@ impl<'a> SettingsRepository<'a> {
                              AND s.slot = 'grid_square'
                              AND ((a.width = 1024 AND a.height = 1024) OR (a.width = 512 AND a.height = 512))
                            ORDER BY s.updated_at DESC LIMIT 1), '') AS square_cover
+                 , g.hidden, g.source, g.emulator_id, g.game_path, g.title_id
              FROM games g LEFT JOIN game_details d ON d.game_id = g.id ORDER BY g.sort_title",
         )?;
         let mut games = statement
@@ -2066,11 +2290,7 @@ impl<'a> SettingsRepository<'a> {
                         &vertical_cover_url,
                         &vertical_cover_fallback,
                     ),
-                    square_cover_url: resolve_local_asset_path(
-                        self.state,
-                        &square_cover_url,
-                        "",
-                    ),
+                    square_cover_url: resolve_local_asset_path(self.state, &square_cover_url, ""),
                     logo_url: resolve_local_asset_path(self.state, &logo_url, &logo_fallback),
                     background_url: resolve_local_asset_path(
                         self.state,
@@ -2085,6 +2305,7 @@ impl<'a> SettingsRepository<'a> {
                     playtime_minutes: row.get(11)?,
                     last_played_at: row.get(12)?,
                     favorite: row.get::<_, i64>(13)? != 0,
+                    hidden: row.get::<_, i64>(26)? != 0,
                     installed: row.get::<_, i64>(14)? != 0,
                     progress: row.get(15)?,
                     status: row.get(16)?,
@@ -2102,6 +2323,10 @@ impl<'a> SettingsRepository<'a> {
                         }
                     },
                     details: None,
+                    source: row.get(27)?,
+                    emulator: row.get(28)?,
+                    game_path: row.get(29)?,
+                    title_id: row.get(30)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -2227,13 +2452,92 @@ impl<'a> SettingsRepository<'a> {
                         trading_cards: trading_cards.map(|value| value != 0),
                         workshop: workshop.map(|value| value != 0),
                     }),
+                    launchbox: None,
                     hltb: hltb.clone(),
                 });
             }
             if game.details.is_none() && hltb.is_some() {
-                game.details = Some(LocalGameDetails { steam: None, hltb });
+                game.details = Some(LocalGameDetails {
+                    steam: None,
+                    launchbox: None,
+                    hltb,
+                });
             } else if let Some(details) = game.details.as_mut() {
                 details.hltb = hltb;
+            }
+
+            if game.source == "emulator" {
+                if let Some(launchbox) = crate::launchbox::get_game_metadata(
+                    &connection,
+                    &game.id,
+                    game.title_id.as_deref(),
+                    &game.title,
+                    &game.platform,
+                )? {
+                    self.state.log(
+                        "launchbox-metadata",
+                        "metadata_resolved",
+                        &format!(
+                            "game_id={} title_id={} genres={} local_multiplayer={} max_local_players={} rating_raw={} rating_scale={} rating_count={}",
+                            game.id,
+                            game.title_id.as_deref().unwrap_or("<none>"),
+                            launchbox.normalized_genres.join("|"),
+                            launchbox.local_multiplayer,
+                            launchbox
+                                .max_local_players
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "<none>".to_string()),
+                            launchbox
+                                .community_rating_raw
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "<none>".to_string()),
+                            launchbox
+                                .community_rating_scale
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "<none>".to_string()),
+                            launchbox
+                                .community_rating_count
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "<none>".to_string())
+                        ),
+                    );
+                    if let Some(description) = launchbox.description.as_deref() {
+                        if !description.is_empty() {
+                            game.description = description.to_string();
+                        }
+                    }
+                    if !launchbox.normalized_genres.is_empty() {
+                        game.genres = launchbox.normalized_genres.clone();
+                    }
+                    if let Some(release_date) = launchbox.release_date.as_deref() {
+                        game.release_year = release_date
+                            .get(0..4)
+                            .and_then(|value| value.parse::<i64>().ok())
+                            .unwrap_or(game.release_year);
+                    }
+                    if !launchbox.screenshots.is_empty() {
+                        game.screenshots = launchbox
+                            .screenshots
+                            .iter()
+                            .map(|path| resolve_local_asset_path(self.state, path, ""))
+                            .collect();
+                    }
+                    let mut launchbox = launchbox;
+                    launchbox.screenshots = launchbox
+                        .screenshots
+                        .iter()
+                        .map(|path| resolve_local_asset_path(self.state, path, ""))
+                        .collect();
+                    if let Some(details) = game.details.as_mut() {
+                        details.launchbox = Some(launchbox);
+                    } else {
+                        game.details = Some(LocalGameDetails {
+                            steam: None,
+                            launchbox: Some(launchbox),
+                            hltb: None,
+                        });
+                    }
+                }
             }
 
             if !asset_is_available(&game.cover_url) && asset_is_available(&game.vertical_cover_url)
@@ -2258,6 +2562,22 @@ impl<'a> SettingsRepository<'a> {
             return Err(DatabaseError::GameNotFound);
         }
         Ok(favorite)
+    }
+
+    pub fn set_game_hidden(&self, game_id: &str, hidden: bool) -> Result<bool, DatabaseError> {
+        let connection = self
+            .state
+            .connection
+            .lock()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let updated = connection.execute(
+            "UPDATE games SET hidden = ?1, updated_at = ?2 WHERE id = ?3",
+            params![i64::from(hidden), timestamp(), game_id],
+        )?;
+        if updated == 0 {
+            return Err(DatabaseError::GameNotFound);
+        }
+        Ok(hidden)
     }
 
     pub fn get_steam_app_ids(&self) -> Result<Vec<i64>, DatabaseError> {
@@ -3543,6 +3863,74 @@ fn json_value(value: &Option<Value>) -> Option<String> {
 fn bool_value(value: Option<bool>) -> Option<i64> {
     value.map(i64::from)
 }
+
+fn parse_resolution_mode(value: &str) -> DisplayResolutionMode {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "CUSTOM" => DisplayResolutionMode::Custom,
+        _ => DisplayResolutionMode::System,
+    }
+}
+
+fn parse_refresh_rate_mode(value: &str) -> DisplayRefreshRateMode {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "CUSTOM" => DisplayRefreshRateMode::Custom,
+        _ => DisplayRefreshRateMode::System,
+    }
+}
+
+fn parse_hdr_mode(value: &str) -> DisplayHdrMode {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "OFF" => DisplayHdrMode::Off,
+        "ON" => DisplayHdrMode::On,
+        "AUTO" => DisplayHdrMode::Auto,
+        _ => DisplayHdrMode::System,
+    }
+}
+
+fn parse_rtx_hdr_preset(value: &Option<String>) -> Option<crate::rtx_hdr::RtxHdrPreset> {
+    match value
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "NATURAL" => Some(crate::rtx_hdr::RtxHdrPreset::Natural),
+        "VIBRANT" => Some(crate::rtx_hdr::RtxHdrPreset::Vibrant),
+        _ => None,
+    }
+}
+
+fn display_resolution_mode_name(value: DisplayResolutionMode) -> &'static str {
+    match value {
+        DisplayResolutionMode::System => "SYSTEM",
+        DisplayResolutionMode::Custom => "CUSTOM",
+    }
+}
+
+fn display_refresh_rate_mode_name(value: DisplayRefreshRateMode) -> &'static str {
+    match value {
+        DisplayRefreshRateMode::System => "SYSTEM",
+        DisplayRefreshRateMode::Custom => "CUSTOM",
+    }
+}
+
+fn display_hdr_mode_name(value: DisplayHdrMode) -> &'static str {
+    match value {
+        DisplayHdrMode::System => "SYSTEM",
+        DisplayHdrMode::Off => "OFF",
+        DisplayHdrMode::On => "ON",
+        DisplayHdrMode::Auto => "AUTO",
+    }
+}
+
+fn rtx_hdr_preset_name(value: crate::rtx_hdr::RtxHdrPreset) -> &'static str {
+    match value {
+        crate::rtx_hdr::RtxHdrPreset::Natural => "NATURAL",
+        crate::rtx_hdr::RtxHdrPreset::Vibrant => "VIBRANT",
+    }
+}
+
 fn stats_json(stats: &[crate::steam::SteamStat]) -> Option<String> {
     let mut values = Map::new();
     for stat in stats {
@@ -3823,7 +4211,10 @@ mod tests {
     use super::{DatabaseError, SettingsRepository};
     use crate::consensus::{ConsensusSources, GameReviewConsensus};
     use crate::data_directory::DataDirectoryResolver;
-    use crate::display::{DisplayProfile, PendingDisplayRestore};
+    use crate::display::{
+        DisplayHdrMode, DisplayProfile, DisplayProfileSnapshot, DisplayRefreshRateMode,
+        DisplayResolutionMode, PendingDisplayProfileRestore, PendingDisplayRestore,
+    };
     use crate::settings::DatabaseState;
     use crate::steam::{SteamGameDetails, SteamLibraryGame, SteamNamedValue, SteamStat};
     use rusqlite::params;
@@ -3900,8 +4291,8 @@ mod tests {
 
         let database_status = repository.get_database_status().expect("database status");
         assert!(database_status.path.ends_with("lumadeck.db"));
-        assert_eq!(database_status.schema_version, 19);
-        assert_eq!(database_status.provider_count, 6);
+        assert_eq!(database_status.schema_version, 32);
+        assert_eq!(database_status.provider_count, 7);
         let connection = state.connection.lock().expect("database lock");
         let foreign_keys: i64 = connection
             .pragma_query_value(None, "foreign_keys", |row| row.get(0))
@@ -4236,6 +4627,132 @@ mod tests {
     }
 
     #[test]
+    fn stale_eden_session_recovery_is_idempotent_and_does_not_add_time() {
+        let directory = std::env::temp_dir().join(format!(
+            "lumadeck-eden-session-recovery-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let state =
+            DatabaseState::open(DataDirectoryResolver::for_app_data(&directory)).expect("database");
+        let repository = SettingsRepository::new(&state);
+        {
+            let connection = state.connection.lock().expect("database lock");
+            connection
+                .execute(
+                    "INSERT INTO games(id, title, sort_title, provider, platform, source, emulator_id, playtime_minutes, created_at, updated_at)
+                     VALUES (?1, ?2, ?2, 'Eden', 'Nintendo Switch', 'emulator', 'eden', 120, ?3, ?3)",
+                    params!["eden-recovery-game", "Recovery Game", "1700000000"],
+                )
+                .expect("game");
+        }
+        let first_session = repository
+            .start_game_session("eden-recovery-game")
+            .expect("start session");
+        let second_session = repository
+            .start_game_session("eden-recovery-game")
+            .expect("deduplicated session");
+        assert_eq!(first_session, second_session);
+        assert_eq!(
+            repository.recover_stale_game_sessions().expect("recovery"),
+            1
+        );
+        assert_eq!(
+            repository
+                .recover_stale_game_sessions()
+                .expect("idempotent recovery"),
+            0
+        );
+        let game = repository
+            .get_local_games()
+            .expect("local games")
+            .into_iter()
+            .find(|game| game.id == "eden-recovery-game")
+            .expect("recovered game");
+        assert_eq!(game.playtime_minutes, 120);
+        let connection = state.connection.lock().expect("database lock");
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM game_sessions WHERE id = ?1",
+                params![first_session],
+                |row| row.get(0),
+            )
+            .expect("session status");
+        assert_eq!(status, "interrupted");
+        drop(connection);
+        drop(state);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn eden_external_playtime_is_canonical_and_does_not_double_count_sessions() {
+        let directory = std::env::temp_dir().join(format!(
+            "lumadeck-eden-playtime-canonical-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let state =
+            DatabaseState::open(DataDirectoryResolver::for_app_data(&directory)).expect("database");
+        let repository = SettingsRepository::new(&state);
+        {
+            let connection = state.connection.lock().expect("database lock");
+            connection
+                .execute(
+                    "INSERT INTO games(id, title, sort_title, provider, platform, source, emulator_id, title_id, playtime_minutes, created_at, updated_at)
+                     VALUES (?1, ?2, ?2, 'Eden', 'Nintendo Switch', 'emulator', 'eden', ?3, 300, ?4, ?4)",
+                    params![
+                        "eden-canonical-game",
+                        "Canonical Game",
+                        "0100000000010000",
+                        "1700000000"
+                    ],
+                )
+                .expect("game");
+            connection
+                .execute(
+                    "INSERT INTO external_playtime_snapshots(provider, emulator_installation_id, title_id, game_id, total_seconds, observed_at, format)
+                     VALUES ('eden', 'eden-installation-test', ?1, ?2, 19800, '1700000000', 'playtime.bin:v1:le:u64,u64')",
+                    params!["0100000000010000", "eden-canonical-game"],
+                )
+                .expect("snapshot");
+        }
+        let session_id = repository
+            .start_game_session("eden-canonical-game")
+            .expect("start session");
+        let started_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_secs()
+            .saturating_sub(1_800)
+            .to_string();
+        {
+            let connection = state.connection.lock().expect("database lock");
+            connection
+                .execute(
+                    "UPDATE game_sessions SET started_at = ?1 WHERE id = ?2",
+                    params![started_at, session_id],
+                )
+                .expect("rewind session");
+        }
+        repository
+            .end_game_session("eden-canonical-game", session_id, false)
+            .expect("end session");
+        let game = repository
+            .get_local_games()
+            .expect("local games")
+            .into_iter()
+            .find(|game| game.id == "eden-canonical-game")
+            .expect("canonical game");
+        assert_eq!(game.playtime_minutes, 330);
+        drop(state);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn game_favorite_toggle_persists_in_local_games() {
         let directory = std::env::temp_dir().join(format!(
             "lumadeck-favorite-test-{}",
@@ -4286,6 +4803,75 @@ mod tests {
             repository.set_game_favorite("missing-game", true),
             Err(DatabaseError::GameNotFound)
         ));
+
+        drop(state);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn game_visibility_toggle_preserves_favorite_and_activity_data() {
+        let directory = std::env::temp_dir().join(format!(
+            "lumadeck-hidden-game-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let state =
+            DatabaseState::open(DataDirectoryResolver::for_app_data(&directory)).expect("database");
+        let repository = SettingsRepository::new(&state);
+        {
+            let connection = state.connection.lock().expect("database lock");
+            connection
+                .execute(
+                    "INSERT INTO games(id, title, sort_title, provider, platform, favorite, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+                    rusqlite::params![
+                        "hidden-test",
+                        "Hidden Test",
+                        "hidden test",
+                        "Steam",
+                        "PC",
+                        "1700000000"
+                    ],
+                )
+                .expect("game");
+            connection
+                .execute(
+                    "INSERT INTO game_sessions(game_id, source, started_at, ended_at, duration_seconds, status, created_at, updated_at)
+                     VALUES (?1, 'lumadeck', '1700000000', '1700000600', 600, 'completed', '1700000000', '1700000600')",
+                    rusqlite::params!["hidden-test"],
+                )
+                .expect("activity");
+        }
+
+        assert!(matches!(
+            repository.set_game_hidden("hidden-test", true),
+            Ok(true)
+        ));
+        let hidden = repository
+            .get_local_games()
+            .expect("local games")
+            .into_iter()
+            .find(|game| game.id == "hidden-test")
+            .expect("hidden game");
+        assert!(hidden.hidden);
+        assert!(hidden.favorite);
+        assert_eq!(hidden.playtime_minutes, 10);
+
+        assert!(matches!(
+            repository.set_game_hidden("hidden-test", false),
+            Ok(false)
+        ));
+        let restored = repository
+            .get_local_games()
+            .expect("local games")
+            .into_iter()
+            .find(|game| game.id == "hidden-test")
+            .expect("restored game");
+        assert!(!restored.hidden);
+        assert!(restored.favorite);
+        assert_eq!(restored.playtime_minutes, 10);
 
         drop(state);
         let _ = fs::remove_dir_all(directory);
@@ -4528,6 +5114,11 @@ mod tests {
                 refresh_rate: Some(60),
                 restore_on_exit: true,
                 updated_at: None,
+                resolution_mode: DisplayResolutionMode::Custom,
+                refresh_rate_mode: DisplayRefreshRateMode::Custom,
+                hdr_mode: DisplayHdrMode::System,
+                rtx_hdr_preset: None,
+                rtx_hdr_peak_nits: crate::rtx_hdr::RTX_HDR_PEAK_NITS_DEFAULT,
             })
             .expect("profile");
         assert!(profile.enabled);
@@ -4567,6 +5158,42 @@ mod tests {
         assert!(repository
             .get_pending_display_restore()
             .expect("pending read")
+            .is_none());
+        repository
+            .save_pending_display_profile_restore(&PendingDisplayProfileRestore {
+                session_id: "session-1".to_string(),
+                game_id: "display-game".to_string(),
+                snapshot: DisplayProfileSnapshot {
+                    display_id: r"\\.\DISPLAY1".to_string(),
+                    width: 1920,
+                    height: 1080,
+                    refresh_rate: 60,
+                    hdr_enabled: false,
+                    captured_at: "2".to_string(),
+                },
+                changed_resolution: true,
+                changed_refresh_rate: false,
+                changed_hdr: true,
+                rtx_hdr_snapshot: None,
+                auto_hdr_snapshot: None,
+                rtx_hdr_executable: None,
+                changed_rtx_hdr: false,
+                changed_auto_hdr: false,
+            })
+            .expect("profile pending restore");
+        let profile_pending = repository
+            .get_pending_display_profile_restore()
+            .expect("profile pending read")
+            .expect("profile pending exists");
+        assert_eq!(profile_pending.session_id, "session-1");
+        assert!(profile_pending.changed_resolution);
+        assert!(profile_pending.changed_hdr);
+        repository
+            .clear_pending_display_profile_restore()
+            .expect("profile pending clear");
+        assert!(repository
+            .get_pending_display_profile_restore()
+            .expect("profile pending empty")
             .is_none());
         drop(state);
         let _ = fs::remove_dir_all(directory);

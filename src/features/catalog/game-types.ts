@@ -69,8 +69,24 @@ export type HltbGameData = {
   lastError: string | null;
 };
 
+export type LaunchBoxGameDetails = {
+  canonicalTitle: string;
+  description: string | null;
+  developer: string | null;
+  publisher: string | null;
+  releaseDate: string | null;
+  normalizedGenres: string[];
+  localMultiplayer: "true" | "false" | "unknown" | string;
+  maxLocalPlayers: number | null;
+  communityRatingRaw: number | null;
+  communityRatingScale: number | null;
+  communityRatingCount: number | null;
+  screenshots: string[];
+};
+
 export type GameDetails = {
   steam?: SteamGameDetails;
+  launchbox?: LaunchBoxGameDetails;
   hltb?: HltbGameData;
 };
 
@@ -99,9 +115,14 @@ export type Game = {
   playtimeMinutes: number;
   lastPlayedAt: string | null;
   favorite: boolean;
+  hidden?: boolean;
   installed: boolean;
   progress: number;
   status: GameStatus;
   achievements?: GameAchievementSummary;
   details?: GameDetails;
+  source?: "steam" | "emulator" | string;
+  emulator?: string | null;
+  gamePath?: string | null;
+  titleId?: string | null;
 };

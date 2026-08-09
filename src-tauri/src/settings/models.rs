@@ -414,8 +414,26 @@ pub struct LocalSteamDetails {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LocalLaunchBoxDetails {
+    pub canonical_title: String,
+    pub description: Option<String>,
+    pub developer: Option<String>,
+    pub publisher: Option<String>,
+    pub release_date: Option<String>,
+    pub normalized_genres: Vec<String>,
+    pub local_multiplayer: String,
+    pub max_local_players: Option<i64>,
+    pub community_rating_raw: Option<f64>,
+    pub community_rating_scale: Option<f64>,
+    pub community_rating_count: Option<i64>,
+    pub screenshots: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalGameDetails {
     pub steam: Option<LocalSteamDetails>,
+    pub launchbox: Option<LocalLaunchBoxDetails>,
     pub hltb: Option<HltbGameData>,
 }
 
@@ -440,11 +458,16 @@ pub struct LocalGame {
     pub playtime_minutes: i64,
     pub last_played_at: Option<String>,
     pub favorite: bool,
+    pub hidden: bool,
     pub installed: bool,
     pub progress: f64,
     pub status: String,
     pub achievements: Option<LocalGameAchievements>,
     pub details: Option<LocalGameDetails>,
+    pub source: String,
+    pub emulator: Option<String>,
+    pub game_path: Option<String>,
+    pub title_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -453,6 +476,18 @@ pub struct SteamLaunchGame {
     pub platform: String,
     pub installed: bool,
     pub steam_app_id: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LaunchGame {
+    pub provider: String,
+    pub platform: String,
+    pub installed: bool,
+    pub steam_app_id: Option<i64>,
+    pub source: String,
+    pub emulator_id: Option<String>,
+    pub game_path: Option<String>,
+    pub title_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

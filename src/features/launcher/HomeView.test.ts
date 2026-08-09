@@ -55,4 +55,13 @@ describe("resolveFeaturedGame", () => {
 
     expect(resolveFeaturedGame([first, second], "main-nav-home")).toBe(first);
   });
+
+  it("never selects a hidden game for the Home hero", () => {
+    const hidden = { ...game("game-hidden"), hidden: true };
+    const visible = game("game-visible");
+
+    expect(resolveFeaturedGame([hidden, visible], "main-nav-home")).toBe(
+      visible,
+    );
+  });
 });

@@ -7,6 +7,8 @@ import {
   type MutableRefObject,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { Game } from "../catalog/game-types";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import {
   AvailabilityFeedback,
@@ -22,9 +24,13 @@ import type { NavigationScreenDefinition } from "../../ui/navigation/screen/navi
 import steamLogo from "../../assets/steam-logo.png";
 import steamGridDbLogo from "../../assets/steamgriddb-logo.png";
 import opencriticLogo from "../../assets/opencritic-logo.png";
+import edenLogo from "../../assets/eden-logo.png";
+import launchboxLogo from "../../assets/launchbox-logo.png";
+import losslessScalingLogo from "../../assets/lossless-scaling-logo.webp";
 import {
   createSettingsSaveCorrelationId,
   logSettingsDiagnostic,
+  launchBoxErrorMessage,
   providerSettingsService,
   ProviderSettingsError,
 } from "./provider-settings-service";
@@ -47,12 +53,23 @@ import type {
   AIConfigurationStatus,
   AIConnectionStatus,
   StorageStatus,
+  EdenExecutableInspection,
+  EdenStatus,
 } from "./settings-types";
 import { validateSteamApiKey, validateSteamId64 } from "./settings-validation";
 import {
   frameGenerationService,
   type LosslessScalingStatus,
 } from "../launcher/frame-generation-service";
+import type {
+  LaunchBoxCatalogProgress,
+  LaunchBoxCatalogStatus,
+} from "./provider-settings-service";
+import { launchBoxProgressPercent } from "./launchbox-progress";
+import { NetworkView } from "./NetworkView";
+import { DisplayView } from "./DisplayView";
+import { BluetoothView } from "./BluetoothView";
+import { BluetoothErrorBoundary } from "./BluetoothErrorBoundary";
 
 export const SETTINGS_SCREEN_DEFINITION = {
   id: "settings",
@@ -72,6 +89,9 @@ export const SETTINGS_SCREEN_DEFINITION = {
 } satisfies NavigationScreenDefinition;
 
 const SETTINGS_ITEMS = [
+  ["bluetooth", "Bluetooth", "Conecta mandos, audio y accesorios", "◉"],
+  ["display", "Pantalla", "Monitor, resolución, frecuencia y escala", "▣"],
+  ["network", "Red e Internet", "Estado, Ethernet y Wi-Fi", "⌁"],
   ["general", "General", "Idioma, inicio y notificaciones", "⚙"],
   ["appearance", "Apariencia", "Tema, fondo y efectos", "◐"],
   ["navigation", "Navegación", "Controles, atajos y comportamiento", "⌘"],
@@ -83,6 +103,8 @@ const SETTINGS_ITEMS = [
 ] as const;
 
 const PROVIDERS = [
+  ["eden", "Eden", "Nintendo Switch - discovery local de juegos", "E"],
+  ["launchbox", "LaunchBox", "Metadatos y capturas para juegos emulados", "L"],
   ["steam", "Steam", "Sincroniza tu biblioteca y progreso", "◉"],
   ["hltb", "HowLongToBeat", "Duraciones estimadas para tus juegos", "H"],
   ["steamgriddb", "SteamGridDB", "Arte para personalizar tu biblioteca", "▦"],
@@ -107,13 +129,20 @@ const PROVIDERS = [
 ] as const;
 
 function settingsAvailability(id: string): ActionAvailability {
-  return id === "integrations" || id === "storage"
+  return id === "display" ||
+    id === "network" ||
+    id === "bluetooth" ||
+    id === "integrations" ||
+    id === "storage" ||
+    id === "library"
     ? "available"
     : "coming-soon";
 }
 
 function providerAvailability(id: string): ActionAvailability {
   return id === "steam" ||
+    id === "eden" ||
+    id === "launchbox" ||
     id === "hltb" ||
     id === "steamgriddb" ||
     id === "rapidapi-reviews" ||
@@ -124,6 +153,7 @@ function providerAvailability(id: string): ActionAvailability {
 }
 
 interface SettingsViewProps {
+  games: readonly Game[];
   level: SettingsLevel;
   onLevelChange: (level: SettingsLevel) => void;
   onClose: () => void;
@@ -131,6 +161,7 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({
+  games,
   level,
   onLevelChange,
   onClose,
@@ -207,6 +238,19 @@ export function SettingsView({
   const [losslessScalingError, setLosslessScalingError] = useState<
     string | null
   >(null);
+  const [edenStatus, setEdenStatus] = useState<EdenStatus | null>(null);
+  const [edenInspection, setEdenInspection] =
+    useState<EdenExecutableInspection | null>(null);
+  const [edenExecutableDraft, setEdenExecutableDraft] = useState("");
+  const [edenManualRoots, setEdenManualRoots] = useState<string[]>([]);
+  const [edenLoading, setEdenLoading] = useState(false);
+  const [edenError, setEdenError] = useState<string | null>(null);
+  const [launchBoxStatus, setLaunchBoxStatus] =
+    useState<LaunchBoxCatalogStatus | null>(null);
+  const [launchBoxLoading, setLaunchBoxLoading] = useState(false);
+  const [launchBoxUpdating, setLaunchBoxUpdating] = useState(false);
+  const [launchBoxError, setLaunchBoxError] = useState<string | null>(null);
+  const [launchBoxNotice, setLaunchBoxNotice] = useState<string | null>(null);
   const [availabilityFeedback, setAvailabilityFeedback] = useState<Exclude<
     ActionAvailability,
     "available" | "unavailable"
@@ -302,6 +346,82 @@ export function SettingsView({
       setStorageLoading(false);
     }
   }, []);
+
+  const loadLaunchBoxStatus = useCallback(async () => {
+    setLaunchBoxLoading(true);
+    setLaunchBoxError(null);
+    try {
+      setLaunchBoxStatus(
+        await providerSettingsService.getLaunchBoxCatalogStatus(),
+      );
+    } catch (error) {
+      setLaunchBoxError(
+        launchBoxErrorMessage(error) ?? toSafeErrorMessage(error),
+      );
+    } finally {
+      setLaunchBoxLoading(false);
+    }
+  }, []);
+
+  const updateLaunchBoxCatalog = async () => {
+    if (launchBoxUpdating) return;
+    setLaunchBoxUpdating(true);
+    setLaunchBoxError(null);
+    setLaunchBoxNotice(null);
+    try {
+      setLaunchBoxStatus(
+        await providerSettingsService.refreshLaunchBoxCatalog(true),
+      );
+      setLaunchBoxNotice("Catálogo de LaunchBox actualizado correctamente.");
+    } catch (error) {
+      setLaunchBoxError(
+        launchBoxErrorMessage(error) ?? toSafeErrorMessage(error),
+      );
+      try {
+        setLaunchBoxStatus(
+          await providerSettingsService.getLaunchBoxCatalogStatus(),
+        );
+      } catch {
+        // Preserve the update error when status polling is unavailable.
+      }
+    } finally {
+      setLaunchBoxUpdating(false);
+    }
+  };
+
+  useEffect(() => {
+    if (level !== "launchbox") return;
+    setLaunchBoxNotice(null);
+    void loadLaunchBoxStatus();
+  }, [level, loadLaunchBoxStatus]);
+
+  useEffect(() => {
+    if (
+      level !== "launchbox" ||
+      (!launchBoxUpdating && launchBoxStatus?.status !== "updating")
+    ) {
+      return;
+    }
+    let disposed = false;
+    const refreshLaunchBoxProgress = async () => {
+      try {
+        const status =
+          await providerSettingsService.getLaunchBoxCatalogStatus();
+        if (!disposed) setLaunchBoxStatus(status);
+      } catch {
+        // Keep the current real progress visible if a status read is transiently unavailable.
+      }
+    };
+    void refreshLaunchBoxProgress();
+    const timer = window.setInterval(
+      () => void refreshLaunchBoxProgress(),
+      1000,
+    );
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [launchBoxStatus?.status, launchBoxUpdating, level]);
 
   useEffect(() => {
     if (level !== "storage") return;
@@ -430,8 +550,112 @@ export function SettingsView({
     setAvailabilityFeedback(null);
   }, [level]);
 
+  const loadEdenStatus = useCallback(async () => {
+    setEdenLoading(true);
+    setEdenError(null);
+    try {
+      const status = await providerSettingsService.getEdenStatus();
+      setEdenStatus(status);
+      setEdenExecutableDraft(status.executablePath ?? "");
+    } catch (error) {
+      setEdenError(toSafeErrorMessage(error));
+    } finally {
+      setEdenLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (level !== "eden") return;
+    setEdenInspection(null);
+    setEdenManualRoots([]);
+    void loadEdenStatus();
+  }, [level, loadEdenStatus]);
+
+  const selectEdenExecutable = async () => {
+    setEdenError(null);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Eden executable", extensions: ["exe"] }],
+      });
+      if (typeof selected !== "string") return;
+      setEdenExecutableDraft(selected);
+      setEdenInspection(
+        await providerSettingsService.inspectEdenExecutable(selected),
+      );
+    } catch (error) {
+      setEdenError(toSafeErrorMessage(error));
+    }
+  };
+
+  const selectEdenGameFolder = async () => {
+    setEdenError(null);
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === "string") {
+        setEdenManualRoots((roots) =>
+          roots.includes(selected) ? roots : [...roots, selected],
+        );
+      }
+    } catch (error) {
+      setEdenError(toSafeErrorMessage(error));
+    }
+  };
+
+  const connectEden = async () => {
+    if (!edenExecutableDraft) return;
+    setEdenLoading(true);
+    setEdenError(null);
+    try {
+      setEdenStatus(
+        await providerSettingsService.connectEden(
+          edenExecutableDraft,
+          edenManualRoots,
+        ),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["games"] });
+    } catch (error) {
+      setEdenError(toSafeErrorMessage(error));
+    } finally {
+      setEdenLoading(false);
+    }
+  };
+
+  const rescanEden = async () => {
+    setEdenLoading(true);
+    setEdenError(null);
+    try {
+      setEdenStatus(await providerSettingsService.rescanEden());
+      await queryClient.invalidateQueries({ queryKey: ["games"] });
+    } catch (error) {
+      setEdenError(toSafeErrorMessage(error));
+    } finally {
+      setEdenLoading(false);
+    }
+  };
+
+  const disconnectEden = async () => {
+    setEdenLoading(true);
+    setEdenError(null);
+    try {
+      setEdenStatus(await providerSettingsService.disconnectEden());
+      setEdenInspection(null);
+      setEdenExecutableDraft("");
+      await queryClient.invalidateQueries({ queryKey: ["games"] });
+    } catch (error) {
+      setEdenError(toSafeErrorMessage(error));
+    } finally {
+      setEdenLoading(false);
+    }
+  };
+
   const focusTarget = useMemo(() => {
     if (level === "settings") return "settings-integrations";
+    if (level === "display") return "display-resolution";
+    if (level === "network") return "network-refresh";
+    if (level === "bluetooth") return "bluetooth-discovery";
+    if (level === "library") return "settings-library";
     if (level === "integrations") return "integration-steam";
     if (level === "hltb") return "hltb-sync-missing";
     if (level === "steamgriddb") {
@@ -453,6 +677,13 @@ export function SettingsView({
     }
     if (level === "ai-services") return "ai-model-input";
     if (level === "lossless-scaling") return "lossless-scaling-open";
+    if (level === "launchbox") {
+      return "launchbox-catalog-action";
+    }
+    if (level === "eden") {
+      if (edenStatus?.status === "ready") return "eden-rescan";
+      return edenInspection ? "eden-connect" : "eden-select-executable";
+    }
     if (level === "storage") return "storage-migrate";
     if (editingSteamId) return "steam-id-input";
     if (editingApiKey) return "steam-api-key-input";
@@ -469,6 +700,8 @@ export function SettingsView({
     rapidApiReviewsConfiguration?.apiKeyConfigured,
     rapidApiReviewsDeleteConfirm,
     rapidApiReviewsEditing,
+    edenInspection,
+    edenStatus?.status,
   ]);
 
   useLayoutEffect(() => {
@@ -525,6 +758,18 @@ export function SettingsView({
       onLevelChange("integrations");
       return true;
     }
+    if (level === "network") {
+      onLevelChange("settings");
+      return true;
+    }
+    if (level === "bluetooth") {
+      onLevelChange("settings");
+      return true;
+    }
+    if (level === "display") {
+      onLevelChange("settings");
+      return true;
+    }
     if (editingSteamId || editingApiKey) {
       setEditingSteamId(false);
       setEditingApiKey(false);
@@ -552,11 +797,23 @@ export function SettingsView({
       onLevelChange("integrations");
       return true;
     }
+    if (level === "launchbox") {
+      onLevelChange("integrations");
+      return true;
+    }
+    if (level === "eden") {
+      onLevelChange("integrations");
+      return true;
+    }
     if (level === "integrations") {
       onLevelChange("settings");
       return true;
     }
     if (level === "storage") {
+      onLevelChange("settings");
+      return true;
+    }
+    if (level === "library") {
       onLevelChange("settings");
       return true;
     }
@@ -1159,13 +1416,43 @@ export function SettingsView({
     <section className="settings-view" aria-labelledby="settings-heading">
       {level === "settings" && (
         <SettingsHome
+          onOpenDisplay={() => onLevelChange("display")}
+          onOpenNetwork={() => onLevelChange("network")}
+          onOpenBluetooth={() => onLevelChange("bluetooth")}
           onOpenIntegrations={() => onLevelChange("integrations")}
           onOpenStorage={() => onLevelChange("storage")}
+          onOpenLibrary={() => onLevelChange("library")}
           onAvailability={setAvailabilityFeedback}
+        />
+      )}
+      {level === "display" && <DisplayView />}
+      {level === "network" && <NetworkView />}
+      {level === "bluetooth" && (
+        <BluetoothErrorBoundary>
+          <BluetoothView />
+        </BluetoothErrorBoundary>
+      )}
+      {level === "library" && (
+        <HiddenGamesView
+          games={games}
+          onRestore={(gameId) => {
+            void providerSettingsService
+              .setGameHidden(gameId, false)
+              .then(() => {
+                queryClient.setQueryData<Game[]>(["games"], (currentGames) =>
+                  currentGames?.map((game) =>
+                    game.id === gameId ? { ...game, hidden: false } : game,
+                  ),
+                );
+              })
+              .catch(() => undefined);
+          }}
         />
       )}
       {level === "integrations" && (
         <IntegrationsView
+          onOpenEden={() => onLevelChange("eden")}
+          onOpenLaunchBox={() => onLevelChange("launchbox")}
           onOpenSteam={() => onLevelChange("steam")}
           onOpenHltb={() => onLevelChange("hltb")}
           onOpenSteamGridDb={() => onLevelChange("steamgriddb")}
@@ -1173,6 +1460,32 @@ export function SettingsView({
           onOpenAIServices={() => onLevelChange("ai-services")}
           onOpenLosslessScaling={() => onLevelChange("lossless-scaling")}
           onAvailability={setAvailabilityFeedback}
+        />
+      )}
+      {level === "eden" && (
+        <EdenView
+          status={edenStatus}
+          inspection={edenInspection}
+          executablePath={edenExecutableDraft}
+          manualRoots={edenManualRoots}
+          loading={edenLoading}
+          errorMessage={edenError}
+          onSelectExecutable={() => void selectEdenExecutable()}
+          onSelectGameFolder={() => void selectEdenGameFolder()}
+          onConnect={() => void connectEden()}
+          onRescan={() => void rescanEden()}
+          onDisconnect={() => void disconnectEden()}
+        />
+      )}
+      {level === "launchbox" && (
+        <LaunchBoxView
+          status={launchBoxStatus}
+          loading={launchBoxLoading}
+          updating={launchBoxUpdating}
+          errorMessage={launchBoxError}
+          notice={launchBoxNotice}
+          onRetry={() => void loadLaunchBoxStatus()}
+          onUpdate={() => void updateLaunchBoxCatalog()}
         />
       )}
       {level === "lossless-scaling" && (
@@ -1347,12 +1660,20 @@ export function SettingsView({
 }
 
 function SettingsHome({
+  onOpenDisplay,
+  onOpenNetwork,
+  onOpenBluetooth,
   onOpenIntegrations,
   onOpenStorage,
+  onOpenLibrary,
   onAvailability,
 }: {
+  onOpenDisplay: () => void;
+  onOpenNetwork: () => void;
+  onOpenBluetooth: () => void;
   onOpenIntegrations: () => void;
   onOpenStorage: () => void;
+  onOpenLibrary: () => void;
   onAvailability: (
     availability: Exclude<ActionAvailability, "available" | "unavailable">,
   ) => void;
@@ -1386,9 +1707,17 @@ function SettingsHome({
               className={`settings-card ${enabled ? "is-enabled" : "is-coming-soon"}`}
               onAvailable={
                 enabled
-                  ? id === "storage"
-                    ? onOpenStorage
-                    : onOpenIntegrations
+                  ? id === "display"
+                    ? onOpenDisplay
+                    : id === "network"
+                      ? onOpenNetwork
+                      : id === "bluetooth"
+                        ? onOpenBluetooth
+                        : id === "storage"
+                          ? onOpenStorage
+                          : id === "library"
+                            ? onOpenLibrary
+                            : onOpenIntegrations
                   : undefined
               }
               onAvailabilityFeedback={onAvailability}
@@ -1411,7 +1740,62 @@ function SettingsHome({
   );
 }
 
+function HiddenGamesView({
+  games,
+  onRestore,
+}: {
+  games: readonly Game[];
+  onRestore: (gameId: string) => void;
+}) {
+  const hiddenGames = games.filter((game) => game.hidden === true);
+
+  return (
+    <>
+      <SettingsHeading
+        eyebrow="Configuración · Biblioteca"
+        title="Juegos ocultos"
+        description="Estos juegos conservan todos sus datos y no aparecen en la experiencia normal."
+      />
+      {hiddenGames.length === 0 ? (
+        <p className="empty-state">No hay juegos ocultos.</p>
+      ) : (
+        <NavigationGrid
+          groupId="hidden-games"
+          columns={1}
+          itemCount={hiddenGames.length}
+          regionId="settings-content"
+          entryFocusId={`hidden-game-${hiddenGames[0]?.id ?? "empty"}`}
+          exitFocusId="settings-library"
+          className="settings-card-grid"
+        >
+          {hiddenGames.map((game, index) => (
+            <Focusable
+              key={game.id}
+              focusId={`hidden-game-${game.id}`}
+              scopeId="settings-shell"
+              gridIndex={index}
+              className="settings-card is-enabled"
+              onConfirm={() => onRestore(game.id)}
+              aria-label={`Mostrar ${game.title}`}
+            >
+              <span className="settings-card-copy">
+                <strong>{game.title}</strong>
+                <small>
+                  {game.provider} · {game.platform}
+                </small>
+              </span>
+              <span className="settings-card-arrow">Mostrar</span>
+            </Focusable>
+          ))}
+        </NavigationGrid>
+      )}
+    </>
+  );
+}
+
 function IntegrationsView({
+  onOpenEden,
+  onOpenLaunchBox,
   onOpenSteam,
   onOpenHltb,
   onOpenSteamGridDb,
@@ -1420,6 +1804,8 @@ function IntegrationsView({
   onOpenLosslessScaling,
   onAvailability,
 }: {
+  onOpenEden: () => void;
+  onOpenLaunchBox: () => void;
   onOpenSteam: () => void;
   onOpenHltb: () => void;
   onOpenSteamGridDb: () => void;
@@ -1459,17 +1845,21 @@ function IntegrationsView({
               className={`provider-card ${enabled ? "is-enabled" : "is-coming-soon"}`}
               onAvailable={
                 enabled
-                  ? id === "steam"
-                    ? onOpenSteam
-                    : id === "hltb"
-                      ? onOpenHltb
-                      : id === "steamgriddb"
-                        ? onOpenSteamGridDb
-                        : id === "rapidapi-reviews"
-                          ? onOpenRapidApiReviews
-                          : id === "ai-services"
-                            ? onOpenAIServices
-                            : onOpenLosslessScaling
+                  ? id === "eden"
+                    ? onOpenEden
+                    : id === "launchbox"
+                      ? onOpenLaunchBox
+                      : id === "steam"
+                        ? onOpenSteam
+                        : id === "hltb"
+                          ? onOpenHltb
+                          : id === "steamgriddb"
+                            ? onOpenSteamGridDb
+                            : id === "rapidapi-reviews"
+                              ? onOpenRapidApiReviews
+                              : id === "ai-services"
+                                ? onOpenAIServices
+                                : onOpenLosslessScaling
                   : undefined
               }
               onAvailabilityFeedback={onAvailability}
@@ -1492,6 +1882,575 @@ function IntegrationsView({
   );
 }
 
+function formatLaunchBoxBytes(value: number | null): string | null {
+  if (value === null || !Number.isFinite(value)) return null;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatLaunchBoxDate(value: string | null): string | null {
+  if (!value) return null;
+  const timestamp = Number(value);
+  const date = Number.isFinite(timestamp)
+    ? new Date(timestamp * 1000)
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("es", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function launchBoxPhaseCopy(progress: LaunchBoxCatalogProgress | null) {
+  switch (progress?.phase) {
+    case "extracting":
+      return {
+        title: "Preparando catálogo",
+        description: "Extrayendo archivos de metadatos…",
+      };
+    case "importing":
+      return {
+        title: "Importando metadatos",
+        description: "Procesando juegos del catálogo local…",
+      };
+    case "validating":
+      return {
+        title: "Validando catálogo",
+        description: "Comprobando la integridad de los datos importados…",
+      };
+    case "activating":
+      return {
+        title: "Activando catálogo",
+        description: "Preparando la nueva versión para LumaDeck…",
+      };
+    case "downloading":
+    default:
+      return {
+        title: "Descargando catálogo",
+        description: "Descargando la fuente oficial de metadatos…",
+      };
+  }
+}
+
+function formatLaunchBoxDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0
+    ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`
+    : `${seconds}s`;
+}
+
+function LaunchBoxView({
+  status,
+  loading,
+  updating,
+  errorMessage,
+  notice,
+  onRetry,
+  onUpdate,
+}: {
+  status: LaunchBoxCatalogStatus | null;
+  loading: boolean;
+  updating: boolean;
+  errorMessage: string | null;
+  notice: string | null;
+  onRetry: () => void;
+  onUpdate: () => void;
+}) {
+  const catalogUpdating = updating || status?.status === "updating";
+  const ready = status?.available === true && !catalogUpdating;
+  const hasStatus = status !== null;
+  const lastUpdate = formatLaunchBoxDate(status?.downloadedAt ?? null);
+  const nextUpdate = formatLaunchBoxDate(status?.expiresAt ?? null);
+  const zipSize = formatLaunchBoxBytes(status?.zipSizeBytes ?? null);
+  const sourceSize = formatLaunchBoxBytes(status?.sourceSizeBytes ?? null);
+  const progress = status?.progress ?? null;
+  const phaseCopy = launchBoxPhaseCopy(progress);
+  const progressTotal =
+    progress?.phase === "downloading"
+      ? progress.totalBytes
+      : progress?.totalRecords;
+  const progressValue =
+    progress?.phase === "downloading"
+      ? progress.downloadedBytes
+      : progress?.processedRecords;
+  const progressPercent = launchBoxProgressPercent(progress);
+  const lastProgressAgo = progress
+    ? Math.max(0, Math.floor((Date.now() - progress.lastProgressAtMs) / 1000))
+    : null;
+  const lastErrorMessage = status?.lastError
+    ? (launchBoxErrorMessage(status.lastError) ??
+      "No se pudo actualizar el catálogo. Se seguirá utilizando la versión anterior.")
+    : null;
+  const actionLabel = ready ? "Actualizar catálogo" : "Descargar catálogo";
+
+  return (
+    <>
+      <SettingsHeading
+        eyebrow="Configuración · Integraciones"
+        title="LaunchBox"
+        description="Catálogo local de metadatos y capturas para juegos emulados"
+      />
+      <div className="eden-settings-layout">
+        <article className="settings-panel">
+          <div className="settings-panel-heading">
+            <ProviderIcon providerId="launchbox" fallback="L" />
+            <div>
+              <p className="eyebrow">Catálogo local</p>
+              <h2>
+                {catalogUpdating
+                  ? phaseCopy.title
+                  : ready
+                    ? "Catálogo disponible"
+                    : "Catálogo no descargado"}
+              </h2>
+            </div>
+          </div>
+          {!hasStatus && loading && (
+            <p className="settings-muted">Consultando estado del catálogo…</p>
+          )}
+          {catalogUpdating && (
+            <div
+              className="launchbox-progress"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="launchbox-progress-heading">
+                <strong>{phaseCopy.title}</strong>
+                {progressPercent !== null && (
+                  <strong>{progressPercent}%</strong>
+                )}
+              </div>
+              <p>{phaseCopy.description}</p>
+              <div
+                className={`launchbox-progress-track ${progressPercent === null ? "is-indeterminate" : ""}`}
+                role="progressbar"
+                aria-label={phaseCopy.title}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={progressPercent ?? undefined}
+              >
+                {progressPercent !== null && (
+                  <span style={{ width: `${progressPercent}%` }} />
+                )}
+              </div>
+              {progress?.phase === "downloading" && progressValue !== null && (
+                <div className="launchbox-progress-summary">
+                  <span>
+                    {formatLaunchBoxBytes(progressValue ?? null)}
+                    {progressTotal !== null && progressTotal !== undefined
+                      ? ` / ${formatLaunchBoxBytes(progressTotal)}`
+                      : " descargados"}
+                  </span>
+                  <span>{formatLaunchBoxDuration(progress.elapsedMs)}</span>
+                </div>
+              )}
+              {progress?.phase !== "downloading" && progress && (
+                <div className="launchbox-progress-summary">
+                  <span>
+                    {progress.processedRecords.toLocaleString("es")} juegos
+                    procesados
+                  </span>
+                  <span>{formatLaunchBoxDuration(progress.elapsedMs)}</span>
+                </div>
+              )}
+              {lastProgressAgo !== null && (
+                <small>Último progreso: hace {lastProgressAgo}s</small>
+              )}
+            </div>
+          )}
+          {!ready && hasStatus && !catalogUpdating && (
+            <p className="settings-muted">
+              Descarga el catálogo para enriquecer los juegos emulados. Esta
+              acción no descarga capturas en bloque.
+            </p>
+          )}
+          {ready && (
+            <div className="settings-detail-list">
+              {lastUpdate && (
+                <div className="settings-detail-row">
+                  <span>Última actualización</span>
+                  <strong>{lastUpdate}</strong>
+                </div>
+              )}
+              {nextUpdate && (
+                <div className="settings-detail-row">
+                  <span>Próxima actualización</span>
+                  <strong>{nextUpdate}</strong>
+                </div>
+              )}
+              <div className="settings-detail-row">
+                <span>Actualización automática</span>
+                <strong>Cada 30 días</strong>
+              </div>
+              {status.recordCount > 0 && (
+                <div className="settings-detail-row">
+                  <span>Juegos</span>
+                  <strong>{status.recordCount.toLocaleString("es")}</strong>
+                </div>
+              )}
+              {status.switchRecordCount > 0 && (
+                <div className="settings-detail-row">
+                  <span>Nintendo Switch</span>
+                  <strong>
+                    {status.switchRecordCount.toLocaleString("es")}
+                  </strong>
+                </div>
+              )}
+              {zipSize && (
+                <div className="settings-detail-row">
+                  <span>Tamaño local</span>
+                  <strong>{zipSize}</strong>
+                </div>
+              )}
+              {sourceSize && (
+                <div className="settings-detail-row">
+                  <span>Metadatos sin comprimir</span>
+                  <strong>{sourceSize}</strong>
+                </div>
+              )}
+            </div>
+          )}
+          {ready && lastErrorMessage && (
+            <p className="settings-feedback is-error" role="alert">
+              La última actualización falló; el catálogo disponible sigue
+              utilizándose. Última fase: {phaseCopy.title}. {lastErrorMessage}
+            </p>
+          )}
+          {status?.status === "error" && lastErrorMessage && (
+            <p className="settings-feedback is-error" role="alert">
+              No se pudo actualizar el catálogo. Última fase: {phaseCopy.title}.{" "}
+              {lastErrorMessage}
+            </p>
+          )}
+          {errorMessage && (
+            <p className="settings-feedback is-error" role="alert">
+              {errorMessage}
+            </p>
+          )}
+          {notice && (
+            <p className="settings-feedback is-success" role="status">
+              {notice}
+            </p>
+          )}
+          {!catalogUpdating && (
+            <Focusable
+              focusId="launchbox-catalog-action"
+              scopeId="settings-shell"
+              className="settings-button primary"
+              disabled={loading}
+              onConfirm={onUpdate}
+            >
+              {actionLabel}
+            </Focusable>
+          )}
+          {errorMessage && !ready && !updating && (
+            <Focusable
+              focusId="launchbox-catalog-retry"
+              scopeId="settings-shell"
+              className="settings-button secondary"
+              onConfirm={onRetry}
+            >
+              Reintentar
+            </Focusable>
+          )}
+        </article>
+        <aside className="settings-panel settings-security-note">
+          <strong>Capacidades</strong>
+          <p>
+            Metadatos, géneros, multiplayer local, valoración comunitaria y
+            capturas de gameplay.
+          </p>
+          <small>
+            Las capturas se resuelven por juego cuando abres Details. El arte de
+            biblioteca continúa usando SteamGridDB; LaunchBox solo actúa como
+            fallback.
+          </small>
+        </aside>
+      </div>
+    </>
+  );
+}
+
+function EdenView({
+  status,
+  inspection,
+  executablePath,
+  manualRoots,
+  loading,
+  errorMessage,
+  onSelectExecutable,
+  onSelectGameFolder,
+  onConnect,
+  onRescan,
+  onDisconnect,
+}: {
+  status: EdenStatus | null;
+  inspection: EdenExecutableInspection | null;
+  executablePath: string;
+  manualRoots: string[];
+  loading: boolean;
+  errorMessage: string | null;
+  onSelectExecutable: () => void;
+  onSelectGameFolder: () => void;
+  onConnect: () => void;
+  onRescan: () => void;
+  onDisconnect: () => void;
+}) {
+  const connected = status?.status === "ready";
+  const roots = status?.libraryRoots ?? inspection?.libraryRoots ?? [];
+  const profiles = status?.profiles ?? inspection?.profiles ?? [];
+  const currentProfile = profiles.find((profile) => profile.isCurrent);
+  const games = status?.gamesDetected ?? 0;
+  return (
+    <>
+      <SettingsHeading
+        eyebrow="Configuración · Integraciones"
+        title="Eden"
+        description="Nintendo Switch · discovery local de juegos"
+      />
+      <div className="eden-settings-layout">
+        <div className="eden-settings-main">
+          <article className="settings-panel eden-profile-panel">
+            <div className="eden-account-heading">
+              <ProviderIcon providerId="eden" fallback="E" />
+              <div>
+                <p className="eyebrow">Cuenta local</p>
+                <h2>Eden</h2>
+              </div>
+              <span className="eden-config-status">
+                {connected ? "Instalación verificada" : "No configurado"}
+              </span>
+            </div>
+            {profiles.length > 0 && (
+              <div className="eden-profile-list">
+                <p className="eyebrow">Perfiles detectados</p>
+                {profiles.map((profile) => (
+                  <div key={profile.id} className="eden-profile-list-item">
+                    {profile.avatarDataUrl ? (
+                      <img
+                        className="eden-profile-list-avatar"
+                        src={profile.avatarDataUrl}
+                        alt=""
+                      />
+                    ) : (
+                      <div className="eden-profile-list-avatar eden-profile-avatar-fallback">
+                        E
+                      </div>
+                    )}
+                    <div>
+                      <strong>{profile.name}</strong>
+                      <small>{profile.id}</small>
+                    </div>
+                    {profile.isCurrent && (
+                      <span className="eden-profile-current">Activo</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="eden-summary-row">
+              <span>Perfil activo</span>
+              <strong>{currentProfile?.name ?? "No detectado"}</strong>
+            </div>
+            <div className="eden-summary-row">
+              <span>UUID</span>
+              <strong>{currentProfile?.id ?? "No disponible"}</strong>
+            </div>
+            <div className="eden-summary-row">
+              <span>Perfiles</span>
+              <strong>{profiles.length}</strong>
+            </div>
+            <div className="eden-summary-row">
+              <span>Juegos</span>
+              <strong>{games}</strong>
+            </div>
+          </article>
+          <div className="settings-detail-panel eden-settings-panel">
+            <div className="settings-detail-row">
+              <span>Estado</span>
+              <strong>
+                {connected ? `Conectado · ${games} juegos` : "No configurado"}
+              </strong>
+            </div>
+            <div className="settings-detail-row">
+              <span>Executable</span>
+              <strong className="settings-detail-value">
+                {executablePath || "Selecciona eden.exe"}
+              </strong>
+            </div>
+            {inspection && (
+              <>
+                <div className="settings-detail-row">
+                  <span>Configuration</span>
+                  <strong>
+                    {inspection.configurationFound
+                      ? "✓ Encontrada"
+                      : "No encontrada"}
+                  </strong>
+                </div>
+                <div className="settings-detail-row">
+                  <span>Game folders</span>
+                  <strong>{roots.length} detectadas</strong>
+                </div>
+              </>
+            )}
+            {roots.length > 0 && (
+              <div className="settings-detail-list">
+                {roots.map((root) => (
+                  <div key={root.path} className="settings-detail-list-item">
+                    <span>{root.path}</span>
+                    <small>
+                      {"available" in root
+                        ? root.available
+                          ? "gameCount" in root
+                            ? `${root.gameCount} juegos`
+                            : "Disponible"
+                          : "No disponible"
+                        : root.deepScan
+                          ? "Recursivo"
+                          : "Directo"}
+                    </small>
+                  </div>
+                ))}
+              </div>
+            )}
+            {manualRoots.length > 0 && (
+              <p className="settings-inline-note">
+                Fallback manual: {manualRoots.join(", ")}
+              </p>
+            )}
+            {errorMessage && <p className="settings-error">{errorMessage}</p>}
+            {status?.warnings.map((warning) => (
+              <p key={warning} className="settings-inline-note">
+                {warning}
+              </p>
+            ))}
+          </div>
+        </div>
+        <aside className="settings-panel eden-settings-aside">
+          <h2>Configuración local</h2>
+          <p>
+            Eden mantiene los perfiles, avatares y partidas guardadas en su
+            carpeta local. LumaDeck solo los lee para mostrarlos.
+          </p>
+          <div className="eden-aside-divider" />
+          <p>
+            La selección y creación de perfiles continúa en Eden para proteger
+            los datos de guardado.
+          </p>
+          <div className="eden-aside-stat">
+            <span>Perfil actual</span>
+            <strong>{currentProfile?.name ?? "No detectado"}</strong>
+          </div>
+        </aside>
+      </div>
+      <NavigationGrid
+        groupId="eden-actions"
+        columns={1}
+        itemCount={connected ? 3 : 3}
+        regionId="settings-content"
+        entryFocusId={connected ? "eden-rescan" : "eden-select-executable"}
+        exitFocusId="integration-eden"
+        className="settings-card-grid eden-actions-grid"
+      >
+        {!connected && (
+          <Focusable
+            focusId="eden-select-executable"
+            scopeId="settings-shell"
+            gridIndex={0}
+            className="settings-card is-enabled"
+            onConfirm={onSelectExecutable}
+          >
+            <span className="settings-card-copy">
+              <strong>Select Eden executable</strong>
+              <small>Selecciona únicamente eden.exe</small>
+            </span>
+            <span className="settings-card-arrow">Seleccionar</span>
+          </Focusable>
+        )}
+        {!connected && inspection && (
+          <Focusable
+            focusId="eden-connect"
+            scopeId="settings-shell"
+            gridIndex={1}
+            className="settings-card is-enabled"
+            onConfirm={onConnect}
+          >
+            <span className="settings-card-copy">
+              <strong>Connect</strong>
+              <small>Importar juegos detectados a Library</small>
+            </span>
+            <span className="settings-card-arrow">
+              {loading ? "…" : "Conectar"}
+            </span>
+          </Focusable>
+        )}
+        {!connected && (
+          <Focusable
+            focusId="eden-manual-folder"
+            scopeId="settings-shell"
+            gridIndex={2}
+            className="settings-card is-enabled"
+            onConfirm={onSelectGameFolder}
+          >
+            <span className="settings-card-copy">
+              <strong>Select game folder manually</strong>
+              <small>Fallback si Eden no expone sus roots</small>
+            </span>
+            <span className="settings-card-arrow">Añadir</span>
+          </Focusable>
+        )}
+        {connected && (
+          <>
+            <Focusable
+              focusId="eden-rescan"
+              scopeId="settings-shell"
+              gridIndex={0}
+              className="settings-card is-enabled"
+              onConfirm={onRescan}
+            >
+              <span className="settings-card-copy">
+                <strong>Rescan</strong>
+                <small>Volver a leer configuración y juegos</small>
+              </span>
+              <span className="settings-card-arrow">
+                {loading ? "…" : "Actualizar"}
+              </span>
+            </Focusable>
+            <Focusable
+              focusId="eden-configure"
+              scopeId="settings-shell"
+              gridIndex={1}
+              className="settings-card is-enabled"
+              onConfirm={onSelectExecutable}
+            >
+              <span className="settings-card-copy">
+                <strong>Configure</strong>
+                <small>Cambiar ejecutable de Eden</small>
+              </span>
+              <span className="settings-card-arrow">Cambiar</span>
+            </Focusable>
+            <Focusable
+              focusId="eden-disconnect"
+              scopeId="settings-shell"
+              gridIndex={2}
+              className="settings-card is-enabled"
+              onConfirm={onDisconnect}
+            >
+              <span className="settings-card-copy">
+                <strong>Disconnect</strong>
+                <small>Conserva los juegos importados</small>
+              </span>
+              <span className="settings-card-arrow">Desconectar</span>
+            </Focusable>
+          </>
+        )}
+      </NavigationGrid>
+    </>
+  );
+}
+
 function ProviderIcon({
   providerId,
   fallback,
@@ -1500,13 +2459,19 @@ function ProviderIcon({
   fallback: string;
 }) {
   const imageSource =
-    providerId === "steam"
-      ? steamLogo
-      : providerId === "steamgriddb"
-        ? steamGridDbLogo
-        : providerId === "rapidapi-reviews"
-          ? opencriticLogo
-          : undefined;
+    providerId === "eden"
+      ? edenLogo
+      : providerId === "launchbox"
+        ? launchboxLogo
+        : providerId === "lossless-scaling"
+          ? losslessScalingLogo
+          : providerId === "steam"
+            ? steamLogo
+            : providerId === "steamgriddb"
+              ? steamGridDbLogo
+              : providerId === "rapidapi-reviews"
+                ? opencriticLogo
+                : undefined;
 
   return (
     <span
@@ -3538,9 +4503,19 @@ function toSafeErrorMessage(error: unknown): string {
           ? "Los datos de Steam no tienen un formato válido."
           : error.code === "CREDENTIAL_ERROR"
             ? "La credencial no se puede descifrar. Configura una API Key nueva."
-            : error.code === "DATABASE_ERROR"
-              ? "No se pudo guardar la configuración local."
-              : "No se pudo guardar la configuración. Inténtalo de nuevo.";
+            : error.code === "LAUNCHBOX_CATALOG_NOT_READY"
+              ? "El catálogo de LaunchBox todavía se está preparando."
+              : error.code === "LAUNCHBOX_DATABASE_LOCK"
+                ? "LaunchBox está temporalmente ocupado. Intenta nuevamente."
+                : error.code === "LAUNCHBOX_CATALOG_UNAVAILABLE"
+                  ? "El catálogo de LaunchBox no está disponible."
+                  : error.code === "LAUNCHBOX_UPDATE_FAILED_WITH_FALLBACK"
+                    ? "No se pudo actualizar el catálogo. Se seguirá utilizando la versión anterior."
+                    : error.code === "LAUNCHBOX_CATALOG_UPDATE_IN_PROGRESS"
+                      ? "El catálogo de LaunchBox ya se está actualizando."
+                      : error.code === "DATABASE_ERROR"
+                        ? "No se pudo guardar la configuración local."
+                        : "No se pudo guardar la configuración. Inténtalo de nuevo.";
   if (import.meta.env.DEV)
     return `${message} Código: ${error.code}${error.diagnostic ? ` (${error.diagnostic})` : ""}`;
   return message;

@@ -20,6 +20,8 @@ import type {
   AIConnectionStatus,
   StorageMigrationResult,
   StorageStatus,
+  EdenExecutableInspection,
+  EdenStatus,
 } from "./settings-types";
 
 export type SettingsErrorCategory =
@@ -36,6 +38,13 @@ export type SettingsErrorCategory =
   | "STEAM_INSTALLED_GAMES_UNAVAILABLE"
   | "STEAM_IMAGE_SYNC_ALREADY_RUNNING"
   | "STEAM_IMAGE_SYNC_CANCELLED"
+  | "LAUNCHBOX_CATALOG_ERROR"
+  | "LAUNCHBOX_CATALOG_UNAVAILABLE"
+  | "LAUNCHBOX_CATALOG_NOT_READY"
+  | "LAUNCHBOX_DATABASE_LOCK"
+  | "LAUNCHBOX_UPDATE_FAILED_WITH_FALLBACK"
+  | "LAUNCHBOX_CATALOG_UPDATE_IN_PROGRESS"
+  | "LAUNCHBOX_GAME_UNRESOLVED"
   | "STEAM_IMAGE_DOWNLOAD_FAILED"
   | "STEAM_ACHIEVEMENT_SYNC_ALREADY_RUNNING"
   | "GAME_NOT_FOUND"
@@ -76,6 +85,37 @@ export class ProviderSettingsError extends Error {
     this.diagnostic = diagnostic;
     this.backendCode = backendCode;
   }
+}
+
+export function launchBoxErrorMessage(error: unknown): string | null {
+  const raw =
+    error instanceof ProviderSettingsError
+      ? error.code
+      : error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "";
+  const normalized = raw.toUpperCase();
+  if (normalized.includes("LAUNCHBOX_CATALOG_NOT_READY")) {
+    return "El catálogo de LaunchBox todavía se está preparando.";
+  }
+  if (normalized.includes("LAUNCHBOX_DATABASE_LOCK")) {
+    return "LaunchBox está temporalmente ocupado. Intenta nuevamente.";
+  }
+  if (normalized.includes("LAUNCHBOX_CATALOG_UNAVAILABLE")) {
+    return "El catálogo de LaunchBox no está disponible.";
+  }
+  if (normalized.includes("LAUNCHBOX_UPDATE_FAILED_WITH_FALLBACK")) {
+    return "No se pudo actualizar el catálogo. Se seguirá utilizando la versión anterior.";
+  }
+  if (normalized.includes("LAUNCHBOX_CATALOG_UPDATE_IN_PROGRESS")) {
+    return "El catálogo de LaunchBox ya se está actualizando.";
+  }
+  if (normalized.includes("LAUNCHBOX_GAME_UNRESOLVED")) {
+    return "Este juego todavía no tiene una coincidencia segura en LaunchBox.";
+  }
+  return null;
 }
 
 export type SettingsSaveCorrelationId = `settings-save-${string}`;
@@ -168,6 +208,14 @@ function classifyError(
   if (rawCode === "DATABASE_ERROR" || rawCode === "DATABASE_PATH_UNAVAILABLE") {
     return "DATABASE_ERROR";
   }
+  if (normalized.includes("launchbox_catalog_not_ready"))
+    return "LAUNCHBOX_CATALOG_NOT_READY";
+  if (normalized.includes("launchbox_database_lock"))
+    return "LAUNCHBOX_DATABASE_LOCK";
+  if (normalized.includes("launchbox_update_failed_with_fallback"))
+    return "LAUNCHBOX_UPDATE_FAILED_WITH_FALLBACK";
+  if (normalized.includes("launchbox_catalog_update_in_progress"))
+    return "LAUNCHBOX_CATALOG_UPDATE_IN_PROGRESS";
   if (
     rawCode === "INVALID_STEAM_ID" ||
     rawCode === "INVALID_API_KEY" ||
@@ -407,12 +455,24 @@ export const providerSettingsService = {
     call<number>("refresh_steam_game_metadata", { gameId }),
   setGameFavorite: (gameId: string, favorite: boolean) =>
     call<boolean>("set_game_favorite", { gameId, favorite }),
+  setGameHidden: (gameId: string, hidden: boolean) =>
+    call<boolean>("set_game_hidden", { gameId, hidden }),
   refreshSteamGameMetrics: (gameId: string) =>
     call<SteamGameMetrics>("refresh_steam_game_metrics", { gameId }),
   refreshSteamGameAchievements: (gameId: string) =>
     call<SteamGameMetrics>("refresh_steam_game_achievements", { gameId }),
   downloadSteamGameMedia: (gameId: string) =>
     call<number>("download_steam_game_media", { gameId }),
+  getLaunchBoxCatalogStatus: () =>
+    call<LaunchBoxCatalogStatus>("get_launchbox_catalog_status"),
+  refreshLaunchBoxCatalog: (force = false) =>
+    call<LaunchBoxCatalogStatus>("refresh_launchbox_catalog", { force }),
+  refreshEmulatorMetadata: () =>
+    call<LaunchBoxEnrichmentResult>("refresh_emulator_metadata"),
+  refreshGameMetadata: (gameId: string) =>
+    call<LaunchBoxGameRefreshResult>("refresh_game_metadata", { gameId }),
+  downloadLaunchBoxScreenshots: (gameId: string) =>
+    call<string[]>("download_launchbox_screenshots", { gameId }),
   cancelSteamImageSync: () =>
     call<SteamImageSyncStatus>("cancel_steam_image_sync"),
   getStorageStatus: () => call<StorageStatus>("get_storage_status"),
@@ -421,4 +481,60 @@ export const providerSettingsService = {
       targetMode,
       deleteSource,
     }),
+  inspectEdenExecutable: (executablePath: string) =>
+    call<EdenExecutableInspection>("inspect_eden_executable", {
+      executablePath,
+    }),
+  getEdenStatus: () => call<EdenStatus>("get_eden_status"),
+  connectEden: (executablePath: string, manualLibraryRoots: string[]) =>
+    call<EdenStatus>("connect_eden", { executablePath, manualLibraryRoots }),
+  rescanEden: () => call<EdenStatus>("rescan_eden"),
+  disconnectEden: () => call<EdenStatus>("disconnect_eden"),
+};
+
+export type LaunchBoxCatalogStatus = {
+  available: boolean;
+  catalogVersion: string | null;
+  catalogSchemaVersion: number | null;
+  metadataZipUrl: string;
+  downloadedAt: string | null;
+  expiresAt: string | null;
+  recordCount: number;
+  switchRecordCount: number;
+  zipSizeBytes: number | null;
+  sourceSizeBytes: number | null;
+  importDurationMs: number | null;
+  status: string;
+  lastError: string | null;
+  ttlExpired: boolean;
+  progress: LaunchBoxCatalogProgress | null;
+};
+
+export type LaunchBoxCatalogProgress = {
+  phase:
+    "downloading" | "extracting" | "importing" | "validating" | "activating";
+  processedRecords: number;
+  totalRecords: number | null;
+  downloadedBytes: number | null;
+  totalBytes: number | null;
+  elapsedMs: number;
+  lastProgressAtMs: number;
+};
+
+export type LaunchBoxEnrichmentResult = {
+  resolved: number;
+  exact: number;
+  high: number;
+  ambiguous: number;
+  unresolved: number;
+};
+
+export type LaunchBoxGameRefreshResult = {
+  status: "success" | "partial";
+  metadataResolved: boolean;
+  screenshotsResolved: number;
+  screenshotsCached: number;
+  screenshotsDownloaded: number;
+  screenshotsFailed: number;
+  confidence: "exact" | "high" | "ambiguous" | "unresolved";
 };

@@ -9,11 +9,20 @@ export function GameSessionScreen({ games }: { games: Game[] }) {
   const { engine, inputManager } = useNavigation();
   const currentState = useGameSessionStore((state) => state.currentState);
   const gameId = useGameSessionStore((state) => state.gameId);
+  const sessionId = useGameSessionStore((state) => state.sessionId);
+  const source = useGameSessionStore((state) => state.source);
   const returnFocusId = useGameSessionStore((state) => state.returnFocusId);
   const inputFrozen = useGameSessionStore((state) => state.inputFrozen);
   const message = useGameSessionStore((state) => state.message);
   const unsupportedReason = useGameSessionStore(
     (state) => state.unsupportedReason,
+  );
+  const monitoringMode = useGameSessionStore((state) => state.monitoringMode);
+  const antiCheatProvider = useGameSessionStore(
+    (state) => state.antiCheatProvider,
+  );
+  const compatibleReason = useGameSessionStore(
+    (state) => state.compatibleReason,
   );
   const elapsedSeconds = useGameSessionStore((state) => state.elapsedSeconds);
   const applyStatus = useGameSessionStore((state) => state.applyStatus);
@@ -99,7 +108,7 @@ export function GameSessionScreen({ games }: { games: Game[] }) {
     currentState === "preparing"
       ? message || "Comprobando instalación y compatibilidad…"
       : currentState === "launching"
-        ? "Steam está preparando el juego…"
+        ? message || "El emulador está preparando el juego…"
         : currentState === "running"
           ? `Tiempo registrado: ${formatElapsed(elapsedSeconds)}`
           : currentState === "finishing"
@@ -112,6 +121,8 @@ export function GameSessionScreen({ games }: { games: Game[] }) {
       role="status"
       aria-live="polite"
       data-session-state={currentState}
+      data-session-id={sessionId}
+      data-session-source={source}
     >
       <div className="game-session-panel">
         {game?.backgroundUrl && (
@@ -137,6 +148,13 @@ export function GameSessionScreen({ games }: { games: Game[] }) {
                       : "Preparando el juego"}
           </h1>
           <p className="game-session-title">{title}</p>
+          {currentState === "preparing" && monitoringMode === "compatible" && (
+            <p className="game-session-message">
+              {compatibleReason === "secondary-launcher-ea"
+                ? "El lanzador está iniciando el juego mediante EA App."
+                : `Monitoreo compatible para ${antiCheatProvider ?? "este sistema anti-cheat"}.`}
+            </p>
+          )}
           <p className="game-session-message">{detail}</p>
           {(currentState === "error" || currentState === "unsupported") && (
             <Focusable

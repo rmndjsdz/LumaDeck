@@ -40,6 +40,7 @@ interface CacheEntry {
 interface ActiveRequest {
   requestId: number;
   url: string;
+  fallbackUrl: string | null;
 }
 
 const isDeferredPhase = (phase: NavigationPhase): boolean =>
@@ -93,6 +94,7 @@ export class BackgroundManager {
   public request(
     url: string | null,
     phase: NavigationPhase = this.phase,
+    fallbackUrl: string | null = null,
   ): void {
     if (!url) return;
     // React StrictMode replays effects during development. The external
@@ -120,7 +122,7 @@ export class BackgroundManager {
     }
     if (url === this.snapshot.currentUrl) return;
     if (this.activeRequest?.url === url) return;
-    this.startVisualRequest(url);
+    this.startVisualRequest(url, fallbackUrl);
   }
 
   public preload(urls: readonly (string | null)[]): void {
@@ -142,11 +144,14 @@ export class BackgroundManager {
     this.activeRequest = null;
   }
 
-  private startVisualRequest(url: string): void {
+  private startVisualRequest(
+    url: string,
+    fallbackUrl: string | null = null,
+  ): void {
     this.requestId += 1;
     const requestId = this.requestId;
     this.clearTransition();
-    this.activeRequest = { requestId, url };
+    this.activeRequest = { requestId, url, fallbackUrl };
     this.snapshot = {
       ...this.snapshot,
       incomingUrl: url,
@@ -265,7 +270,12 @@ export class BackgroundManager {
     const activeRequest = this.activeRequest;
     if (!activeRequest || activeRequest.url !== url) return;
     if (!this.isCurrentRequest(activeRequest.requestId, url)) return;
+    const fallbackUrl = activeRequest.fallbackUrl;
     this.activeRequest = null;
+    if (fallbackUrl && fallbackUrl !== url) {
+      this.startVisualRequest(fallbackUrl);
+      return;
+    }
     this.snapshot = {
       ...this.snapshot,
       incomingUrl: null,

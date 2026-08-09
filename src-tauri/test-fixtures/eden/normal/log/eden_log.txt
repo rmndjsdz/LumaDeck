@@ -1,0 +1,3 @@
+[2026-08-08 12:00:00] Loading Mario Kart 8 Deluxe (0100152000022000)
+[2026-08-08 12:01:00] Booting game: 0100000000010000 | Super Mario Odyssey
+

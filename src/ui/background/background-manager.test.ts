@@ -63,6 +63,30 @@ describe("BackgroundManager", () => {
     manager.dispose();
   });
 
+  it("uses the fallback artwork when the primary background fails", () => {
+    const images: HTMLImageElement[] = [];
+    const manager = new BackgroundManager({
+      imageFactory: () => {
+        const image = document.createElement("img");
+        images.push(image);
+        return image;
+      },
+      reducedMotion: () => true,
+    });
+
+    manager.request("broken-background", "idle", "cover-fallback");
+    images[0].onerror?.(new Event("error"));
+    expect(images).toHaveLength(2);
+    expect(manager.getSnapshot()).toMatchObject({
+      currentUrl: null,
+      incomingUrl: "cover-fallback",
+    });
+
+    images[1].onload?.(new Event("load"));
+    expect(manager.getSnapshot().currentUrl).toBe("cover-fallback");
+    manager.dispose();
+  });
+
   it("defers rapid navigation and crossfades only the final destination", () => {
     const images: HTMLImageElement[] = [];
     const manager = new BackgroundManager({

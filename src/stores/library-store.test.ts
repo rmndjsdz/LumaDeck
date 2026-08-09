@@ -11,6 +11,7 @@ describe("library store", () => {
     useLibraryStore.getState().setQuery("juniper");
     useLibraryStore.getState().setStatus("completed");
     useLibraryStore.getState().setSort("recent");
+    useLibraryStore.getState().setGenre("fighting");
 
     const beforeRemount = useLibraryStore.getState();
     const afterRemount = useLibraryStore.getState();
@@ -18,6 +19,7 @@ describe("library store", () => {
     expect(afterRemount.query).toBe("juniper");
     expect(afterRemount.status).toBe("completed");
     expect(afterRemount.sort).toBe("recent");
+    expect(afterRemount.genre).toBe("fighting");
     expect(afterRemount.queryVersion).toBe(beforeRemount.queryVersion);
     expect(afterRemount.queryCommitted).toBe(true);
   });
@@ -38,6 +40,7 @@ describe("library store", () => {
     useLibraryStore.getState().setQuery("juniper");
     useLibraryStore.getState().setStatus("playing");
     useLibraryStore.getState().setSort("time");
+    useLibraryStore.getState().setGenre("local-multiplayer");
 
     useLibraryStore.getState().reset();
 

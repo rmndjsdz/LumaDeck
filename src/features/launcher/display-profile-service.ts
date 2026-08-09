@@ -8,6 +8,11 @@ export interface DisplayMode {
   refreshRate: number;
 }
 
+export type DisplayResolutionMode = "SYSTEM" | "CUSTOM";
+export type DisplayRefreshRateMode = "SYSTEM" | "CUSTOM";
+export type DisplayHdrMode = "SYSTEM" | "OFF" | "ON" | "AUTO";
+export type RtxHdrPreset = "NATURAL" | "VIBRANT";
+
 export interface DisplayProfile {
   gameId: string;
   enabled: boolean;
@@ -18,6 +23,11 @@ export interface DisplayProfile {
   refreshRate: number | null;
   restoreOnExit: boolean;
   updatedAt: string | null;
+  resolutionMode: DisplayResolutionMode;
+  refreshRateMode: DisplayRefreshRateMode;
+  hdrMode: DisplayHdrMode;
+  rtxHdrPreset: RtxHdrPreset | null;
+  rtxHdrPeakNits: number;
 }
 
 const isDesktopRuntime = (): boolean =>
@@ -33,6 +43,11 @@ const autoProfile = (gameId: string): DisplayProfile => ({
   refreshRate: null,
   restoreOnExit: true,
   updatedAt: null,
+  resolutionMode: "SYSTEM",
+  refreshRateMode: "SYSTEM",
+  hdrMode: "SYSTEM",
+  rtxHdrPreset: null,
+  rtxHdrPeakNits: 800,
 });
 
 export const displayProfileService = {
@@ -68,6 +83,12 @@ export function displayProfileErrorMessage(error: unknown): string {
   const code = error instanceof Error ? error.message : String(error);
   if (code.includes("DISPLAY_MODE_UNAVAILABLE")) {
     return "La resolución o frecuencia ya no está disponible en esta pantalla.";
+  }
+  if (code.includes("DISPLAY_PROFILE_TARGET_REQUIRED")) {
+    return "Selecciona una pantalla concreta para aplicar este perfil.";
+  }
+  if (code.includes("DISPLAY_PROFILE_OTHER_SESSION_ACTIVE")) {
+    return "Ya existe otra sesión usando un perfil de pantalla.";
   }
   if (code.includes("DISPLAY_MODES_UNAVAILABLE")) {
     return "No se pudieron consultar los modos de pantalla disponibles.";

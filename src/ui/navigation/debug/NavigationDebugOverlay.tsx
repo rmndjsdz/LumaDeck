@@ -14,7 +14,13 @@ export function NavigationDebugOverlay() {
   );
   const debug = useNavigationStore((state) => state.debug);
 
-  if (import.meta.env.PROD) return null;
+  const diagnosticsEnabled =
+    !import.meta.env.PROD &&
+    typeof window !== "undefined" &&
+    (new URLSearchParams(window.location.search).has("hud") ||
+      import.meta.env.VITE_PERFORMANCE_HUD === "true");
+
+  if (!diagnosticsEnabled) return null;
 
   const copyTrace = async () => {
     const copied = await navigationRuntimeTrace.copyToClipboard();
@@ -145,7 +151,7 @@ export function NavigationDebugOverlay() {
           value={debug.scrollAuthority ?? "—"}
         />
         <DebugRow label="fallback" value={debug.fallbackReason ?? "—"} />
-        <DebugRow label="Home row" value={debug.activeHomeRowId ?? "â€”"} />
+        <DebugRow label="Home row" value={debug.activeHomeRowId ?? "—"} />
         <DebugRow
           label="Home row/index"
           value={`${formatNumber(debug.activeHomeRowIndex)}/${formatNumber(debug.activeHomeItemIndex)}`}
@@ -156,19 +162,19 @@ export function NavigationDebugOverlay() {
         />
         <DebugRow
           label="Home target"
-          value={`${debug.targetHomeRowId ?? "â€”"}/${formatNumber(debug.targetHomeItemIndex)}`}
+          value={`${debug.targetHomeRowId ?? "—"}/${formatNumber(debug.targetHomeItemIndex)}`}
         />
         <DebugRow
           label="vertical strategy"
-          value={debug.selectedVerticalStrategy ?? "â€”"}
+          value={debug.selectedVerticalStrategy ?? "—"}
         />
         <DebugRow
           label="target items"
-          value={debug.availableTargetRowItems?.join(", ") ?? "â€”"}
+          value={debug.availableTargetRowItems?.join(", ") ?? "—"}
         />
         <DebugRow
           label="vertical fallback"
-          value={debug.verticalFallbackReason ?? "â€”"}
+          value={debug.verticalFallbackReason ?? "—"}
         />
         <DebugRow
           label="restored row/index"

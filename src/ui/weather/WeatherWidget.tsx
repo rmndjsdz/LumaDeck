@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 
 const WEATHER_REFRESH_MS = 15 * 60 * 1000;
-const CLOCK_REFRESH_MS = 30 * 1000;
 
 type WeatherDay = {
   date: string;
@@ -32,8 +31,13 @@ export function WeatherWidget() {
     let disposed = false;
 
     const loadWeather = async () => {
+      logWeatherEvent("load-start");
       try {
         const position = await getCurrentPosition();
+        logWeatherEvent("geolocation-ready", {
+          latitude: roundCoordinate(position.coords.latitude),
+          longitude: roundCoordinate(position.coords.longitude),
+        });
         const url = new URL("https://api.open-meteo.com/v1/forecast");
         url.searchParams.set("latitude", String(position.coords.latitude));
         url.searchParams.set("longitude", String(position.coords.longitude));
@@ -47,11 +51,24 @@ export function WeatherWidget() {
         url.searchParams.set("timezone", "auto");
 
         const response = await fetch(url);
-        if (!response.ok) throw new Error("Weather request failed");
+        logWeatherEvent("request-response", {
+          status: response.status,
+          ok: response.ok,
+        });
+        if (!response.ok)
+          throw new Error(`Weather request failed (${response.status})`);
         const payload: unknown = await response.json();
         const data = parseWeatherResponse(payload);
+        logWeatherEvent("load-ready", {
+          temperature: data.temperature,
+          weatherCode: data.weatherCode,
+          forecastDays: data.forecast.length,
+        });
         if (!disposed) setWeather({ status: "ready", data });
-      } catch {
+      } catch (error) {
+        logWeatherEvent("load-failed", {
+          message: weatherErrorMessage(error),
+        });
         if (!disposed) setWeather({ status: "unavailable", data: null });
       }
     };
@@ -61,15 +78,39 @@ export function WeatherWidget() {
       () => void loadWeather(),
       WEATHER_REFRESH_MS,
     );
-    const clockTimer = window.setInterval(
-      () => setNow(new Date()),
-      CLOCK_REFRESH_MS,
-    );
 
     return () => {
       disposed = true;
       window.clearInterval(weatherTimer);
-      window.clearInterval(clockTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let clockTimer: number | null = null;
+
+    const scheduleClockUpdate = () => {
+      const current = new Date();
+      setNow(current);
+      const elapsedInMinute =
+        current.getSeconds() * 1000 + current.getMilliseconds();
+      clockTimer = window.setTimeout(
+        scheduleClockUpdate,
+        60_000 - elapsedInMinute + 25,
+      );
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (clockTimer !== null) window.clearTimeout(clockTimer);
+      scheduleClockUpdate();
+    };
+
+    scheduleClockUpdate();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      if (clockTimer !== null) window.clearTimeout(clockTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
 
@@ -126,15 +167,52 @@ export function WeatherWidget() {
 function getCurrentPosition(): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error("Geolocation unavailable"));
+      const error = new Error("Geolocation unavailable");
+      logWeatherEvent("geolocation-unavailable", {
+        message: error.message,
+      });
+      reject(error);
       return;
     }
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: false,
-      maximumAge: WEATHER_REFRESH_MS,
-      timeout: 10_000,
-    });
+    navigator.geolocation.getCurrentPosition(
+      resolve,
+      (error) => {
+        logWeatherEvent("geolocation-failed", {
+          code: error.code,
+          message: error.message,
+        });
+        reject(error);
+      },
+      {
+        enableHighAccuracy: false,
+        maximumAge: WEATHER_REFRESH_MS,
+        timeout: 10_000,
+      },
+    );
   });
+}
+
+function logWeatherEvent(
+  event: string,
+  details?: Record<string, unknown>,
+): void {
+  const logger =
+    event.includes("failed") || event.includes("unavailable")
+      ? console.warn
+      : console.info;
+  if (details) {
+    logger(`[weather] ${event}`, details);
+  } else {
+    logger(`[weather] ${event}`);
+  }
+}
+
+function weatherErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function roundCoordinate(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function parseWeatherResponse(payload: unknown): WeatherData {

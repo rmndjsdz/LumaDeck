@@ -1,4 +1,5 @@
 import type { Game } from "../catalog/game-types";
+import { getVisibleGames } from "../catalog/game-visibility";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import { useNavigationStore } from "../../stores/navigation-store";
 import { NavigationRow } from "../../ui/navigation/layouts/NavigationRow";
@@ -38,19 +39,20 @@ interface HomeViewProps {
 
 export function HomeView({ games, onOpen, onViewLibrary }: HomeViewProps) {
   const activeFocusId = useNavigationStore((state) => state.activeFocusId);
-  const playingGames = games.filter((game) => game.status === "playing");
-  const continuePlaying = (playingGames.length ? playingGames : games)
+  const visibleGames = getVisibleGames(games);
+  const playingGames = visibleGames.filter((game) => game.status === "playing");
+  const continuePlaying = (playingGames.length ? playingGames : visibleGames)
     .filter((game) => game.lastPlayedAt && game.playtimeMinutes > 0)
     .sort((left, right) =>
       (right.lastPlayedAt ?? "").localeCompare(left.lastPlayedAt ?? ""),
     )
     .slice(0, 5);
-  const savedFavorites = games.filter((game) => game.favorite);
-  const favorites = (savedFavorites.length ? savedFavorites : games)
+  const savedFavorites = visibleGames.filter((game) => game.favorite);
+  const favorites = (savedFavorites.length ? savedFavorites : visibleGames)
     .filter((game) => game.coverUrl || game.verticalCoverUrl)
     .slice(0, 6);
   const featuredGame = resolveFeaturedGame(
-    games,
+    visibleGames,
     activeFocusId,
     continuePlaying,
     favorites,
@@ -134,9 +136,28 @@ function renderHeroScene(
   return (
     <>
       <div className="home-hero-copy">
-        <p className="eyebrow">Your space</p>
-        <h1 id={headingId}>Pick up where you left off.</h1>
-        <p className="home-featured-title">{game.title}</p>
+        <div className="home-hero-logo-slot">
+          {game.logoUrl.trim() ? (
+            <>
+              <h1 id={headingId} className="visually-hidden">
+                {game.title}
+              </h1>
+              <img
+                className="home-hero-logo"
+                src={game.logoUrl}
+                alt={`${game.title} logo`}
+                draggable={false}
+              />
+            </>
+          ) : (
+            <h1
+              id={headingId}
+              className="home-featured-title home-featured-title-fallback"
+            >
+              {game.title}
+            </h1>
+          )}
+        </div>
         <div className="home-hero-details">
           <span>
             <span className="home-detail-icon" aria-hidden="true">
@@ -152,32 +173,38 @@ function renderHeroScene(
           </span>
         </div>
         <div className="home-hero-actions">
-          <button
+          <Focusable
+            focusId="home-hero-continue"
+            scopeId="product-shell"
             className="home-primary-action"
-            type="button"
-            onClick={() => onOpen(game)}
+            navigation={{ right: "home-hero-details" }}
+            ariaLabel="Continue"
+            onConfirm={() => onOpen(game)}
           >
             <span className="play-icon" aria-hidden="true">
               {"\u25b6"}
             </span>
-            Continue
-          </button>
-          <button
-            className="home-icon-action"
-            type="button"
-            aria-label="Open game details"
-            onClick={() => onOpen(game)}
+            <span className="home-action-copy">
+              <strong>Continue</strong>
+              <small>Last played: {formatLastPlayed(game.lastPlayedAt)}</small>
+            </span>
+          </Focusable>
+          <Focusable
+            focusId="home-hero-details"
+            scopeId="product-shell"
+            className="home-secondary-action"
+            navigation={{ left: "home-hero-continue" }}
+            ariaLabel="Game Details"
+            onConfirm={() => onOpen(game)}
           >
-            <span aria-hidden="true">{"\u229e"}</span>
-          </button>
-          <button
-            className="home-icon-action"
-            type="button"
-            aria-label="More game actions"
-            onClick={() => onOpen(game)}
-          >
-            <span aria-hidden="true">{"\u2022\u2022\u2022"}</span>
-          </button>
+            <span className="home-details-icon" aria-hidden="true">
+              {"\u229e"}
+            </span>
+            <span className="home-action-copy">
+              <strong>Game Details</strong>
+              <small>View game information</small>
+            </span>
+          </Focusable>
         </div>
       </div>
       <div className="home-hero-aside" aria-label="Game summary">
@@ -206,13 +233,6 @@ function renderHeroScene(
             <span>Achievements</span>
             <strong>{formatAchievements(game)}</strong>
           </div>
-        </div>
-        <div className="home-hero-tags" aria-label="Game genres">
-          {getHeroGenres(game)
-            .slice(0, 3)
-            .map((genre) => (
-              <span key={genre}>{genre}</span>
-            ))}
         </div>
       </div>
     </>
@@ -253,18 +273,6 @@ function formatAchievements(game: Game): string {
     return `${achievements.unlocked} / ${achievements.total}`;
   }
   return "\u2014 / \u2014";
-}
-
-function getHeroGenres(game: Game): string[] {
-  return [
-    ...new Set(
-      [
-        ...game.genres,
-        ...(game.details?.steam?.genres ?? []),
-        ...(game.details?.steam?.tags ?? []),
-      ].filter(Boolean),
-    ),
-  ];
 }
 
 function GameRow({

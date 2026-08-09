@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { Game } from "../../features/catalog/game-types";
 import { useNavigationStore } from "../../stores/navigation-store";
+import { getGameBackgroundUrls } from "../../features/catalog/game-media";
 import {
   BackgroundManager,
   type BackgroundTelemetry,
@@ -41,16 +42,25 @@ export function BackgroundView({ games, fallbackGameId }: BackgroundViewProps) {
     if (!targetGame) return [];
     const index = games.findIndex((game) => game.id === targetGame.id);
     return [
-      games[index - 1]?.backgroundUrl,
-      games[index + 1]?.backgroundUrl,
-      games[index + 2]?.backgroundUrl,
+      ...(games[index - 1] ? getGameBackgroundUrls(games[index - 1]) : []),
+      ...(games[index + 1] ? getGameBackgroundUrls(games[index + 1]) : []),
+      ...(games[index + 2] ? getGameBackgroundUrls(games[index + 2]) : []),
     ];
   }, [games, targetGame]);
 
+  const targetBackgroundUrls = useMemo(
+    () => (targetGame ? getGameBackgroundUrls(targetGame) : []),
+    [targetGame],
+  );
+
   useEffect(() => {
-    manager.request(targetGame?.backgroundUrl ?? null, navigationPhase);
+    manager.request(
+      targetBackgroundUrls[0] ?? null,
+      navigationPhase,
+      targetBackgroundUrls[1] ?? null,
+    );
     manager.preload(preloadUrls);
-  }, [manager, navigationPhase, preloadUrls, targetGame]);
+  }, [manager, navigationPhase, preloadUrls, targetBackgroundUrls]);
 
   useEffect(() => () => manager.dispose(), [manager]);
 

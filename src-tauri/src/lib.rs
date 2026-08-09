@@ -1,16 +1,28 @@
 mod achievements;
 mod ai;
 mod artwork;
+mod auto_hdr;
+mod bluetooth;
 mod consensus;
 mod data_directory;
 mod display;
+mod eden;
 mod frame_generation;
+mod game_capabilities;
 mod game_session;
+mod gamepad;
+mod graphics_profile;
+mod hardware_capabilities;
 mod hltb;
+mod launch_display;
+mod launchbox;
 mod lossless_scaling;
+mod network;
 pub mod news;
 mod news_steam;
+mod pcgamingwiki;
 mod reviews;
+mod rtx_hdr;
 mod settings;
 mod steam;
 pub mod steamgriddb;
@@ -34,6 +46,180 @@ use std::{
 use steam::{SteamError, SteamProfile};
 use steamgriddb::{ArtworkSearchRequest, ArtworkSearchResult, SteamGridDbClient, SteamGridDbError};
 use tauri::{AppHandle, Manager, State};
+
+#[tauri::command]
+fn get_network_state() -> Result<network::NetworkSnapshot, String> {
+    network::get_network_state()
+}
+
+#[tauri::command]
+fn get_bluetooth_state(
+    state: State<'_, bluetooth::BluetoothService>,
+    database: State<'_, DatabaseState>,
+) -> Result<bluetooth::BluetoothSnapshot, String> {
+    let result = bluetooth::get_bluetooth_state(&state);
+    if let Err(error) = &result {
+        database.log(
+            "bluetooth",
+            "command.get_state.failed",
+            &format!("error={error}"),
+        );
+    }
+    result
+}
+
+#[tauri::command]
+fn set_bluetooth_enabled(
+    state: State<'_, bluetooth::BluetoothService>,
+    database: State<'_, DatabaseState>,
+    enabled: bool,
+) -> Result<bluetooth::BluetoothSnapshot, String> {
+    let result = bluetooth::set_bluetooth_enabled(&state, enabled);
+    database.log(
+        "bluetooth",
+        "command.set_enabled",
+        &format!(
+            "enabled={} success={} error={:?}",
+            enabled,
+            result.is_ok(),
+            result.as_ref().err()
+        ),
+    );
+    result
+}
+
+#[tauri::command]
+fn start_bluetooth_discovery(
+    state: State<'_, bluetooth::BluetoothService>,
+    database: State<'_, DatabaseState>,
+) -> Result<bluetooth::BluetoothSnapshot, String> {
+    let result = bluetooth::start_bluetooth_discovery(&state);
+    database.log(
+        "bluetooth",
+        "command.start_discovery",
+        &format!(
+            "success={} error={:?}",
+            result.is_ok(),
+            result.as_ref().err()
+        ),
+    );
+    result
+}
+
+#[tauri::command]
+fn stop_bluetooth_discovery(
+    state: State<'_, bluetooth::BluetoothService>,
+    database: State<'_, DatabaseState>,
+) -> Result<bluetooth::BluetoothSnapshot, String> {
+    let result = bluetooth::stop_bluetooth_discovery(&state);
+    database.log(
+        "bluetooth",
+        "command.stop_discovery",
+        &format!(
+            "success={} error={:?}",
+            result.is_ok(),
+            result.as_ref().err()
+        ),
+    );
+    result
+}
+
+#[tauri::command]
+async fn pair_bluetooth_device(
+    state: State<'_, bluetooth::BluetoothService>,
+    database: State<'_, DatabaseState>,
+    device_id: String,
+) -> Result<bluetooth::BluetoothSnapshot, String> {
+    let result = bluetooth::pair_bluetooth_device(&state, device_id.clone());
+    database.log(
+        "bluetooth",
+        "command.pair_device",
+        &format!(
+            "device_id_length={} success={} error={:?}",
+            device_id.len(),
+            result.is_ok(),
+            result.as_ref().err()
+        ),
+    );
+    result
+}
+
+#[tauri::command]
+fn unpair_bluetooth_device(
+    state: State<'_, bluetooth::BluetoothService>,
+    database: State<'_, DatabaseState>,
+    device_id: String,
+) -> Result<bluetooth::BluetoothSnapshot, String> {
+    let result = bluetooth::unpair_bluetooth_device(&state, device_id.clone());
+    database.log(
+        "bluetooth",
+        "command.unpair_device",
+        &format!(
+            "device_id_length={} success={} error={:?}",
+            device_id.len(),
+            result.is_ok(),
+            result.as_ref().err()
+        ),
+    );
+    result
+}
+
+#[tauri::command]
+fn get_bluetooth_diagnostics(
+    state: State<'_, bluetooth::BluetoothService>,
+) -> Result<Vec<bluetooth::BluetoothTelemetryEvent>, String> {
+    state.diagnostics()
+}
+
+#[tauri::command]
+fn record_bluetooth_client_diagnostic(
+    state: State<'_, bluetooth::BluetoothService>,
+    database: State<'_, DatabaseState>,
+    level: String,
+    event: String,
+    details: String,
+) -> Result<(), String> {
+    state.log(&level, &event, &details);
+    database.log("bluetooth-ui", &event, &details);
+    Ok(())
+}
+
+#[tauri::command]
+fn scan_wifi_networks() -> Result<network::NetworkSnapshot, String> {
+    network::scan_wifi_networks()
+}
+
+#[tauri::command]
+fn set_wifi_enabled(adapter_id: String, enabled: bool) -> Result<network::NetworkSnapshot, String> {
+    network::set_wifi_enabled(adapter_id, enabled)
+}
+
+#[tauri::command]
+fn set_network_adapter_enabled(
+    adapter_id: String,
+    enabled: bool,
+) -> Result<network::NetworkSnapshot, String> {
+    network::set_network_adapter_enabled(adapter_id, enabled)
+}
+
+#[tauri::command]
+fn connect_wifi(
+    adapter_id: String,
+    ssid: String,
+    password: Option<String>,
+) -> Result<network::NetworkSnapshot, String> {
+    network::connect_wifi(adapter_id, ssid, password)
+}
+
+#[tauri::command]
+fn disconnect_wifi(adapter_id: String) -> Result<network::NetworkSnapshot, String> {
+    network::disconnect_wifi(adapter_id)
+}
+
+#[tauri::command]
+fn forget_wifi(adapter_id: String, ssid: String) -> Result<network::NetworkSnapshot, String> {
+    network::forget_wifi(adapter_id, ssid)
+}
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -951,6 +1137,109 @@ fn get_library_games(state: State<'_, DatabaseState>) -> Result<Vec<settings::Lo
 }
 
 #[tauri::command]
+fn get_launchbox_catalog_status(
+    state: State<'_, DatabaseState>,
+) -> Result<launchbox::LaunchBoxCatalogStatus, String> {
+    launchbox::get_status(&state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn refresh_launchbox_catalog(
+    state: State<'_, DatabaseState>,
+    force: Option<bool>,
+) -> Result<launchbox::LaunchBoxCatalogStatus, String> {
+    let force = force.unwrap_or(false);
+    state.log(
+        "launchbox-ui",
+        "launchbox_manual_update_requested",
+        &format!("force={force}"),
+    );
+    match launchbox::refresh_catalog(&state, force).await {
+        Ok(status) => {
+            state.log(
+                "launchbox-ui",
+                "launchbox_manual_update_completed",
+                &format!("record_count={}", status.record_count),
+            );
+            Ok(status)
+        }
+        Err(error) => {
+            state.log(
+                "launchbox-ui",
+                "launchbox_manual_update_failed",
+                &format!("error={error}"),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn refresh_emulator_metadata(
+    state: State<'_, DatabaseState>,
+) -> Result<launchbox::LaunchBoxEnrichmentResult, String> {
+    launchbox::enrich_emulator_games(&state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn download_launchbox_screenshots(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<Vec<String>, String> {
+    launchbox::download_screenshots(&state, &game_id).await
+}
+
+#[tauri::command]
+async fn refresh_game_metadata(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<launchbox::LaunchBoxGameRefreshResult, String> {
+    match launchbox::refresh_game_metadata(&state, &game_id).await {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            state.log(
+                "game-metadata",
+                "game_metadata_refresh_failed",
+                &format!("game_id={game_id} error={error}"),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn inspect_eden_executable(
+    executable_path: String,
+) -> Result<eden::EdenExecutableInspection, String> {
+    eden::inspect_executable(&executable_path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn get_eden_status(state: State<'_, DatabaseState>) -> Result<eden::EdenStatus, String> {
+    eden::get_status(&state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn connect_eden(
+    state: State<'_, DatabaseState>,
+    executable_path: String,
+    manual_library_roots: Vec<String>,
+) -> Result<eden::EdenStatus, String> {
+    eden::connect(&state, &executable_path, &manual_library_roots)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn rescan_eden(state: State<'_, DatabaseState>) -> Result<eden::EdenStatus, String> {
+    eden::rescan(&state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn disconnect_eden(state: State<'_, DatabaseState>) -> Result<eden::EdenStatus, String> {
+    eden::disconnect(&state).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn set_game_favorite(
     state: State<'_, DatabaseState>,
     game_id: String,
@@ -961,6 +1250,20 @@ fn set_game_favorite(
         "game-favorite-save",
         "set_game_favorite",
         settings::set_game_favorite(&state, &game_id, favorite),
+    )
+}
+
+#[tauri::command]
+fn set_game_hidden(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+    hidden: bool,
+) -> Result<bool, String> {
+    map_command_result(
+        &state,
+        "game-visibility-save",
+        "set_game_hidden",
+        settings::set_game_hidden(&state, &game_id, hidden),
     )
 }
 
@@ -1202,6 +1505,8 @@ async fn load_game_reviews_sources(
     game_id: String,
 ) -> Result<reviews::ReviewsSourcesDto, String> {
     let correlation_id = "game-reviews-sources";
+    let request_lock = state.review_request_coordinator.lock_for(&game_id);
+    let _request_guard = request_lock.lock().await;
     let game = settings::get_steam_game_for_metadata(&state, &game_id)
         .map_err(|error| {
             command_error(&state, correlation_id, "get_steam_game_for_reviews", error)
@@ -1521,8 +1826,179 @@ fn get_display_modes() -> Result<Vec<display::DisplayMode>, String> {
 }
 
 #[tauri::command]
-fn get_current_display_mode() -> Result<display::DisplayMode, String> {
-    display::current_mode(None)
+fn get_current_display_mode(display_id: Option<String>) -> Result<display::DisplayMode, String> {
+    display::current_mode(display_id.as_deref())
+}
+
+#[tauri::command]
+fn get_displays() -> Result<Vec<display::DisplayInfo>, String> {
+    display::enumerate_displays()
+}
+
+#[tauri::command]
+fn get_display_modes_for_display(display_id: String) -> Result<Vec<display::DisplayMode>, String> {
+    display::enumerate_modes_for_display(&display_id)
+}
+
+#[tauri::command]
+fn test_current_display_mode(
+    display_id: Option<String>,
+) -> Result<display::DisplayModeTestResult, String> {
+    display::test_current_display_mode(display_id.as_deref())
+}
+
+#[tauri::command]
+fn get_display_scale(display_id: String) -> Result<display::DisplayScale, String> {
+    display::get_display_scale(&display_id)
+}
+
+#[tauri::command]
+fn set_display_scale(display_id: String, scale: u32) -> Result<display::DisplayScale, String> {
+    display::set_display_scale(&display_id, scale)
+}
+
+#[tauri::command]
+fn get_hdr_state(display_id: String) -> Result<display::HdrState, String> {
+    display::get_hdr_state(&display_id)
+}
+
+#[tauri::command]
+fn set_hdr_enabled(display_id: String, enabled: bool) -> Result<display::HdrState, String> {
+    display::set_hdr_enabled(&display_id, enabled)
+}
+
+#[tauri::command]
+fn capture_hdr_state(display_id: String) -> Result<display::HdrSnapshot, String> {
+    display::capture_hdr_state(&display_id)
+}
+
+#[tauri::command]
+fn restore_hdr_state(snapshot: display::HdrSnapshot) -> Result<display::HdrState, String> {
+    display::restore_hdr_state(&snapshot)
+}
+
+#[tauri::command]
+fn capture_display_snapshot(display_id: String) -> Result<display::DisplaySnapshot, String> {
+    display::capture_display_snapshot(&display_id)
+}
+
+#[tauri::command]
+fn restore_display_snapshot(
+    snapshot: display::DisplaySnapshot,
+) -> Result<display::DisplaySnapshot, String> {
+    display::restore_display_snapshot(&snapshot)
+}
+
+fn restore_main_window_fullscreen(app: &AppHandle) -> Result<(), String> {
+    let Some(window) = app.get_webview_window("main") else {
+        return Err("MAIN_WINDOW_NOT_FOUND".to_string());
+    };
+    window
+        .set_fullscreen(true)
+        .map_err(|error| format!("DISPLAY_FULLSCREEN_RESTORE_FAILED:{error}"))
+}
+
+#[tauri::command]
+fn begin_display_mode_change(
+    app: AppHandle,
+    state: State<'_, DatabaseState>,
+    confirmation: State<'_, display::DisplayConfirmationService>,
+    request: display::DisplayMode,
+) -> Result<display::DisplayModeChange, String> {
+    if confirmation.has_pending() {
+        return Err("DISPLAY_CONFIRMATION_PENDING".to_string());
+    }
+    let display_id = if request.display_id.is_empty() {
+        display::primary_display_id()?
+    } else {
+        request.display_id.clone()
+    };
+    let previous_mode = display::current_mode(Some(&display_id))?;
+    let supported = display::enumerate_modes_for_display(&display_id)?;
+    if !supported.iter().any(|mode| mode == &request) {
+        return Err("DISPLAY_MODE_UNAVAILABLE".to_string());
+    }
+    let pending = display::PendingDisplayRestore {
+        display_id: previous_mode.display_id.clone(),
+        width: previous_mode.width,
+        height: previous_mode.height,
+        refresh_rate: previous_mode.refresh_rate,
+        created_at: display::now_timestamp(),
+    };
+    settings::save_pending_display_restore(&state, &pending)
+        .map_err(|error| command_error(&state, "display-confirmation", "save_previous", error))?;
+    let applied_mode = match display::apply_mode(&request) {
+        Ok(mode) => mode,
+        Err(error) => {
+            let _ = settings::clear_pending_display_restore(&state);
+            return Err(error);
+        }
+    };
+    if let Err(error) = restore_main_window_fullscreen(&app) {
+        let _ = display::apply_mode(&previous_mode);
+        let _ = settings::clear_pending_display_restore(&state);
+        return Err(error);
+    }
+    let expires_at_ms = display::now_timestamp()
+        .parse::<u64>()
+        .unwrap_or_default()
+        .saturating_add(15_000);
+    confirmation.arm(
+        previous_mode.clone(),
+        state.path.clone(),
+        std::time::Duration::from_secs(15),
+        {
+            let app = app.clone();
+            move || {
+                let _ = restore_main_window_fullscreen(&app);
+            }
+        },
+    );
+    Ok(display::DisplayModeChange {
+        previous_mode,
+        applied_mode,
+        expires_at_ms,
+    })
+}
+
+#[tauri::command]
+fn confirm_display_mode_change(
+    state: State<'_, DatabaseState>,
+    confirmation: State<'_, display::DisplayConfirmationService>,
+) -> Result<display::DisplayMode, String> {
+    let current = display::current_mode(None)?;
+    confirmation.confirm();
+    settings::clear_pending_display_restore(&state)
+        .map_err(|error| command_error(&state, "display-confirmation", "confirm", error))?;
+    Ok(current)
+}
+
+#[tauri::command]
+fn rollback_display_mode_change(
+    app: AppHandle,
+    state: State<'_, DatabaseState>,
+    confirmation: State<'_, display::DisplayConfirmationService>,
+) -> Result<display::DisplayMode, String> {
+    let previous = confirmation.take_previous().or_else(|| {
+        settings::get_pending_display_restore(&state)
+            .ok()
+            .flatten()
+            .map(|pending| display::DisplayMode {
+                display_id: pending.display_id.clone(),
+                device_name: pending.display_id,
+                width: pending.width,
+                height: pending.height,
+                refresh_rate: pending.refresh_rate,
+            })
+    });
+    let Some(previous) = previous else {
+        return Ok(display::current_mode(None)?);
+    };
+    let restored = display::apply_mode(&previous)?;
+    restore_main_window_fullscreen(&app)?;
+    settings::clear_pending_display_restore(&state)
+        .map_err(|error| command_error(&state, "display-confirmation", "rollback", error))?;
+    Ok(restored)
 }
 
 #[tauri::command]
@@ -1543,23 +2019,48 @@ fn set_display_profile(
     state: State<'_, DatabaseState>,
     mut profile: display::DisplayProfile,
 ) -> Result<display::DisplayProfile, String> {
-    if profile.enabled {
+    let requires_display = profile.resolution_mode != display::DisplayResolutionMode::System
+        || profile.refresh_rate_mode != display::DisplayRefreshRateMode::System
+        || profile.hdr_mode != display::DisplayHdrMode::System
+        || profile.rtx_hdr_preset.is_some();
+    if profile.rtx_hdr_peak_nits == 0 || profile.rtx_hdr_peak_nits > 10_000 {
+        return Err("RTX_HDR_PEAK_NITS_INVALID".to_string());
+    }
+    if requires_display {
         let display_id = profile
             .display_id
             .clone()
-            .unwrap_or(display::primary_display_id()?);
-        let (Some(width), Some(height), Some(refresh_rate)) =
-            (profile.width, profile.height, profile.refresh_rate)
-        else {
-            return Err("DISPLAY_PROFILE_MODE_REQUIRED".to_string());
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "DISPLAY_PROFILE_TARGET_REQUIRED".to_string())?;
+        let current = display::current_mode(Some(&display_id))?;
+        let width = match profile.resolution_mode {
+            display::DisplayResolutionMode::System => current.width,
+            display::DisplayResolutionMode::Custom => profile
+                .width
+                .ok_or_else(|| "DISPLAY_PROFILE_RESOLUTION_REQUIRED".to_string())?,
         };
-        let available = display::enumerate_modes()?;
-        if !available.iter().any(|mode| {
-            mode.display_id == display_id
-                && mode.width == width
-                && mode.height == height
-                && mode.refresh_rate == refresh_rate
-        }) {
+        let height = match profile.resolution_mode {
+            display::DisplayResolutionMode::System => current.height,
+            display::DisplayResolutionMode::Custom => profile
+                .height
+                .ok_or_else(|| "DISPLAY_PROFILE_RESOLUTION_REQUIRED".to_string())?,
+        };
+        let refresh_rate = match profile.refresh_rate_mode {
+            display::DisplayRefreshRateMode::System => current.refresh_rate,
+            display::DisplayRefreshRateMode::Custom => profile
+                .refresh_rate
+                .ok_or_else(|| "DISPLAY_PROFILE_REFRESH_RATE_REQUIRED".to_string())?,
+        };
+        if (profile.resolution_mode != display::DisplayResolutionMode::System
+            || profile.refresh_rate_mode != display::DisplayRefreshRateMode::System)
+            && !display::enumerate_modes_for_display(&display_id)?
+                .iter()
+                .any(|mode| {
+                    mode.width == width
+                        && mode.height == height
+                        && mode.refresh_rate == refresh_rate
+                })
+        {
             return Err("DISPLAY_MODE_UNAVAILABLE".to_string());
         }
         profile.display_id = Some(display_id);
@@ -1692,24 +2193,23 @@ fn restore_pending_display_mode(state: State<'_, DatabaseState>) -> Result<(), S
 }
 
 #[tauri::command]
-fn start_steam_game_session(
+fn start_game_play(
     app: AppHandle,
     service: State<'_, SteamGameSessionService>,
     game_id: String,
-    steam_app_id: i64,
 ) -> Result<GameSessionStatus, String> {
     service
-        .start(app, game_id, steam_app_id)
+        .start(app, game_id)
         .map_err(game_session_command_error)
 }
 
 #[tauri::command]
-fn get_steam_game_session(service: State<'_, SteamGameSessionService>) -> GameSessionStatus {
+fn get_game_session(service: State<'_, SteamGameSessionService>) -> GameSessionStatus {
     service.current_status()
 }
 
 #[tauri::command]
-fn dismiss_steam_game_session(
+fn dismiss_game_session(
     app: AppHandle,
     service: State<'_, SteamGameSessionService>,
 ) -> Result<GameSessionStatus, String> {
@@ -2985,15 +3485,29 @@ fn game_session_command_error(error: SessionCommandError) -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(windows)]
+    if bluetooth::maybe_run_elevated_bluetooth_recovery_helper() {
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let executable_path = std::env::current_exe()?;
             let data_directory =
                 data_directory::DataDirectoryResolver::new(executable_path, app_data_dir);
-            let database = settings::initialize(data_directory)
-                .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+            let database = settings::initialize(data_directory).map_err(|error| {
+                eprintln!("[settings] startup database initialization failed: {error:?}");
+                Box::<dyn std::error::Error>::from(error)
+            })?;
+            if let Err(error) = launch_display::recover_pending(&database) {
+                database.log(
+                    "display-profile",
+                    "DISPLAY_PROFILE_RECOVERY_FAILED",
+                    &format!("error={error}"),
+                );
+            }
             if let Ok(Some(pending)) = settings::get_pending_display_restore(&database) {
                 match display::restore_mode(&pending) {
                     Ok(_) => {
@@ -3012,11 +3526,44 @@ pub fn run() {
                 }
             }
             app.manage(database);
+            let bluetooth_service = bluetooth::BluetoothService::default();
+            bluetooth_service.configure_logging(app.state::<DatabaseState>().logs_directory());
+            app.manage(bluetooth_service);
+            app.manage(display::DisplayConfirmationService::default());
             app.manage(SteamGameSessionService::default());
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let state = app_handle.state::<DatabaseState>();
+                match launchbox::refresh_catalog(&state, false).await {
+                    Ok(_) => {
+                        let _ = launchbox::enrich_emulator_games(&state);
+                    }
+                    Err(error) => state.log(
+                        "launchbox-catalog",
+                        "launchbox_catalog_update_failed",
+                        &format!("background_startup error={error}"),
+                    ),
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            get_bluetooth_state,
+            get_bluetooth_diagnostics,
+            record_bluetooth_client_diagnostic,
+            set_bluetooth_enabled,
+            start_bluetooth_discovery,
+            stop_bluetooth_discovery,
+            pair_bluetooth_device,
+            unpair_bluetooth_device,
+            get_network_state,
+            scan_wifi_networks,
+            set_wifi_enabled,
+            set_network_adapter_enabled,
+            connect_wifi,
+            disconnect_wifi,
+            forget_wifi,
             search_steamgriddb_artwork,
             cancel_steamgriddb_artwork_search,
             apply_steamgriddb_artwork,
@@ -3031,6 +3578,18 @@ pub fn run() {
             replace_steam_api_key,
             disconnect_provider_account,
             get_database_status,
+            pcgamingwiki::get_pcgamingwiki_capabilities,
+            game_capabilities::get_game_capabilities,
+            game_capabilities::refresh_game_capabilities,
+            game_capabilities::set_game_capability_override,
+            game_capabilities::clear_game_capability_override,
+            graphics_profile::resolve_graphics_profile,
+            rtx_hdr::get_rtx_hdr_profile,
+            rtx_hdr::apply_rtx_hdr_profile,
+            rtx_hdr::restore_rtx_hdr_profile,
+            rtx_hdr::get_rtx_hdr_availability,
+            hardware_capabilities::get_hardware_capabilities,
+            hardware_capabilities::refresh_hardware_capabilities,
             get_storage_status,
             migrate_storage,
             get_steam_profile,
@@ -3057,7 +3616,18 @@ pub fn run() {
             sync_hltb_library,
             cancel_hltb_sync,
             get_library_games,
+            get_launchbox_catalog_status,
+            refresh_launchbox_catalog,
+            refresh_emulator_metadata,
+            download_launchbox_screenshots,
+            refresh_game_metadata,
+            inspect_eden_executable,
+            get_eden_status,
+            connect_eden,
+            rescan_eden,
+            disconnect_eden,
             set_game_favorite,
+            set_game_hidden,
             refresh_game_news,
             get_game_news_feed,
             translate_news_items,
@@ -3072,6 +3642,20 @@ pub fn run() {
             end_game_session,
             get_display_modes,
             get_current_display_mode,
+            get_displays,
+            get_display_modes_for_display,
+            test_current_display_mode,
+            get_display_scale,
+            set_display_scale,
+            get_hdr_state,
+            set_hdr_enabled,
+            capture_hdr_state,
+            restore_hdr_state,
+            capture_display_snapshot,
+            restore_display_snapshot,
+            begin_display_mode_change,
+            confirm_display_mode_change,
+            rollback_display_mode_change,
             get_display_profile,
             set_display_profile,
             reset_display_profile,
@@ -3083,9 +3667,9 @@ pub fn run() {
             restart_lossless_scaling,
             get_pending_display_restore,
             restore_pending_display_mode,
-            start_steam_game_session,
-            get_steam_game_session,
-            dismiss_steam_game_session,
+            start_game_play,
+            get_game_session,
+            dismiss_game_session,
             minimize_lumadeck_window,
             restore_lumadeck_window,
             refresh_steam_game_metadata,

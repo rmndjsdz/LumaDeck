@@ -1,8 +1,10 @@
 use super::models::StorageMigrationStatus;
 use crate::data_directory::DataDirectoryResolver;
 use crate::steamgriddb::SteamGridDbQueryCache;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use serde::Serialize;
 use std::{
+    collections::HashMap,
     error::Error as StdError,
     fs::{self, OpenOptions},
     io::Write,
@@ -11,6 +13,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize},
         Arc, Mutex,
     },
+    time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -96,7 +99,8 @@ impl DatabaseError {
 }
 
 pub struct DatabaseState {
-    pub(crate) connection: Mutex<Connection>,
+    pub(crate) connection: RecoveringMutex<Connection>,
+    pub(crate) connection_poisoned: Arc<AtomicBool>,
     pub(crate) path: PathBuf,
     pub(crate) data_directory: DataDirectoryResolver,
     pub(crate) steam_sync_running: Arc<AtomicBool>,
@@ -118,6 +122,101 @@ pub struct DatabaseState {
     pub(crate) storage_migration_status: Arc<Mutex<StorageMigrationStatus>>,
     pub(crate) steamgriddb_query_cache: Arc<Mutex<SteamGridDbQueryCache>>,
     pub(crate) steamgriddb_search_generation: Arc<AtomicU64>,
+    pub(crate) review_request_coordinator: ReviewRequestCoordinator,
+    pub(crate) launchbox_catalog_runtime: Mutex<LaunchBoxCatalogRuntime>,
+}
+
+#[derive(Default)]
+pub(crate) struct ReviewRequestCoordinator {
+    locks: Mutex<HashMap<String, Arc<futures_util::lock::Mutex<()>>>>,
+}
+
+impl ReviewRequestCoordinator {
+    pub(crate) fn lock_for(&self, game_id: &str) -> Arc<futures_util::lock::Mutex<()>> {
+        let mut locks = self
+            .locks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(
+            locks
+                .entry(game_id.to_string())
+                .or_insert_with(|| Arc::new(futures_util::lock::Mutex::new(()))),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchBoxCatalogPhase {
+    NotDownloaded,
+    Ready,
+    Updating,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchBoxCatalogProgress {
+    pub phase: String,
+    pub processed_records: i64,
+    pub total_records: Option<i64>,
+    pub downloaded_bytes: Option<i64>,
+    pub total_bytes: Option<i64>,
+    pub elapsed_ms: i64,
+    pub last_progress_at_ms: i64,
+    #[serde(skip)]
+    pub(crate) started_at_ms: i64,
+}
+
+impl LaunchBoxCatalogProgress {
+    pub(crate) fn new(phase: &str) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or_default();
+        Self {
+            phase: phase.to_string(),
+            processed_records: 0,
+            total_records: None,
+            downloaded_bytes: None,
+            total_bytes: None,
+            elapsed_ms: 0,
+            last_progress_at_ms: now,
+            started_at_ms: now,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LaunchBoxCatalogRuntime {
+    pub phase: LaunchBoxCatalogPhase,
+    pub active_version: Option<String>,
+    pub last_error: Option<String>,
+    pub progress: Option<LaunchBoxCatalogProgress>,
+}
+
+pub(crate) struct RecoveringMutex<T> {
+    inner: Mutex<T>,
+    poisoned: Arc<AtomicBool>,
+}
+
+impl<T> RecoveringMutex<T> {
+    pub(crate) fn new(value: T, poisoned: Arc<AtomicBool>) -> Self {
+        Self {
+            inner: Mutex::new(value),
+            poisoned,
+        }
+    }
+
+    pub(crate) fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, T>> {
+        match self.inner.lock() {
+            Ok(guard) => Ok(guard),
+            Err(error) => {
+                self.poisoned
+                    .store(true, std::sync::atomic::Ordering::Release);
+                Ok(error.into_inner())
+            }
+        }
+    }
 }
 
 impl DatabaseState {
@@ -155,10 +254,41 @@ impl DatabaseState {
             )?;
         }
         run_migrations(&connection)?;
+        let launchbox_runtime = connection
+            .query_row(
+                "SELECT catalog_version, status, last_error FROM launchbox_catalog_state WHERE id = 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(|(version, status, last_error)| LaunchBoxCatalogRuntime {
+                phase: if status == "ready" {
+                    LaunchBoxCatalogPhase::Ready
+                } else {
+                    LaunchBoxCatalogPhase::Error
+                },
+                active_version: Some(version),
+                last_error,
+                progress: None,
+            })
+            .unwrap_or(LaunchBoxCatalogRuntime {
+                phase: LaunchBoxCatalogPhase::NotDownloaded,
+                active_version: None,
+                last_error: None,
+                progress: None,
+            });
         let mode_name = data_directory.mode_name().to_string();
         let root_display = data_directory.root().display().to_string();
+        let connection_poisoned = Arc::new(AtomicBool::new(false));
         let state = Self {
-            connection: Mutex::new(connection),
+            connection: RecoveringMutex::new(connection, Arc::clone(&connection_poisoned)),
+            connection_poisoned,
             path,
             data_directory,
             steam_sync_running: Arc::new(AtomicBool::new(false)),
@@ -183,6 +313,8 @@ impl DatabaseState {
             ))),
             steamgriddb_query_cache: Arc::new(Mutex::new(SteamGridDbQueryCache::default())),
             steamgriddb_search_generation: Arc::new(AtomicU64::new(0)),
+            review_request_coordinator: ReviewRequestCoordinator::default(),
+            launchbox_catalog_runtime: Mutex::new(launchbox_runtime),
         };
         Ok(state)
     }
@@ -194,6 +326,15 @@ impl DatabaseState {
             checkpoint,
             details,
         );
+    }
+
+    pub(crate) fn logs_directory(&self) -> std::path::PathBuf {
+        self.data_directory.logs_directory()
+    }
+
+    pub(crate) fn take_connection_poisoned(&self) -> bool {
+        self.connection_poisoned
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
     pub(crate) fn log_runtime_context(&self, correlation_id: &str) {
@@ -247,6 +388,7 @@ fn write_diagnostic_line(
     checkpoint: &str,
     details: &str,
 ) {
+    const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
     let line =
         format!("[settings] correlationId={correlation_id} checkpoint={checkpoint} {details}\n");
     #[cfg(debug_assertions)]
@@ -254,11 +396,16 @@ fn write_diagnostic_line(
     if fs::create_dir_all(logs_directory).is_err() {
         return;
     }
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(logs_directory.join("settings-runtime.log"))
+    let log_path = logs_directory.join("settings-runtime.log");
+    if fs::metadata(&log_path)
+        .map(|metadata| metadata.len() >= MAX_LOG_BYTES)
+        .unwrap_or(false)
     {
+        let backup_path = logs_directory.join("settings-runtime.log.1");
+        let _ = fs::remove_file(&backup_path);
+        let _ = fs::rename(&log_path, backup_path);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -941,17 +1088,390 @@ fn run_migrations(connection: &Connection) -> Result<(), DatabaseError> {
         )?;
         transaction.commit()?;
     }
+    if applied < 20 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE games ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0 CHECK (hidden IN (0, 1));
+             INSERT INTO schema_migrations(version, applied_at) VALUES (20, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 21 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE games ADD COLUMN source TEXT NOT NULL DEFAULT 'catalog';
+             ALTER TABLE games ADD COLUMN emulator_id TEXT;
+             ALTER TABLE games ADD COLUMN game_path TEXT;
+             ALTER TABLE games ADD COLUMN title_id TEXT;
+             ALTER TABLE games ADD COLUMN playtime_minutes INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE games ADD COLUMN last_played_at TEXT;
+             ALTER TABLE games ADD COLUMN missing_since TEXT;
+             CREATE INDEX IF NOT EXISTS idx_games_emulator_path ON games(source, emulator_id, game_path);
+             INSERT OR IGNORE INTO providers(id, display_name, enabled, created_at, updated_at)
+                VALUES ('eden', 'Eden', 1, datetime('now'), datetime('now'));
+             INSERT INTO schema_migrations(version, applied_at) VALUES (21, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 22 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS external_playtime_snapshots (
+                provider TEXT NOT NULL,
+                emulator_installation_id TEXT NOT NULL,
+                title_id TEXT NOT NULL,
+                game_id TEXT REFERENCES games(id) ON DELETE SET NULL,
+                total_seconds INTEGER NOT NULL CHECK (total_seconds >= 0),
+                observed_at TEXT NOT NULL,
+                format TEXT NOT NULL,
+                PRIMARY KEY (provider, emulator_installation_id, title_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_external_playtime_game
+                ON external_playtime_snapshots(game_id, provider);
+            INSERT INTO schema_migrations(version, applied_at) VALUES (22, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 23 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE games ADD COLUMN emulator_installation_id TEXT;
+             CREATE INDEX IF NOT EXISTS idx_games_eden_identity
+                ON games(source, emulator_id, emulator_installation_id, title_id);
+             INSERT INTO schema_migrations(version, applied_at) VALUES (23, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 24 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS launchbox_catalog_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                catalog_version TEXT NOT NULL,
+                catalog_schema_version INTEGER NOT NULL,
+                metadata_zip_url TEXT NOT NULL,
+                downloaded_at TEXT,
+                source_updated_at TEXT,
+                source_hash TEXT,
+                zip_size_bytes INTEGER,
+                source_size_bytes INTEGER,
+                record_count INTEGER NOT NULL DEFAULT 0,
+                switch_record_count INTEGER NOT NULL DEFAULT 0,
+                import_duration_ms INTEGER,
+                status TEXT NOT NULL,
+                last_error TEXT
+            );
+            CREATE TABLE IF NOT EXISTS launchbox_games (
+                provider_game_id TEXT NOT NULL,
+                catalog_version TEXT NOT NULL,
+                canonical_title TEXT NOT NULL,
+                normalized_title TEXT NOT NULL,
+                alternate_titles_json TEXT NOT NULL DEFAULT '[]',
+                platform TEXT NOT NULL,
+                normalized_platform TEXT NOT NULL,
+                description TEXT,
+                developer TEXT,
+                publisher TEXT,
+                release_date TEXT,
+                genres_json TEXT NOT NULL DEFAULT '[]',
+                normalized_genres_json TEXT NOT NULL DEFAULT '[]',
+                local_multiplayer TEXT NOT NULL DEFAULT 'unknown' CHECK (local_multiplayer IN ('true', 'false', 'unknown')),
+                max_local_players INTEGER,
+                community_rating_raw REAL,
+                community_rating_scale REAL,
+                community_rating_count INTEGER,
+                community_rating_raw_text TEXT,
+                PRIMARY KEY (provider_game_id, catalog_version)
+            );
+            CREATE INDEX IF NOT EXISTS idx_launchbox_games_id
+                ON launchbox_games(provider_game_id);
+            CREATE INDEX IF NOT EXISTS idx_launchbox_games_platform_title
+                ON launchbox_games(normalized_platform, normalized_title);
+            CREATE TABLE IF NOT EXISTS launchbox_media_refs (
+                provider_game_id TEXT NOT NULL,
+                catalog_version TEXT NOT NULL,
+                provider_media_id TEXT,
+                media_type TEXT NOT NULL,
+                media_url TEXT NOT NULL,
+                ordinal INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (provider_game_id, catalog_version, media_url),
+                FOREIGN KEY (provider_game_id, catalog_version)
+                    REFERENCES launchbox_games(provider_game_id, catalog_version) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_launchbox_media_game_type
+                ON launchbox_media_refs(provider_game_id, media_type, ordinal);
+            CREATE TABLE IF NOT EXISTS external_identity_mappings (
+                platform TEXT NOT NULL,
+                native_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                provider_game_id TEXT NOT NULL,
+                confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'high', 'ambiguous', 'unresolved')),
+                resolved_at TEXT NOT NULL,
+                PRIMARY KEY (platform, native_id, provider)
+            );
+            CREATE INDEX IF NOT EXISTS idx_external_identity_provider_game
+                ON external_identity_mappings(provider, provider_game_id);
+            CREATE TABLE IF NOT EXISTS launchbox_negative_matches (
+                game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+                platform TEXT NOT NULL,
+                normalized_title TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('ambiguous', 'unresolved')),
+                expires_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS launchbox_screenshot_cache (
+                game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                provider_media_id TEXT,
+                media_url TEXT NOT NULL,
+                local_path TEXT,
+                fetched_at TEXT,
+                etag TEXT,
+                content_hash TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                PRIMARY KEY (game_id, media_url)
+            );
+            CREATE INDEX IF NOT EXISTS idx_launchbox_screenshot_cache_game
+                ON launchbox_screenshot_cache(game_id, status);
+            INSERT INTO schema_migrations(version, applied_at) VALUES (24, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 25 {
+        let transaction = connection.unchecked_transaction()?;
+        let has_activity_events: bool = transaction.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sqlite_master
+                 WHERE type = 'table' AND name = 'game_activity_events'
+             )",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_activity_events {
+            transaction.execute_batch(
+                "UPDATE game_activity_events
+             SET title = REPLACE(REPLACE(REPLACE(title,
+                         'SesiÃƒÂ³n recuperada', 'Sesión recuperada'),
+                         'SesiÃ³n recuperada', 'Sesión recuperada'),
+                         'SesiÃƒÂ³n', 'Sesión'),
+                 description = REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(description,
+                         'sesiÃƒÂ³n', 'sesión'),
+                         'sesiÃ³n', 'sesión'),
+                         'cerrÃƒÂ³', 'cerró'),
+                         'cerrÃ³', 'cerró'),
+                         'terminÃƒÂ³', 'terminó')
+             WHERE title LIKE '%Ã%' OR description LIKE '%Ã%';
+             UPDATE game_activity_events
+             SET description = REPLACE(description, 'terminÃ³', 'terminó')
+             WHERE description LIKE '%terminÃ³%';
+                ",
+            )?;
+        }
+        transaction.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (25, datetime('now'))",
+            [],
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 26 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pcgamingwiki_game_mapping (
+                game_id TEXT PRIMARY KEY,
+                page_identifier TEXT,
+                page_title TEXT NOT NULL,
+                canonical_url TEXT NOT NULL,
+                steam_app_id INTEGER,
+                gog_product_id TEXT,
+                resolved_via TEXT NOT NULL CHECK (resolved_via IN ('STEAM_APP_ID', 'GOG_PRODUCT_ID')),
+                resolved_at TEXT NOT NULL,
+                last_checked_at INTEGER NOT NULL,
+                etag TEXT,
+                last_modified TEXT,
+                provider_version INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_pcgw_mapping_steam
+                ON pcgamingwiki_game_mapping(steam_app_id);
+            CREATE INDEX IF NOT EXISTS idx_pcgw_mapping_gog
+                ON pcgamingwiki_game_mapping(gog_product_id);
+            CREATE TABLE IF NOT EXISTS pcgamingwiki_capability_evidence (
+                game_id TEXT NOT NULL,
+                capability TEXT NOT NULL CHECK (capability IN ('NATIVE_HDR', 'HIGH_FIDELITY_UPSCALING', 'FRAME_GENERATION')),
+                normalized_value TEXT NOT NULL CHECK (normalized_value IN ('YES', 'NO', 'UNKNOWN')),
+                source_value TEXT,
+                technologies_json TEXT NOT NULL DEFAULT '[]',
+                source TEXT NOT NULL,
+                source_page TEXT NOT NULL,
+                source_field TEXT NOT NULL,
+                confidence TEXT NOT NULL CHECK (confidence IN ('HIGH', 'MEDIUM', 'LOW')),
+                observed_at TEXT NOT NULL,
+                provider_version INTEGER NOT NULL,
+                stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+                PRIMARY KEY (game_id, capability),
+                FOREIGN KEY (game_id) REFERENCES pcgamingwiki_game_mapping(game_id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_pcgw_evidence_page
+                ON pcgamingwiki_capability_evidence(source_page);
+            INSERT INTO schema_migrations(version, applied_at) VALUES (26, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 27 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE pcgamingwiki_game_mapping
+                ADD COLUMN redirect_chain_json TEXT NOT NULL DEFAULT '[]';
+             INSERT INTO schema_migrations(version, applied_at) VALUES (27, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 28 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE pcgamingwiki_game_mapping
+                ADD COLUMN identity_checked_at INTEGER NOT NULL DEFAULT 0;
+             UPDATE pcgamingwiki_game_mapping
+                SET identity_checked_at = last_checked_at
+                WHERE identity_checked_at = 0;
+             INSERT INTO schema_migrations(version, applied_at) VALUES (28, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 29 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS game_capability_overrides (
+                game_id TEXT NOT NULL,
+                capability TEXT NOT NULL CHECK (capability IN ('NATIVE_HDR', 'HIGH_FIDELITY_UPSCALING', 'FRAME_GENERATION')),
+                override_state TEXT NOT NULL CHECK (override_state IN ('NO_OVERRIDE', 'FORCE_YES', 'FORCE_NO', 'FORCE_UNKNOWN')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (game_id, capability),
+                FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+            );
+             CREATE INDEX IF NOT EXISTS idx_game_capability_overrides_game
+                ON game_capability_overrides(game_id);
+             INSERT INTO schema_migrations(version, applied_at) VALUES (29, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 30 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE pcgamingwiki_capability_evidence
+                ADD COLUMN alternative_available TEXT NOT NULL DEFAULT 'UNKNOWN'
+                    CHECK (alternative_available IN ('YES', 'NO', 'UNKNOWN'));
+             ALTER TABLE pcgamingwiki_capability_evidence
+                ADD COLUMN source_note TEXT;
+             INSERT INTO schema_migrations(version, applied_at) VALUES (30, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 31 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS game_display_profiles (
+                game_id TEXT PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+                enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+                display_id TEXT,
+                device_name TEXT,
+                width INTEGER CHECK (width IS NULL OR width > 0),
+                height INTEGER CHECK (height IS NULL OR height > 0),
+                refresh_rate INTEGER CHECK (refresh_rate IS NULL OR refresh_rate > 0),
+                restore_on_exit INTEGER NOT NULL DEFAULT 1 CHECK (restore_on_exit IN (0, 1)),
+                updated_at TEXT NOT NULL
+            );
+            ALTER TABLE game_display_profiles
+                ADD COLUMN resolution_mode TEXT NOT NULL DEFAULT 'SYSTEM'
+                    CHECK (resolution_mode IN ('SYSTEM', 'CUSTOM'));
+             ALTER TABLE game_display_profiles
+                ADD COLUMN refresh_rate_mode TEXT NOT NULL DEFAULT 'SYSTEM'
+                    CHECK (refresh_rate_mode IN ('SYSTEM', 'CUSTOM'));
+             ALTER TABLE game_display_profiles
+                ADD COLUMN hdr_mode TEXT NOT NULL DEFAULT 'SYSTEM'
+                    CHECK (hdr_mode IN ('SYSTEM', 'OFF', 'ON', 'AUTO'));
+             UPDATE game_display_profiles
+                SET resolution_mode = 'CUSTOM', refresh_rate_mode = 'CUSTOM'
+                WHERE enabled = 1 AND width IS NOT NULL AND height IS NOT NULL;
+             CREATE TABLE IF NOT EXISTS pending_display_profile_restore (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                session_id TEXT NOT NULL,
+                game_id TEXT NOT NULL,
+                display_id TEXT NOT NULL,
+                width INTEGER NOT NULL CHECK (width > 0),
+                height INTEGER NOT NULL CHECK (height > 0),
+                refresh_rate INTEGER NOT NULL CHECK (refresh_rate > 0),
+                hdr_enabled INTEGER NOT NULL CHECK (hdr_enabled IN (0, 1)),
+                captured_at TEXT NOT NULL,
+                changed_resolution INTEGER NOT NULL CHECK (changed_resolution IN (0, 1)),
+                changed_refresh_rate INTEGER NOT NULL CHECK (changed_refresh_rate IN (0, 1)),
+                changed_hdr INTEGER NOT NULL CHECK (changed_hdr IN (0, 1))
+             );
+             INSERT INTO schema_migrations(version, applied_at) VALUES (31, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 32 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE game_display_profiles
+                ADD COLUMN rtx_hdr_preset TEXT
+                    CHECK (rtx_hdr_preset IS NULL OR rtx_hdr_preset IN ('NATURAL', 'VIBRANT'));
+             ALTER TABLE game_display_profiles
+                ADD COLUMN rtx_hdr_peak_nits INTEGER NOT NULL DEFAULT 800
+                    CHECK (rtx_hdr_peak_nits > 0 AND rtx_hdr_peak_nits <= 10000);
+             ALTER TABLE pending_display_profile_restore
+                ADD COLUMN rtx_hdr_snapshot_json TEXT;
+             ALTER TABLE pending_display_profile_restore
+                ADD COLUMN auto_hdr_snapshot_json TEXT;
+             ALTER TABLE pending_display_profile_restore
+                ADD COLUMN rtx_hdr_executable TEXT;
+             ALTER TABLE pending_display_profile_restore
+                ADD COLUMN changed_rtx_hdr INTEGER NOT NULL DEFAULT 0 CHECK (changed_rtx_hdr IN (0, 1));
+             ALTER TABLE pending_display_profile_restore
+                ADD COLUMN changed_auto_hdr INTEGER NOT NULL DEFAULT 0 CHECK (changed_auto_hdr IN (0, 1));
+             INSERT INTO schema_migrations(version, applied_at) VALUES (32, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::run_migrations;
+    use super::{run_migrations, RecoveringMutex, ReviewRequestCoordinator};
     use rusqlite::Connection;
     use std::{
         fs,
+        sync::{atomic::AtomicBool, Arc},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    #[test]
+    fn reuses_the_same_lock_for_concurrent_requests_of_one_game() {
+        let coordinator = ReviewRequestCoordinator::default();
+        let first = coordinator.lock_for("steam-678950");
+        let second = coordinator.lock_for("steam-678950");
+        let other_game = coordinator.lock_for("steam-310950");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other_game));
+    }
+    #[test]
+    fn recovering_mutex_keeps_future_requests_usable_after_poison() {
+        let poisoned = Arc::new(AtomicBool::new(false));
+        let mutex = Arc::new(RecoveringMutex::new(0_i32, Arc::clone(&poisoned)));
+        let worker_mutex = Arc::clone(&mutex);
+        let worker = std::thread::spawn(move || {
+            let _guard = worker_mutex.lock().expect("lock before panic");
+            panic!("simulated database operation panic");
+        });
+        assert!(worker.join().is_err());
+
+        let mut guard = mutex.lock().expect("recover poisoned lock");
+        *guard = 1;
+        assert!(poisoned.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(*guard, 1);
+    }
 
     #[test]
     fn migration_is_idempotent_and_enables_foreign_keys() {
@@ -969,8 +1489,8 @@ mod tests {
         let provider_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
             .expect("provider count");
-        assert_eq!(migration_count, 19);
-        assert_eq!(provider_count, 6);
+        assert_eq!(migration_count, 32);
+        assert_eq!(provider_count, 7);
         let table_count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'game_details'",
@@ -1029,6 +1549,40 @@ mod tests {
             )
             .expect("reviews cache table");
         assert_eq!(reviews_cache_table_count, 1);
+
+        for table in [
+            "launchbox_catalog_state",
+            "launchbox_games",
+            "launchbox_media_refs",
+            "external_identity_mappings",
+            "launchbox_negative_matches",
+            "launchbox_screenshot_cache",
+        ] {
+            let count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("LaunchBox table");
+            assert_eq!(count, 1, "missing LaunchBox table {table}");
+        }
+        let foreign_keys: i64 = connection
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .expect("foreign keys pragma");
+        assert_eq!(foreign_keys, 1);
+        connection
+            .execute(
+                "INSERT INTO external_identity_mappings(platform, native_id, provider, provider_game_id, confidence, resolved_at) VALUES ('nintendo_switch', '0100000000010000', 'launchbox', 'lb-1', 'exact', 'now')",
+                [],
+            )
+            .expect("identity mapping");
+        assert!(connection
+            .execute(
+                "INSERT INTO external_identity_mappings(platform, native_id, provider, provider_game_id, confidence, resolved_at) VALUES ('nintendo_switch', '0100000000010000', 'launchbox', 'lb-2', 'high', 'now')",
+                [],
+            )
+            .is_err());
     }
 
     #[test]
@@ -1120,8 +1674,50 @@ mod tests {
                 row.get(0)
             })
             .expect("migration version");
-        assert_eq!(migration_version, 19);
+        assert_eq!(migration_version, 32);
         drop(reopened);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn repairs_legacy_activity_event_encoding() {
+        let connection = Connection::open_in_memory().expect("database");
+        run_migrations(&connection).expect("initial migrations");
+        connection
+            .execute(
+                "INSERT INTO games(
+                    id, title, sort_title, provider, platform, created_at, updated_at
+                 ) VALUES ('encoding-game', 'Encoding Game', 'encoding game', 'local', 'pc', '1', '1')",
+                [],
+            )
+            .expect("game");
+        connection
+            .execute(
+                "INSERT INTO game_activity_events(
+                    game_id, event_type, occurred_at, title, description, source, created_at
+                 ) VALUES (
+                    'encoding-game', 'stale_session', '1', 'SesiÃ³n recuperada',
+                    'La sesiÃ³n activa anterior se cerrÃ³ sin sumar tiempo.', 'local', '1'
+                 )",
+                [],
+            )
+            .expect("legacy event");
+        connection
+            .execute("DELETE FROM schema_migrations WHERE version = 25", [])
+            .expect("rewind migration");
+
+        run_migrations(&connection).expect("encoding migration");
+        let repaired: (String, String) = connection
+            .query_row(
+                "SELECT title, description FROM game_activity_events LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("repaired event");
+        assert_eq!(repaired.0, "Sesión recuperada");
+        assert_eq!(
+            repaired.1,
+            "La sesión activa anterior se cerró sin sumar tiempo."
+        );
     }
 }

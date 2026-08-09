@@ -7,13 +7,16 @@ import {
   useMemo,
 } from "react";
 import { createPortal } from "react-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Game,
+  GameDetails,
   HltbGameData,
   SteamGameDetails,
   SteamGameMetrics,
 } from "../catalog/game-types";
+import { getVisibleGames } from "../catalog/game-visibility";
+import { getGameBackgroundUrl } from "../catalog/game-media";
 import { toPlainText } from "../catalog/text-utils";
 import { useProductStore } from "../../stores/product-store";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
@@ -25,7 +28,11 @@ import {
   NavigationTabs,
 } from "../../ui/navigation/layouts/NavigationTabs";
 import { NavigationContent } from "../../ui/navigation/layouts/NavigationContent";
-import { providerSettingsService } from "../settings/provider-settings-service";
+import { NavigationGrid } from "../../ui/navigation/layouts/NavigationGrid";
+import {
+  launchBoxErrorMessage,
+  providerSettingsService,
+} from "../settings/provider-settings-service";
 import { SteamTrailer } from "./SteamTrailer";
 import { formatHltbDuration } from "./hltb-format";
 import { ArtworkModifierView } from "../artwork/ArtworkModifierView";
@@ -46,6 +53,7 @@ import {
   formatDisplayResolution,
   type DisplayMode,
   type DisplayProfile,
+  type RtxHdrPreset,
 } from "./display-profile-service";
 import {
   frameGenerationErrorMessage,
@@ -55,6 +63,12 @@ import {
 } from "./frame-generation-service";
 import { DlcView } from "../dlc/DlcView";
 import { RelatedGamesView } from "../related/RelatedGamesView";
+import {
+  ScreenshotViewer,
+  type ScreenshotViewerOrigin,
+} from "./ScreenshotViewer";
+import { GameCapabilitiesPanel } from "../game-capabilities/GameCapabilitiesPanel";
+import { hardwareCapabilitiesService } from "../graphics-profile/hardware-capabilities-service";
 
 export function DetailsView({
   game,
@@ -77,7 +91,7 @@ export function DetailsView({
     transform: string;
   } | null>(null);
   const [displayProfileMenu, setDisplayProfileMenu] = useState<
-    "root" | "profile" | "resolution" | "refresh" | "frame-generation"
+    "root" | "profile" | "resolution" | "refresh" | "hdr" | "frame-generation"
   >("root");
   const [displayProfile, setDisplayProfile] = useState<DisplayProfile | null>(
     null,
@@ -87,9 +101,20 @@ export function DetailsView({
   const [frameGenerationProfile, setFrameGenerationProfile] =
     useState<FrameGenerationProfile | null>(null);
   const [isSavingFrameGeneration, setIsSavingFrameGeneration] = useState(false);
+  const hardwareQuery = useQuery({
+    queryKey: ["hardware-capabilities"],
+    queryFn: () => hardwareCapabilitiesService.get(),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const rtxHdrAvailable =
+    hardwareQuery.data?.vendor === "NVIDIA" &&
+    hardwareQuery.data.featureSupport.supportsDlss === "SUPPORTED";
   const [isRefreshingMetadata, setIsRefreshingMetadata] = useState(false);
   const [isDownloadingMedia, setIsDownloadingMedia] = useState(false);
   const [isUpdatingFavorite, setIsUpdatingFavorite] = useState(false);
+  const [isUpdatingHidden, setIsUpdatingHidden] = useState(false);
   const [artworkModifierOpen, setArtworkModifierOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<
     | "summary"
@@ -100,6 +125,11 @@ export function DetailsView({
     | "related"
     | "reviews"
   >("summary");
+  const [screenshotViewerOpen, setScreenshotViewerOpen] = useState(false);
+  const [screenshotViewerInitialIndex, setScreenshotViewerInitialIndex] =
+    useState(0);
+  const [screenshotViewerOrigin, setScreenshotViewerOrigin] =
+    useState<ScreenshotViewerOrigin | null>(null);
   const [detailsContentDirection, setDetailsContentDirection] = useState<
     "forward" | "backward"
   >("forward");
@@ -211,8 +241,12 @@ export function DetailsView({
     setIsRefreshingMetadata(false);
     setIsDownloadingMedia(false);
     setIsUpdatingFavorite(false);
+    setIsUpdatingHidden(false);
     setArtworkModifierOpen(false);
     setActiveSection("summary");
+    setScreenshotViewerOpen(false);
+    setScreenshotViewerInitialIndex(0);
+    setScreenshotViewerOrigin(null);
     setDetailsContentDirection("forward");
     setLiveMetrics(null);
     setIsRefreshingMetrics(false);
@@ -244,6 +278,24 @@ export function DetailsView({
   useEffect(() => {
     void loadLiveMetrics();
   }, [loadLiveMetrics]);
+
+  useEffect(() => {
+    if (!game?.id || game.source !== "emulator") return;
+    let disposed = false;
+    void providerSettingsService
+      .downloadLaunchBoxScreenshots(game.id)
+      .then(() => {
+        if (!disposed) {
+          void queryClient.invalidateQueries({ queryKey: ["games"] });
+        }
+      })
+      .catch(() => {
+        // Details stays usable when LaunchBox media is unavailable or offline.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [game?.id, game?.source, queryClient]);
 
   useEffect(() => {
     const gameId = game?.id;
@@ -332,6 +384,10 @@ export function DetailsView({
       if (firstRefresh) engine.focus(`details-display-refresh-${firstRefresh}`);
       return;
     }
+    if (menuOpen && displayProfileMenu === "hdr") {
+      engine.focus("details-display-hdr-system");
+      return;
+    }
     if (menuOpen && displayProfileMenu === "frame-generation") {
       engine.focus("details-frame-generation-off");
       return;
@@ -399,15 +455,15 @@ export function DetailsView({
 
   const toggleDisplayProfileMode = async () => {
     if (!displayProfile || isSavingDisplayProfile) return;
-    if (displayProfile.enabled) {
+    const hasCustomMode =
+      displayProfile.resolutionMode === "CUSTOM" ||
+      displayProfile.refreshRateMode === "CUSTOM";
+    if (hasCustomMode) {
       await saveProfile({
         ...displayProfile,
         enabled: false,
-        displayId: null,
-        deviceName: null,
-        width: null,
-        height: null,
-        refreshRate: null,
+        resolutionMode: "SYSTEM",
+        refreshRateMode: "SYSTEM",
       });
       return;
     }
@@ -422,6 +478,8 @@ export function DetailsView({
     await saveProfile({
       ...displayProfile,
       enabled: true,
+      resolutionMode: "CUSTOM",
+      refreshRateMode: "CUSTOM",
       displayId: fallbackMode.displayId,
       deviceName: fallbackMode.deviceName,
       width: fallbackMode.width,
@@ -447,6 +505,7 @@ export function DetailsView({
     await saveProfile({
       ...displayProfile,
       enabled: true,
+      resolutionMode: "CUSTOM",
       displayId: mode.displayId,
       deviceName: mode.deviceName,
       width: mode.width,
@@ -458,16 +517,46 @@ export function DetailsView({
 
   const chooseDisplayRefreshRate = async (refreshRate: number) => {
     if (!displayProfile) return;
-    await saveProfile({ ...displayProfile, enabled: true, refreshRate });
+    await saveProfile({
+      ...displayProfile,
+      enabled: true,
+      refreshRateMode: "CUSTOM",
+      refreshRate,
+    });
     setDisplayProfileMenu("profile");
   };
 
-  const toggleRestoreOnExit = () => {
+  const chooseDisplayHdr = async (hdrMode: DisplayProfile["hdrMode"]) => {
     if (!displayProfile) return;
-    void saveProfile({
+    const currentMode =
+      hdrMode === "SYSTEM"
+        ? null
+        : await displayProfileService.getCurrentMode().catch(() => null);
+    await saveProfile({
       ...displayProfile,
-      restoreOnExit: !displayProfile.restoreOnExit,
+      hdrMode,
+      rtxHdrPreset: null,
+      displayId: currentMode?.displayId ?? displayProfile.displayId,
+      deviceName: currentMode?.deviceName ?? displayProfile.deviceName,
     });
+    setDisplayProfileMenu("profile");
+  };
+
+  const chooseRtxHdr = async (preset: RtxHdrPreset) => {
+    if (!displayProfile) return;
+    const currentMode = await displayProfileService
+      .getCurrentMode()
+      .catch(() => null);
+    await saveProfile({
+      ...displayProfile,
+      enabled: true,
+      hdrMode: "ON",
+      rtxHdrPreset: preset,
+      rtxHdrPeakNits: displayProfile.rtxHdrPeakNits || 800,
+      displayId: currentMode?.displayId ?? displayProfile.displayId,
+      deviceName: currentMode?.deviceName ?? displayProfile.deviceName,
+    });
+    setDisplayProfileMenu("profile");
   };
 
   const resetDisplayProfile = async () => {
@@ -485,6 +574,11 @@ export function DetailsView({
         refreshRate: null,
         restoreOnExit: true,
         updatedAt: null,
+        resolutionMode: "SYSTEM",
+        refreshRateMode: "SYSTEM",
+        hdrMode: "SYSTEM",
+        rtxHdrPreset: null,
+        rtxHdrPeakNits: 800,
       });
       setDisplayProfileMenu("root");
       setMessage("Perfil de pantalla restablecido a Auto.");
@@ -545,14 +639,24 @@ export function DetailsView({
   const downloadMedia = async () => {
     if (!game || isDownloadingMedia) return;
     setIsDownloadingMedia(true);
-    setMessage("Descargando multimedia desde Steam…");
+    const isEmulator = game.source === "emulator";
+    setMessage(
+      isEmulator
+        ? "Descargando capturas desde LaunchBox…"
+        : "Descargando multimedia desde Steam…",
+    );
     try {
-      const downloaded = await providerSettingsService.downloadSteamGameMedia(
-        game.id,
-      );
+      const downloaded = isEmulator
+        ? (await providerSettingsService.downloadLaunchBoxScreenshots(game.id))
+            .length
+        : await providerSettingsService.downloadSteamGameMedia(game.id);
       await queryClient.invalidateQueries({ queryKey: ["games"] });
       setMenuOpen(false);
-      setMessage(`Multimedia descargado: ${downloaded} recursos.`);
+      setMessage(
+        isEmulator
+          ? `Capturas de LaunchBox disponibles: ${downloaded}.`
+          : `Multimedia descargado: ${downloaded} recursos.`,
+      );
     } catch (error) {
       const detail =
         error instanceof Error ? error.message : "Error desconocido";
@@ -565,16 +669,37 @@ export function DetailsView({
   const refreshMetadata = async () => {
     if (!game || isRefreshingMetadata) return;
     setIsRefreshingMetadata(true);
+    const isEmulator = game.source === "emulator";
+    if (isEmulator) {
+      setMessage("Actualizando metadatos desde el catálogo local…");
+    }
     setMessage("Actualizando metadatos desde Steam…");
+    if (isEmulator) {
+      setMessage("Actualizando metadatos desde el catálogo local…");
+    }
     try {
-      await providerSettingsService.refreshSteamGameMetadata(game.id);
+      const refreshResult = isEmulator
+        ? await providerSettingsService.refreshGameMetadata(game.id)
+        : null;
+      if (!isEmulator) {
+        await providerSettingsService.refreshSteamGameMetadata(game.id);
+      }
       await queryClient.invalidateQueries({ queryKey: ["games"] });
       setMenuOpen(false);
-      setMessage("Metadatos actualizados correctamente.");
+      setMessage(
+        refreshResult?.metadataResolved === false
+          ? "Metadatos actualizados parcialmente; no se encontró una coincidencia segura en LaunchBox."
+          : refreshResult?.status === "partial"
+            ? "Metadatos actualizados; algunas capturas no están disponibles."
+            : "Metadatos actualizados correctamente.",
+      );
     } catch (error) {
-      const detail =
-        error instanceof Error ? error.message : "Error desconocido";
-      setMessage(`No se pudieron actualizar los metadatos: ${detail}`);
+      const detail = error instanceof Error ? error.message : "UNKNOWN_ERROR";
+      const friendlyDetail = isEmulator
+        ? (launchBoxErrorMessage(error) ??
+          "No se pudo completar el refresco local.")
+        : detail;
+      setMessage(`No se pudieron actualizar los metadatos: ${friendlyDetail}`);
     } finally {
       setIsRefreshingMetadata(false);
     }
@@ -598,6 +723,26 @@ export function DetailsView({
     }
   };
 
+  const hideGame = async () => {
+    if (!game || isUpdatingHidden) return;
+    setIsUpdatingHidden(true);
+    try {
+      await providerSettingsService.setGameHidden(game.id, true);
+      queryClient.setQueryData<Game[]>(["games"], (games) =>
+        games?.map((candidate) =>
+          candidate.id === game.id ? { ...candidate, hidden: true } : candidate,
+        ),
+      );
+      setMenuOpen(false);
+      handleClose();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown error";
+      setMessage(`Could not hide game: ${detail}`);
+    } finally {
+      setIsUpdatingHidden(false);
+    }
+  };
+
   const addRecommendedToWishlist = async (candidate: Game) => {
     if (candidate.favorite) {
       setMessage(`${candidate.title} ya está en tu lista de deseos.`);
@@ -615,16 +760,11 @@ export function DetailsView({
 
   const launchGame = () => {
     if (!game) return;
-    const steamAppId = game.details?.steam?.appId;
-    if (!steamAppId) {
-      setMessage("Este juego no tiene un Steam AppID disponible.");
-      return;
-    }
     useGameSessionStore
       .getState()
       .setReturnFocusId(engine.getActiveFocusId() ?? "details-play");
     void gameSessionService
-      .start(game.id, steamAppId)
+      .start(game.id)
       .then((status) => useGameSessionStore.getState().applyStatus(status))
       .catch((error: unknown) => setMessage(gameSessionErrorMessage(error)));
   };
@@ -702,9 +842,20 @@ export function DetailsView({
     [displayModes, displayProfile?.height, displayProfile?.width],
   );
 
+  const steamDetails = game?.details?.steam;
+  const screenshotUrls = useMemo(
+    () =>
+      game
+        ? (game.screenshots.length > 0
+            ? game.screenshots
+            : (steamDetails?.screenshots ?? [])
+          ).slice(0, 6)
+        : [],
+    [game, steamDetails?.screenshots],
+  );
+
   if (!game) return <p className="empty-state">Game not found.</p>;
 
-  const steamDetails = game.details?.steam;
   const playtimeMinutes =
     liveMetrics?.totalPlaytimeMinutes ??
     steamDetails?.totalPlaytimeMinutes ??
@@ -726,18 +877,38 @@ export function DetailsView({
     game.achievements?.total ??
     steamDetails?.achievementTotal ??
     null;
-  const screenshotUrls = (
-    game.screenshots.length > 0
-      ? game.screenshots
-      : (steamDetails?.screenshots ?? [])
-  ).slice(0, 6);
   const summaryDescription = toPlainText(
     steamDetails?.shortDescription ??
       steamDetails?.description ??
       game.description,
   );
+  const launchboxDetails = game.details?.launchbox;
   const features = getFeatureList(game, steamDetails);
+  const backgroundUrl = getGameBackgroundUrl(game);
   const activeDetailsTabFocusId = `details-tab-${activeSection}`;
+  const openScreenshotViewer = (index: number) => {
+    const focusId = `details-screenshot-${index}`;
+    const sourceElement = engine.registry.get(focusId)?.element;
+    const sourceRect = sourceElement?.getBoundingClientRect();
+    const sourceStyle = sourceElement
+      ? window.getComputedStyle(sourceElement)
+      : null;
+    setScreenshotViewerOrigin(
+      sourceRect
+        ? {
+            left: sourceRect.left,
+            top: sourceRect.top,
+            width: sourceRect.width,
+            height: sourceRect.height,
+            borderRadius: sourceStyle?.borderRadius ?? "12px",
+            boxShadow: sourceStyle?.boxShadow ?? "none",
+          }
+        : null,
+    );
+    engine.prepareScopeOpen("details-screenshot-viewer", focusId);
+    setScreenshotViewerInitialIndex(index);
+    setScreenshotViewerOpen(true);
+  };
   const resolutionModes = displayModes.filter(
     (mode, index, modes) =>
       modes.findIndex(
@@ -762,6 +933,7 @@ export function DetailsView({
           if (
             displayProfileMenu === "resolution" ||
             displayProfileMenu === "refresh" ||
+            displayProfileMenu === "hdr" ||
             displayProfileMenu === "frame-generation"
           ) {
             setDisplayProfileMenu("profile");
@@ -784,13 +956,13 @@ export function DetailsView({
       >
         <div
           className="details-hero"
-          style={{ backgroundImage: `url("${game.backgroundUrl}")` }}
+          style={{ backgroundImage: `url("${backgroundUrl}")` }}
         >
           <SteamTrailer
             gameId={game.id}
             title={game.title}
             sourceUrls={steamDetails?.movies ?? []}
-            posterUrl={game.backgroundUrl}
+            posterUrl={backgroundUrl}
           />
           <div className="details-copy">
             <h1
@@ -890,8 +1062,12 @@ export function DetailsView({
                             <span>Display Profile</span>
                             <span className="details-context-menu-value">
                               {formatDisplayResolution(
-                                displayProfile?.width ?? null,
-                                displayProfile?.height ?? null,
+                                displayProfile?.resolutionMode === "CUSTOM"
+                                  ? (displayProfile.width ?? null)
+                                  : null,
+                                displayProfile?.resolutionMode === "CUSTOM"
+                                  ? (displayProfile.height ?? null)
+                                  : null,
                               )}{" "}
                               <span aria-hidden="true">›</span>
                             </span>
@@ -930,11 +1106,22 @@ export function DetailsView({
                             disabled={
                               isRefreshingMetadata || isDownloadingMedia
                             }
+                            navigation={{ down: "details-hide-game" }}
                             onConfirm={() => void downloadMedia()}
                           >
                             {isDownloadingMedia
                               ? "Descargando multimedia…"
                               : "Descargar multimedia"}
+                          </Focusable>
+                          <Focusable
+                            focusId="details-hide-game"
+                            scopeId="details"
+                            className="details-context-menu-item"
+                            role="menuitem"
+                            disabled={isUpdatingHidden}
+                            onConfirm={() => void hideGame()}
+                          >
+                            Ocultar juego
                           </Focusable>
                         </>
                       )}
@@ -951,7 +1138,10 @@ export function DetailsView({
                           >
                             <span>Mode</span>
                             <span className="details-context-menu-value">
-                              {displayProfile.enabled ? "Custom" : "Auto"}
+                              {displayProfile.resolutionMode === "CUSTOM" ||
+                              displayProfile.refreshRateMode === "CUSTOM"
+                                ? "Custom"
+                                : "System"}
                             </span>
                           </Focusable>
                           <Focusable
@@ -964,7 +1154,8 @@ export function DetailsView({
                               down: "details-display-refresh",
                             }}
                             disabled={
-                              !displayProfile.enabled || isSavingDisplayProfile
+                              displayProfile.resolutionMode !== "CUSTOM" ||
+                              isSavingDisplayProfile
                             }
                             onConfirm={() =>
                               setDisplayProfileMenu("resolution")
@@ -973,8 +1164,12 @@ export function DetailsView({
                             <span>Resolution</span>
                             <span className="details-context-menu-value">
                               {formatDisplayResolution(
-                                displayProfile.width,
-                                displayProfile.height,
+                                displayProfile.resolutionMode === "CUSTOM"
+                                  ? displayProfile.width
+                                  : null,
+                                displayProfile.resolutionMode === "CUSTOM"
+                                  ? displayProfile.height
+                                  : null,
                               )}{" "}
                               <span aria-hidden="true">›</span>
                             </span>
@@ -989,14 +1184,17 @@ export function DetailsView({
                               down: "details-frame-generation",
                             }}
                             disabled={
-                              !displayProfile.enabled || isSavingDisplayProfile
+                              displayProfile.refreshRateMode !== "CUSTOM" ||
+                              isSavingDisplayProfile
                             }
                             onConfirm={() => setDisplayProfileMenu("refresh")}
                           >
                             <span>Refresh Rate</span>
                             <span className="details-context-menu-value">
                               {formatDisplayRefreshRate(
-                                displayProfile.refreshRate,
+                                displayProfile.refreshRateMode === "CUSTOM"
+                                  ? displayProfile.refreshRate
+                                  : null,
                               )}{" "}
                               <span aria-hidden="true">›</span>
                             </span>
@@ -1008,7 +1206,7 @@ export function DetailsView({
                             role="menuitem"
                             navigation={{
                               up: "details-display-refresh",
-                              down: "details-display-restore",
+                              down: "details-display-hdr",
                             }}
                             disabled={isSavingFrameGeneration}
                             onConfirm={() =>
@@ -1022,7 +1220,7 @@ export function DetailsView({
                             </span>
                           </Focusable>
                           <Focusable
-                            focusId="details-display-restore"
+                            focusId="details-display-hdr"
                             scopeId="details"
                             className="details-context-menu-item"
                             role="menuitem"
@@ -1030,14 +1228,20 @@ export function DetailsView({
                               up: "details-frame-generation",
                               down: "details-display-reset",
                             }}
-                            disabled={
-                              !displayProfile.enabled || isSavingDisplayProfile
-                            }
-                            onConfirm={toggleRestoreOnExit}
+                            disabled={isSavingDisplayProfile}
+                            onConfirm={() => setDisplayProfileMenu("hdr")}
                           >
-                            <span>Restore on Exit</span>
+                            <span>HDR del juego</span>
                             <span className="details-context-menu-value">
-                              {displayProfile.restoreOnExit ? "On" : "Off"}
+                              {displayProfile.rtxHdrPreset
+                                ? `RTX HDR ${displayProfile.rtxHdrPreset === "NATURAL" ? "Natural" : "Vibrant"}`
+                                : displayProfile.hdrMode === "ON"
+                                  ? "Native HDR"
+                                  : displayProfile.hdrMode === "AUTO"
+                                    ? "Automatic"
+                                    : displayProfile.hdrMode === "OFF"
+                                      ? "Disabled"
+                                      : "System"}
                             </span>
                           </Focusable>
                           <Focusable
@@ -1045,7 +1249,7 @@ export function DetailsView({
                             scopeId="details"
                             className="details-context-menu-item details-context-menu-item-danger"
                             role="menuitem"
-                            navigation={{ up: "details-display-restore" }}
+                            navigation={{ up: "details-display-hdr" }}
                             disabled={isSavingDisplayProfile}
                             onConfirm={() => void resetDisplayProfile()}
                           >
@@ -1092,6 +1296,79 @@ export function DetailsView({
                           ))}
                         </>
                       )}
+                      {displayProfileMenu === "hdr" && displayProfile && (
+                        <>
+                          {(
+                            [
+                              {
+                                id: "system",
+                                label: "System",
+                                mode: "SYSTEM",
+                                rtx: null,
+                              },
+                              {
+                                id: "automatic",
+                                label: "Automatic",
+                                mode: "AUTO",
+                                rtx: null,
+                              },
+                              {
+                                id: "native",
+                                label: "Native HDR",
+                                mode: "ON",
+                                rtx: null,
+                              },
+                              {
+                                id: "rtx-natural",
+                                label: "RTX HDR Natural",
+                                mode: null,
+                                rtx: "NATURAL",
+                              },
+                              {
+                                id: "rtx-vibrant",
+                                label: "RTX HDR Vibrant",
+                                mode: null,
+                                rtx: "VIBRANT",
+                              },
+                              {
+                                id: "disabled",
+                                label: "Disabled",
+                                mode: "OFF",
+                                rtx: null,
+                              },
+                            ] as const
+                          )
+                            .filter((choice) => !choice.rtx || rtxHdrAvailable)
+                            .map((choice, index, values) => (
+                              <Focusable
+                                key={choice.id}
+                                focusId={`details-display-hdr-${choice.id}`}
+                                scopeId="details"
+                                className="details-context-menu-item"
+                                role="menuitem"
+                                navigation={{
+                                  up:
+                                    index > 0
+                                      ? `details-display-hdr-${values[index - 1].id}`
+                                      : undefined,
+                                  down:
+                                    index < values.length - 1
+                                      ? `details-display-hdr-${values[index + 1].id}`
+                                      : undefined,
+                                }}
+                                onConfirm={() =>
+                                  choice.rtx
+                                    ? void chooseRtxHdr(choice.rtx)
+                                    : void chooseDisplayHdr(
+                                        choice.mode ?? "SYSTEM",
+                                      )
+                                }
+                              >
+                                {choice.label}
+                              </Focusable>
+                            ))}
+                        </>
+                      )}
                       {displayProfileMenu === "resolution" && (
                         <>
                           <Focusable
@@ -1104,11 +1381,7 @@ export function DetailsView({
                               void saveProfile({
                                 ...displayProfile,
                                 enabled: false,
-                                displayId: null,
-                                deviceName: null,
-                                width: null,
-                                height: null,
-                                refreshRate: null,
+                                resolutionMode: "SYSTEM",
                               });
                               setDisplayProfileMenu("profile");
                             }}
@@ -1247,7 +1520,11 @@ export function DetailsView({
           navigationRegion={{
             regionId: "details-sections",
             childRegionId: "details-content",
-            entryFocusPolicy: "first",
+            entryFocusId:
+              activeSection === "summary" && screenshotUrls.length > 0
+                ? "details-screenshot-0"
+                : undefined,
+            entryFocusPolicy: "remembered",
           }}
           ariaLabel="Game sections"
         >
@@ -1327,7 +1604,7 @@ export function DetailsView({
             ) : activeSection === "related" ? (
               <RelatedGamesView
                 game={game}
-                games={games}
+                games={getVisibleGames(games)}
                 onMessage={setMessage}
                 onAddToWishlist={(candidate) =>
                   void addRecommendedToWishlist(candidate)
@@ -1347,28 +1624,85 @@ export function DetailsView({
                   <p className="details-summary-description">
                     {summaryDescription}
                   </p>
+                  {launchboxDetails && (
+                    <dl className="details-editorial-metadata">
+                      {launchboxDetails.developer && (
+                        <MetadataItem
+                          label="Developer"
+                          value={launchboxDetails.developer}
+                        />
+                      )}
+                      {launchboxDetails.publisher && (
+                        <MetadataItem
+                          label="Publisher"
+                          value={launchboxDetails.publisher}
+                        />
+                      )}
+                      {launchboxDetails.releaseDate && (
+                        <MetadataItem
+                          label="Release date"
+                          value={launchboxDetails.releaseDate}
+                        />
+                      )}
+                      {launchboxDetails.communityRatingRaw !== null && (
+                        <MetadataItem
+                          label="LaunchBox Community"
+                          value={formatLaunchBoxRating(launchboxDetails)}
+                        />
+                      )}
+                      {launchboxDetails.localMultiplayer === "true" && (
+                        <MetadataItem
+                          label="Local Multiplayer"
+                          value={
+                            launchboxDetails.maxLocalPlayers
+                              ? `Up to ${launchboxDetails.maxLocalPlayers} players`
+                              : "Yes"
+                          }
+                        />
+                      )}
+                    </dl>
+                  )}
                   <h3>Características</h3>
                   <ul className="details-feature-list">
                     {features.map((feature) => (
                       <li key={feature}>{feature}</li>
                     ))}
                   </ul>
+                  <GameCapabilitiesPanel
+                    gameId={game.id}
+                    steamAppId={steamDetails?.appId ?? null}
+                  />
                 </div>
                 <div className="details-summary-screenshots">
                   <p className="eyebrow">Capturas de pantalla</p>
                   {screenshotUrls.length > 0 ? (
-                    <div className="details-screenshot-grid">
+                    <NavigationGrid
+                      className="details-screenshot-grid"
+                      groupId="details-summary-screenshots"
+                      columns={3}
+                      itemCount={screenshotUrls.length}
+                    >
                       {screenshotUrls.map((screenshot, index) => (
-                        <img
+                        <Focusable
                           key={`${game.id}-screenshot-${index}`}
-                          src={screenshot}
-                          alt={`${game.title} screenshot ${index + 1}`}
-                          className="details-screenshot"
-                          loading="lazy"
-                          draggable={false}
-                        />
+                          focusId={`details-screenshot-${index}`}
+                          scopeId="details"
+                          gridIndex={index}
+                          className="details-screenshot-focusable"
+                          ariaLabel={`${game.title} screenshot ${index + 1}`}
+                          onConfirm={() => openScreenshotViewer(index)}
+                        >
+                          <img
+                            src={screenshot}
+                            alt=""
+                            className="details-screenshot"
+                            loading={index === 0 ? "eager" : "lazy"}
+                            decoding="async"
+                            draggable={false}
+                          />
+                        </Focusable>
                       ))}
-                    </div>
+                    </NavigationGrid>
                   ) : (
                     <p className="details-empty-media">
                       No screenshots available.
@@ -1379,6 +1713,15 @@ export function DetailsView({
             )}
           </div>
         </NavigationContent>
+        {screenshotViewerOpen && (
+          <ScreenshotViewer
+            gameTitle={game.title}
+            screenshots={screenshotUrls}
+            initialIndex={screenshotViewerInitialIndex}
+            origin={screenshotViewerOrigin}
+            onClose={() => setScreenshotViewerOpen(false)}
+          />
+        )}
       </section>
       {artworkModifierOpen && (
         <ArtworkModifierView game={game} onClose={closeArtworkModifier} />
@@ -1419,6 +1762,27 @@ function HltbDetailsMetric({ data }: { data: HltbGameData | undefined }) {
       </strong>
     </div>
   );
+}
+
+function MetadataItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function formatLaunchBoxRating(
+  details: NonNullable<GameDetails["launchbox"]>,
+): string {
+  const raw = details.communityRatingRaw;
+  const scale = details.communityRatingScale;
+  if (raw === null) return "Unavailable";
+  const score = scale ? `${raw} / ${scale}` : `${raw}`;
+  return details.communityRatingCount
+    ? `${score} (${details.communityRatingCount} ratings)`
+    : score;
 }
 
 function DetailsMetricIcon({ name }: { name: DetailsMetricIconName }) {

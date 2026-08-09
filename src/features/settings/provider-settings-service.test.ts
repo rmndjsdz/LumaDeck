@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  launchBoxErrorMessage,
   providerSettingsService,
   type SettingsSaveCorrelationId,
 } from "./provider-settings-service";
@@ -144,5 +145,37 @@ describe("Settings Tauri IPC contract", () => {
       expect(payload).not.toHaveProperty("api_key");
       expect(payload).toHaveProperty("model");
     }
+  });
+
+  it("uses the LaunchBox catalog and per-game refresh IPC commands", async () => {
+    await providerSettingsService.getLaunchBoxCatalogStatus();
+    await providerSettingsService.refreshLaunchBoxCatalog(true);
+    await providerSettingsService.refreshGameMetadata("emulator-mario-kart");
+    await providerSettingsService.downloadLaunchBoxScreenshots(
+      "emulator-mario-kart",
+    );
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["get_launchbox_catalog_status", undefined],
+      ["refresh_launchbox_catalog", { force: true }],
+      ["refresh_game_metadata", { gameId: "emulator-mario-kart" }],
+      ["download_launchbox_screenshots", { gameId: "emulator-mario-kart" }],
+    ]);
+  });
+
+  it("maps known LaunchBox backend states to user-facing messages", () => {
+    expect(launchBoxErrorMessage("LAUNCHBOX_CATALOG_NOT_READY")).toContain(
+      "todavía se está preparando",
+    );
+    expect(launchBoxErrorMessage("LAUNCHBOX_DATABASE_LOCK")).toContain(
+      "temporalmente ocupado",
+    );
+    expect(launchBoxErrorMessage("LAUNCHBOX_CATALOG_UNAVAILABLE")).toContain(
+      "no está disponible",
+    );
+    expect(
+      launchBoxErrorMessage("LAUNCHBOX_UPDATE_FAILED_WITH_FALLBACK"),
+    ).toContain("versión anterior");
+    expect(launchBoxErrorMessage("UNKNOWN_ERROR")).toBeNull();
   });
 });

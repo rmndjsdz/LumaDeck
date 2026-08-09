@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useGames } from "../catalog/catalog-query";
 import type { Game } from "../catalog/game-types";
+import { getVisibleGames } from "../catalog/game-visibility";
 import { useProductStore, type ProductView } from "../../stores/product-store";
 import { useNavigation } from "../../ui/navigation/navigation-context";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
@@ -35,6 +36,7 @@ import {
 import { providerSettingsService } from "../settings/provider-settings-service";
 import type { SettingsLevel, SteamProfile } from "../settings/settings-types";
 import { GameSessionScreen } from "../game-session/GameSessionScreen";
+import { NetworkConnectionIndicator } from "../settings/NetworkConnectionIndicator";
 
 type PrimaryProductView = Exclude<ProductView, "details">;
 
@@ -49,6 +51,7 @@ export function ProductShell() {
   recordRender("app-shell");
   const { engine, inputManager, registry } = useNavigation();
   const { data: games = [], isPending, isError } = useGames();
+  const visibleGames = useMemo(() => getVisibleGames(games), [games]);
   const activeView = useProductStore((state) => state.activeView);
   const selectedGameId = useProductStore((state) => state.selectedGameId);
   const returnView = useProductStore((state) => state.returnView);
@@ -71,7 +74,7 @@ export function ProductShell() {
     [],
   );
   const homeEntryFocusId = `home-continue-${
-    games.find((game) => game.status === "playing")?.id ?? "empty"
+    visibleGames.find((game) => game.status === "playing")?.id ?? "empty"
   }`;
   useEffect(() => {
     let disposed = false;
@@ -231,7 +234,7 @@ export function ProductShell() {
     <div
       className={`app-shell${activeView === "home" ? " app-shell-home" : ""}${activeView === "details" ? " app-shell-details" : ""}`}
     >
-      <BackgroundView games={games} fallbackGameId={selectedGameId} />
+      <BackgroundView games={visibleGames} fallbackGameId={selectedGameId} />
       <ScreenNavigationAdapter
         definition={screenDefinition}
         active={activeView === "settings" || activeView === "home"}
@@ -263,8 +266,8 @@ export function ProductShell() {
               ariaCurrent={activeView === "library" ? "page" : false}
               navigationRegion={{
                 regionId: "main-navigation",
-                childRegionId: "library-content",
-                entryFocusId: "library-game-001",
+                childRegionId: "library-filters",
+                entryFocusId: "library-filter-all",
               }}
               onConfirm={() => navigate("library")}
             >
@@ -289,15 +292,7 @@ export function ProductShell() {
             <span className="shell-catalog-status">
               LOCAL CATALOG · {games.length}
             </span>
-            <span className="shell-utility-icon" aria-label="Wi-Fi connected">
-              ◔
-            </span>
-            <span
-              className="shell-utility-icon"
-              aria-label="Controller connected"
-            >
-              ♧
-            </span>
+            <NetworkConnectionIndicator />
             <WeatherWidget />
             <span
               className="shell-avatar"
@@ -331,6 +326,7 @@ export function ProductShell() {
           )}
           {activeView === "settings" && (
             <SettingsView
+              games={games}
               level={settingsLevel}
               onLevelChange={setSettingsLevel}
               onClose={() => navigate("library")}
@@ -341,7 +337,7 @@ export function ProductShell() {
             <ViewTransition view={activeView}>
               {activeView === "home" && (
                 <HomeView
-                  games={games}
+                  games={visibleGames}
                   onOpen={handleOpen}
                   onViewLibrary={() => navigate("library")}
                 />
