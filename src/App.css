@@ -5153,6 +5153,12 @@ body:has(.library-view) {
   background: rgba(6, 14, 26, 0.25);
 }
 
+.app-shell-details:has(.details-screenshot-viewer-backdrop.is-fullscreen)
+  .app-header {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .app-shell-details .background-view {
   pointer-events: none;
   opacity: 0;
@@ -6173,6 +6179,13 @@ body:has(.library-view) {
     var(--ease-enter) both;
 }
 
+/* Keep the fixed viewer attached to the application viewport, not the
+ * transformed Details view-transition containing block. */
+.app-shell-details .view-transition:has(.details-screenshot-viewer-backdrop) {
+  animation: none;
+  transform: none;
+}
+
 .details-screenshot-viewer-backdrop
   > [data-focus-scope="details-screenshot-viewer"] {
   display: grid;
@@ -6257,7 +6270,7 @@ body:has(.library-view) {
 .details-screenshot-viewer-fullscreen {
   position: absolute;
   z-index: 6;
-  top: 24px;
+  top: 98px;
   right: 24px;
   display: grid;
   width: 42px;
@@ -6293,6 +6306,11 @@ body:has(.library-view) {
     0 0 0 2px rgba(142, 188, 255, 0.2),
     0 0 22px rgba(82, 151, 255, 0.24);
   transform: translateY(0) scale(1.04);
+}
+
+.details-screenshot-viewer-backdrop.is-fullscreen
+  .details-screenshot-viewer-fullscreen {
+  top: 24px;
 }
 
 .details-screenshot-viewer-side-arrow {
