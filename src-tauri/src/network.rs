@@ -426,7 +426,11 @@ $rows = @(Get-NetAdapter -IncludeHidden -ErrorAction Stop | Where-Object { $_.Ha
     }
 
     fn run_powershell(script: &str) -> Result<String, String> {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let output = Command::new("powershell.exe")
+            .creation_flags(CREATE_NO_WINDOW)
             .args([
                 "-NoProfile",
                 "-NonInteractive",

@@ -367,7 +367,11 @@ fn application_candidates() -> Vec<PathBuf> {
 fn application_version(path: &Path) -> Option<String> {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let output = Command::new("powershell.exe")
+            .creation_flags(CREATE_NO_WINDOW)
             .args([
                 "-NoProfile",
                 "-NonInteractive",
