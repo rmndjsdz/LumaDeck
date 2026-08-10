@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 const WEATHER_REFRESH_MS = 15 * 60 * 1000;
 
@@ -13,6 +14,12 @@ type WeatherData = {
   temperature: number;
   weatherCode: number;
   forecast: WeatherDay[];
+};
+
+type WeatherCoordinates = {
+  latitude: number;
+  longitude: number;
+  source: "browser" | "ip";
 };
 
 type WeatherState =
@@ -35,12 +42,13 @@ export function WeatherWidget() {
       try {
         const position = await getCurrentPosition();
         logWeatherEvent("geolocation-ready", {
-          latitude: roundCoordinate(position.coords.latitude),
-          longitude: roundCoordinate(position.coords.longitude),
+          latitude: roundCoordinate(position.latitude),
+          longitude: roundCoordinate(position.longitude),
+          source: position.source,
         });
         const url = new URL("https://api.open-meteo.com/v1/forecast");
-        url.searchParams.set("latitude", String(position.coords.latitude));
-        url.searchParams.set("longitude", String(position.coords.longitude));
+        url.searchParams.set("latitude", String(position.latitude));
+        url.searchParams.set("longitude", String(position.longitude));
         url.searchParams.set("current", "temperature_2m,weather_code");
         url.searchParams.set(
           "daily",
@@ -50,7 +58,7 @@ export function WeatherWidget() {
         url.searchParams.set("temperature_unit", "celsius");
         url.searchParams.set("timezone", "auto");
 
-        const response = await fetch(url);
+        const response = await fetch(url, { cache: "no-store" });
         logWeatherEvent("request-response", {
           status: response.status,
           ok: response.ok,
@@ -164,31 +172,69 @@ export function WeatherWidget() {
   );
 }
 
-function getCurrentPosition(): Promise<GeolocationPosition> {
+async function getCurrentPosition(): Promise<WeatherCoordinates> {
+  if (navigator.geolocation) {
+    try {
+      const position = await getBrowserPosition();
+      return {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        source: "browser",
+      };
+    } catch (error) {
+      logWeatherEvent("geolocation-failed", {
+        code: isRecord(error) ? error.code : undefined,
+        message: weatherErrorMessage(error),
+      });
+    }
+  } else {
+    logWeatherEvent("geolocation-unavailable", {
+      message: "Geolocation unavailable",
+    });
+  }
+
+  logWeatherEvent("ip-geolocation-start");
+  try {
+    const response = await fetch("https://ipapi.co/json/", {
+      cache: "no-store",
+    });
+    logWeatherEvent("ip-geolocation-response", {
+      status: response.status,
+      ok: response.ok,
+    });
+    if (!response.ok)
+      throw new Error(`IP geolocation request failed (${response.status})`);
+    const payload: unknown = await response.json();
+    if (!isRecord(payload)) throw new Error("Invalid IP geolocation response");
+    const latitude = readCoordinate(payload.latitude);
+    const longitude = readCoordinate(payload.longitude);
+    if (latitude === null || longitude === null) {
+      throw new Error("Incomplete IP geolocation response");
+    }
+    logWeatherEvent("ip-geolocation-ready", {
+      latitude: roundCoordinate(latitude),
+      longitude: roundCoordinate(longitude),
+    });
+    return { latitude, longitude, source: "ip" };
+  } catch (error) {
+    logWeatherEvent("ip-geolocation-failed", {
+      message: weatherErrorMessage(error),
+    });
+    throw new Error(`Location unavailable: ${weatherErrorMessage(error)}`);
+  }
+}
+
+function getBrowserPosition(): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      const error = new Error("Geolocation unavailable");
-      logWeatherEvent("geolocation-unavailable", {
-        message: error.message,
-      });
-      reject(error);
+      reject(new Error("Geolocation unavailable"));
       return;
     }
-    navigator.geolocation.getCurrentPosition(
-      resolve,
-      (error) => {
-        logWeatherEvent("geolocation-failed", {
-          code: error.code,
-          message: error.message,
-        });
-        reject(error);
-      },
-      {
-        enableHighAccuracy: false,
-        maximumAge: WEATHER_REFRESH_MS,
-        timeout: 10_000,
-      },
-    );
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: false,
+      maximumAge: WEATHER_REFRESH_MS,
+      timeout: 15_000,
+    });
   });
 }
 
@@ -205,10 +251,25 @@ function logWeatherEvent(
   } else {
     logger(`[weather] ${event}`);
   }
+  if (!isTauriRuntime()) return;
+  void invoke("record_weather_event", {
+    event,
+    details: details ? (JSON.stringify(details) ?? "") : "",
+  }).catch((error: unknown) => {
+    console.warn("[weather] persistent-log-failed", error);
+  });
+}
+
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 function weatherErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (isRecord(error) && typeof error.message === "string") {
+    return error.message;
+  }
+  return String(error);
 }
 
 function roundCoordinate(value: number): number {
@@ -260,6 +321,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readCoordinate(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function readNumberArray(value: unknown): number[] | null {

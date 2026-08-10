@@ -53,6 +53,28 @@ fn get_network_state() -> Result<network::NetworkSnapshot, String> {
 }
 
 #[tauri::command]
+fn record_weather_event(
+    database: State<'_, DatabaseState>,
+    event: String,
+    details: String,
+) -> Result<(), String> {
+    let event = event.trim();
+    if event.is_empty()
+        || event.len() > 64
+        || !event
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".-_".contains(character))
+    {
+        return Err("invalid weather event".to_string());
+    }
+    if details.len() > 8 * 1024 {
+        return Err("weather event details are too large".to_string());
+    }
+    database.log_weather(event, &details);
+    Ok(())
+}
+
+#[tauri::command]
 fn get_bluetooth_state(
     state: State<'_, bluetooth::BluetoothService>,
     database: State<'_, DatabaseState>,
@@ -3549,6 +3571,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            record_weather_event,
             get_bluetooth_state,
             get_bluetooth_diagnostics,
             record_bluetooth_client_diagnostic,

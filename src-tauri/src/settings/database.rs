@@ -328,6 +328,14 @@ impl DatabaseState {
         );
     }
 
+    pub(crate) fn log_weather(&self, event: &str, details: &str) {
+        write_weather_line(
+            self.data_directory.logs_directory().as_path(),
+            event,
+            details,
+        );
+    }
+
     pub(crate) fn logs_directory(&self) -> std::path::PathBuf {
         self.data_directory.logs_directory()
     }
@@ -402,6 +410,32 @@ fn write_diagnostic_line(
         .unwrap_or(false)
     {
         let backup_path = logs_directory.join("settings-runtime.log.1");
+        let _ = fs::remove_file(&backup_path);
+        let _ = fs::rename(&log_path, backup_path);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+fn write_weather_line(logs_directory: &std::path::Path, event: &str, details: &str) {
+    const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let clean_details = details.replace('\r', " ").replace('\n', " ");
+    let line =
+        format!("[weather] timestamp_ms={timestamp_ms} event={event} details={clean_details}\n");
+    if fs::create_dir_all(logs_directory).is_err() {
+        return;
+    }
+    let log_path = logs_directory.join("weather-runtime.log");
+    if fs::metadata(&log_path)
+        .map(|metadata| metadata.len() >= MAX_LOG_BYTES)
+        .unwrap_or(false)
+    {
+        let backup_path = logs_directory.join("weather-runtime.log.1");
         let _ = fs::remove_file(&backup_path);
         let _ = fs::rename(&log_path, backup_path);
     }
