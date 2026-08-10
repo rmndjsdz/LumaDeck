@@ -94,6 +94,21 @@ callbacks. Los scopes pueden anidarse; Details pausa el padre y restaura el
 opener exacto. Un scope solo es interactivo cuando existe un focusable válido
 y el engine confirma el foco DOM.
 
+### Invariante de ownership
+
+Un overlay interactivo visible debe ser tambiÃ©n el Ãºnico owner de navegaciÃ³n:
+
+```text
+ONE ACTIVE INTERACTION LAYER = ONE NAVIGATION OWNER
+```
+
+Al abrir un modal, selector o menÃº, el componente debe recordar el opener,
+preparar y activar un `FocusScope` hijo con `modal`/`trapFocus`, y declarar su
+`initialFocusId`. Mientras ese scope estÃ¡ activo, el scope inferior queda
+suspendido para mouse, teclado y gamepad. Al desmontarlo, `restoreFocus`
+devuelve el foco exactamente al opener. Nunca debe existir el estado
+`visualLayer = overlay` junto con `navigationOwner = background`.
+
 Library conserva una cuadrícula lógica absoluta de cinco columnas, 12 filas
 visibles, dos filas de overscan y una ventana máxima aproximada de 60 tarjetas.
 El índice es el del catálogo filtrado; la fila final es estricta y no sustituye

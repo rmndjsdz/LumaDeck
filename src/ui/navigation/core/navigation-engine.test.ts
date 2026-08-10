@@ -59,6 +59,82 @@ describe("NavigationEngine", () => {
     engine.dispose();
   });
 
+  it("enforces the context-menu interaction-layer contract", () => {
+    resetStore();
+    const registry = new FocusRegistry();
+    const engine = new NavigationEngine(registry, new FocusScrollManager());
+    const confirmed: string[] = [];
+    let menuClosed = false;
+    const detailsOpener = addElement(new DOMRect(0, 0, 80, 40));
+    const detailsTab = addElement(new DOMRect(0, 240, 80, 40));
+
+    registry.register({
+      focusId: "details-back",
+      scopeId: "details",
+      element: detailsOpener,
+    });
+    registry.register({
+      focusId: "details-tab-summary",
+      scopeId: "details",
+      element: detailsTab,
+    });
+    for (const [index, focusId] of [
+      "details-display-profile",
+      "details-modify-artwork",
+      "details-update-metadata",
+    ].entries()) {
+      registry.register({
+        focusId,
+        scopeId: "details-context-menu",
+        element: addElement(new DOMRect(100, index * 60, 160, 40)),
+        onConfirm: () => confirmed.push(focusId),
+      });
+    }
+
+    engine.registerScope({
+      scopeId: "details",
+      initialFocusId: "details-back",
+      modal: true,
+      trapFocus: true,
+      activateOnMount: true,
+    });
+    expect(engine.getActiveFocusId()).toBe("details-back");
+
+    engine.prepareScopeOpen("details-context-menu", "details-back");
+    engine.registerScope({
+      scopeId: "details-context-menu",
+      parentScopeId: "details",
+      initialFocusId: "details-display-profile",
+      restoreFocus: true,
+      modal: true,
+      trapFocus: true,
+      activateOnMount: true,
+      onBack: () => {
+        menuClosed = true;
+        return true;
+      },
+    });
+
+    expect(engine.getActiveScopeId()).toBe("details-context-menu");
+    expect(engine.getActiveFocusId()).toBe("details-display-profile");
+    expect(engine.focus("details-tab-summary")).toBe(false);
+    expect(engine.dispatch("move-down", "gamepad")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-modify-artwork");
+    expect(engine.dispatch("move-down", "gamepad")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-update-metadata");
+    expect(engine.dispatch("move-up", "gamepad")).toBe(true);
+    expect(engine.getActiveFocusId()).toBe("details-modify-artwork");
+    expect(engine.dispatch("confirm", "gamepad")).toBe(true);
+    expect(confirmed).toEqual(["details-modify-artwork"]);
+
+    expect(engine.dispatch("back", "gamepad")).toBe(true);
+    expect(menuClosed).toBe(true);
+    engine.unregisterScope("details-context-menu");
+    expect(engine.getActiveScopeId()).toBe("details");
+    expect(engine.getActiveFocusId()).toBe("details-back");
+    engine.dispose();
+  });
+
   it("uses overrides, spatial navigation, disabled omission, and confirmation", () => {
     resetStore();
     const registry = new FocusRegistry();

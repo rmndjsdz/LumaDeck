@@ -70,6 +70,8 @@ import {
 import { GameCapabilitiesPanel } from "../game-capabilities/GameCapabilitiesPanel";
 import { hardwareCapabilitiesService } from "../graphics-profile/hardware-capabilities-service";
 
+const CONTEXT_MENU_SCOPE_ID = "details-context-menu";
+
 export function DetailsView({
   game,
   games,
@@ -424,10 +426,14 @@ export function DetailsView({
 
   const toggleMenu = () => {
     if (!isRefreshingMetadata && !isDownloadingMedia) {
-      setMenuOpen((isOpen) => {
-        if (isOpen) setDisplayProfileMenu("root");
-        return !isOpen;
-      });
+      if (menuOpen) {
+        setDisplayProfileMenu("root");
+        setMenuOpen(false);
+        return;
+      }
+      engine.prepareScopeOpen(CONTEXT_MENU_SCOPE_ID, "details-back");
+      setDisplayProfileMenu("root");
+      setMenuOpen(true);
     }
   };
 
@@ -1035,433 +1041,454 @@ export function DetailsView({
                 >
                   <span aria-hidden="true">...</span>
                 </Focusable>
-                {menuOpen &&
-                  contextMenuPosition &&
-                  createPortal(
-                    <div
-                      className="details-context-menu"
-                      style={{
-                        top: contextMenuPosition.top,
-                        left: contextMenuPosition.left,
-                        transform: contextMenuPosition.transform,
-                      }}
-                      role="menu"
-                      aria-label="Game options"
-                    >
-                      {displayProfileMenu === "root" && (
-                        <>
-                          <Focusable
-                            focusId="details-display-profile"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            navigation={{ down: "details-modify-artwork" }}
-                            disabled={isSavingDisplayProfile}
-                            onConfirm={openDisplayProfile}
-                          >
-                            <span>Display Profile</span>
-                            <span className="details-context-menu-value">
-                              {formatDisplayResolution(
-                                displayProfile?.resolutionMode === "CUSTOM"
-                                  ? (displayProfile.width ?? null)
-                                  : null,
-                                displayProfile?.resolutionMode === "CUSTOM"
-                                  ? (displayProfile.height ?? null)
-                                  : null,
-                              )}{" "}
-                              <span aria-hidden="true">›</span>
-                            </span>
-                          </Focusable>
-                          <Focusable
-                            focusId="details-modify-artwork"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            disabled={
-                              isRefreshingMetadata || isDownloadingMedia
-                            }
-                            onConfirm={openArtworkModifier}
-                          >
-                            Modificar arte
-                          </Focusable>
-                          <Focusable
-                            focusId="details-update-metadata"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            disabled={
-                              isRefreshingMetadata || isDownloadingMedia
-                            }
-                            onConfirm={() => void refreshMetadata()}
-                          >
-                            {isRefreshingMetadata
-                              ? "Actualizando metadatos…"
-                              : "Actualizar Metadatos"}
-                          </Focusable>
-                          <Focusable
-                            focusId="details-download-media"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            disabled={
-                              isRefreshingMetadata || isDownloadingMedia
-                            }
-                            navigation={{ down: "details-hide-game" }}
-                            onConfirm={() => void downloadMedia()}
-                          >
-                            {isDownloadingMedia
-                              ? "Descargando multimedia…"
-                              : "Descargar multimedia"}
-                          </Focusable>
-                          <Focusable
-                            focusId="details-hide-game"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            disabled={isUpdatingHidden}
-                            onConfirm={() => void hideGame()}
-                          >
-                            Ocultar juego
-                          </Focusable>
-                        </>
-                      )}
-                      {displayProfileMenu === "profile" && displayProfile && (
-                        <>
-                          <Focusable
-                            focusId="details-display-mode"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            navigation={{ down: "details-display-resolution" }}
-                            disabled={isSavingDisplayProfile}
-                            onConfirm={() => void toggleDisplayProfileMode()}
-                          >
-                            <span>Mode</span>
-                            <span className="details-context-menu-value">
-                              {displayProfile.resolutionMode === "CUSTOM" ||
-                              displayProfile.refreshRateMode === "CUSTOM"
-                                ? "Custom"
-                                : "System"}
-                            </span>
-                          </Focusable>
-                          <Focusable
-                            focusId="details-display-resolution"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            navigation={{
-                              up: "details-display-mode",
-                              down: "details-display-refresh",
-                            }}
-                            disabled={
-                              displayProfile.resolutionMode !== "CUSTOM" ||
-                              isSavingDisplayProfile
-                            }
-                            onConfirm={() =>
-                              setDisplayProfileMenu("resolution")
-                            }
-                          >
-                            <span>Resolution</span>
-                            <span className="details-context-menu-value">
-                              {formatDisplayResolution(
-                                displayProfile.resolutionMode === "CUSTOM"
-                                  ? displayProfile.width
-                                  : null,
-                                displayProfile.resolutionMode === "CUSTOM"
-                                  ? displayProfile.height
-                                  : null,
-                              )}{" "}
-                              <span aria-hidden="true">›</span>
-                            </span>
-                          </Focusable>
-                          <Focusable
-                            focusId="details-display-refresh"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            navigation={{
-                              up: "details-display-resolution",
-                              down: "details-frame-generation",
-                            }}
-                            disabled={
-                              displayProfile.refreshRateMode !== "CUSTOM" ||
-                              isSavingDisplayProfile
-                            }
-                            onConfirm={() => setDisplayProfileMenu("refresh")}
-                          >
-                            <span>Refresh Rate</span>
-                            <span className="details-context-menu-value">
-                              {formatDisplayRefreshRate(
-                                displayProfile.refreshRateMode === "CUSTOM"
-                                  ? displayProfile.refreshRate
-                                  : null,
-                              )}{" "}
-                              <span aria-hidden="true">›</span>
-                            </span>
-                          </Focusable>
-                          <Focusable
-                            focusId="details-frame-generation"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            navigation={{
-                              up: "details-display-refresh",
-                              down: "details-display-hdr",
-                            }}
-                            disabled={isSavingFrameGeneration}
-                            onConfirm={() =>
-                              setDisplayProfileMenu("frame-generation")
-                            }
-                          >
-                            <span>Frame Generation</span>
-                            <span className="details-context-menu-value">
-                              {frameGenerationLabel(frameGenerationProfile)}{" "}
-                              <span aria-hidden="true">›</span>
-                            </span>
-                          </Focusable>
-                          <Focusable
-                            focusId="details-display-hdr"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            navigation={{
-                              up: "details-frame-generation",
-                              down: "details-display-reset",
-                            }}
-                            disabled={isSavingDisplayProfile}
-                            onConfirm={() => setDisplayProfileMenu("hdr")}
-                          >
-                            <span>HDR del juego</span>
-                            <span className="details-context-menu-value">
-                              {displayProfile.rtxHdrPreset
-                                ? `RTX HDR ${displayProfile.rtxHdrPreset === "NATURAL" ? "Natural" : "Vibrant"}`
-                                : displayProfile.hdrMode === "ON"
-                                  ? "Native HDR"
-                                  : displayProfile.hdrMode === "AUTO"
-                                    ? "Automatic"
-                                    : displayProfile.hdrMode === "OFF"
-                                      ? "Disabled"
-                                      : "System"}
-                            </span>
-                          </Focusable>
-                          <Focusable
-                            focusId="details-display-reset"
-                            scopeId="details"
-                            className="details-context-menu-item details-context-menu-item-danger"
-                            role="menuitem"
-                            navigation={{ up: "details-display-hdr" }}
-                            disabled={isSavingDisplayProfile}
-                            onConfirm={() => void resetDisplayProfile()}
-                          >
-                            Reset Profile
-                          </Focusable>
-                        </>
-                      )}
-                      {displayProfileMenu === "frame-generation" && (
-                        <>
-                          {([0, 2, 3, 4] as const).map((multiplier, index) => (
+                {menuOpen && contextMenuPosition && (
+                  <FocusScope
+                    scopeId={CONTEXT_MENU_SCOPE_ID}
+                    parentScopeId="details"
+                    initialFocusId="details-display-profile"
+                    restoreFocus
+                    trapFocus
+                    modal
+                    activateOnMount
+                    onBack={() => {
+                      setDisplayProfileMenu("root");
+                      setMenuOpen(false);
+                      return true;
+                    }}
+                  >
+                    {createPortal(
+                      <div
+                        className="details-context-menu"
+                        style={{
+                          top: contextMenuPosition.top,
+                          left: contextMenuPosition.left,
+                          transform: contextMenuPosition.transform,
+                        }}
+                        role="menu"
+                        aria-label="Game options"
+                      >
+                        {displayProfileMenu === "root" && (
+                          <>
                             <Focusable
-                              key={multiplier}
-                              focusId={
-                                multiplier === 0
-                                  ? "details-frame-generation-off"
-                                  : `details-frame-generation-${multiplier}`
+                              focusId="details-display-profile"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              navigation={{ down: "details-modify-artwork" }}
+                              disabled={isSavingDisplayProfile}
+                              onConfirm={openDisplayProfile}
+                            >
+                              <span>Display Profile</span>
+                              <span className="details-context-menu-value">
+                                {formatDisplayResolution(
+                                  displayProfile?.resolutionMode === "CUSTOM"
+                                    ? (displayProfile.width ?? null)
+                                    : null,
+                                  displayProfile?.resolutionMode === "CUSTOM"
+                                    ? (displayProfile.height ?? null)
+                                    : null,
+                                )}{" "}
+                                <span aria-hidden="true">›</span>
+                              </span>
+                            </Focusable>
+                            <Focusable
+                              focusId="details-modify-artwork"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              disabled={
+                                isRefreshingMetadata || isDownloadingMedia
                               }
-                              scopeId="details"
+                              onConfirm={openArtworkModifier}
+                            >
+                              Modificar arte
+                            </Focusable>
+                            <Focusable
+                              focusId="details-update-metadata"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              disabled={
+                                isRefreshingMetadata || isDownloadingMedia
+                              }
+                              onConfirm={() => void refreshMetadata()}
+                            >
+                              {isRefreshingMetadata
+                                ? "Actualizando metadatos…"
+                                : "Actualizar Metadatos"}
+                            </Focusable>
+                            <Focusable
+                              focusId="details-download-media"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              disabled={
+                                isRefreshingMetadata || isDownloadingMedia
+                              }
+                              navigation={{ down: "details-hide-game" }}
+                              onConfirm={() => void downloadMedia()}
+                            >
+                              {isDownloadingMedia
+                                ? "Descargando multimedia…"
+                                : "Descargar multimedia"}
+                            </Focusable>
+                            <Focusable
+                              focusId="details-hide-game"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              disabled={isUpdatingHidden}
+                              onConfirm={() => void hideGame()}
+                            >
+                              Ocultar juego
+                            </Focusable>
+                          </>
+                        )}
+                        {displayProfileMenu === "profile" && displayProfile && (
+                          <>
+                            <Focusable
+                              focusId="details-display-mode"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              navigation={{
+                                down: "details-display-resolution",
+                              }}
+                              disabled={isSavingDisplayProfile}
+                              onConfirm={() => void toggleDisplayProfileMode()}
+                            >
+                              <span>Mode</span>
+                              <span className="details-context-menu-value">
+                                {displayProfile.resolutionMode === "CUSTOM" ||
+                                displayProfile.refreshRateMode === "CUSTOM"
+                                  ? "Custom"
+                                  : "System"}
+                              </span>
+                            </Focusable>
+                            <Focusable
+                              focusId="details-display-resolution"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              navigation={{
+                                up: "details-display-mode",
+                                down: "details-display-refresh",
+                              }}
+                              disabled={
+                                displayProfile.resolutionMode !== "CUSTOM" ||
+                                isSavingDisplayProfile
+                              }
+                              onConfirm={() =>
+                                setDisplayProfileMenu("resolution")
+                              }
+                            >
+                              <span>Resolution</span>
+                              <span className="details-context-menu-value">
+                                {formatDisplayResolution(
+                                  displayProfile.resolutionMode === "CUSTOM"
+                                    ? displayProfile.width
+                                    : null,
+                                  displayProfile.resolutionMode === "CUSTOM"
+                                    ? displayProfile.height
+                                    : null,
+                                )}{" "}
+                                <span aria-hidden="true">›</span>
+                              </span>
+                            </Focusable>
+                            <Focusable
+                              focusId="details-display-refresh"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              navigation={{
+                                up: "details-display-resolution",
+                                down: "details-frame-generation",
+                              }}
+                              disabled={
+                                displayProfile.refreshRateMode !== "CUSTOM" ||
+                                isSavingDisplayProfile
+                              }
+                              onConfirm={() => setDisplayProfileMenu("refresh")}
+                            >
+                              <span>Refresh Rate</span>
+                              <span className="details-context-menu-value">
+                                {formatDisplayRefreshRate(
+                                  displayProfile.refreshRateMode === "CUSTOM"
+                                    ? displayProfile.refreshRate
+                                    : null,
+                                )}{" "}
+                                <span aria-hidden="true">›</span>
+                              </span>
+                            </Focusable>
+                            <Focusable
+                              focusId="details-frame-generation"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              navigation={{
+                                up: "details-display-refresh",
+                                down: "details-display-hdr",
+                              }}
+                              disabled={isSavingFrameGeneration}
+                              onConfirm={() =>
+                                setDisplayProfileMenu("frame-generation")
+                              }
+                            >
+                              <span>Frame Generation</span>
+                              <span className="details-context-menu-value">
+                                {frameGenerationLabel(frameGenerationProfile)}{" "}
+                                <span aria-hidden="true">›</span>
+                              </span>
+                            </Focusable>
+                            <Focusable
+                              focusId="details-display-hdr"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              navigation={{
+                                up: "details-frame-generation",
+                                down: "details-display-reset",
+                              }}
+                              disabled={isSavingDisplayProfile}
+                              onConfirm={() => setDisplayProfileMenu("hdr")}
+                            >
+                              <span>HDR del juego</span>
+                              <span className="details-context-menu-value">
+                                {displayProfile.rtxHdrPreset
+                                  ? `RTX HDR ${displayProfile.rtxHdrPreset === "NATURAL" ? "Natural" : "Vibrant"}`
+                                  : displayProfile.hdrMode === "ON"
+                                    ? "Native HDR"
+                                    : displayProfile.hdrMode === "AUTO"
+                                      ? "Automatic"
+                                      : displayProfile.hdrMode === "OFF"
+                                        ? "Disabled"
+                                        : "System"}
+                              </span>
+                            </Focusable>
+                            <Focusable
+                              focusId="details-display-reset"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item details-context-menu-item-danger"
+                              role="menuitem"
+                              navigation={{ up: "details-display-hdr" }}
+                              disabled={isSavingDisplayProfile}
+                              onConfirm={() => void resetDisplayProfile()}
+                            >
+                              Reset Profile
+                            </Focusable>
+                          </>
+                        )}
+                        {displayProfileMenu === "frame-generation" && (
+                          <>
+                            {([0, 2, 3, 4] as const).map(
+                              (multiplier, index) => (
+                                <Focusable
+                                  key={multiplier}
+                                  focusId={
+                                    multiplier === 0
+                                      ? "details-frame-generation-off"
+                                      : `details-frame-generation-${multiplier}`
+                                  }
+                                  scopeId={CONTEXT_MENU_SCOPE_ID}
+                                  className="details-context-menu-item"
+                                  role="menuitem"
+                                  navigation={{
+                                    up:
+                                      index === 0
+                                        ? undefined
+                                        : multiplier === 2
+                                          ? "details-frame-generation-off"
+                                          : `details-frame-generation-${multiplier - 1}`,
+                                    down:
+                                      index === 3
+                                        ? undefined
+                                        : multiplier === 0
+                                          ? "details-frame-generation-2"
+                                          : `details-frame-generation-${multiplier + 1}`,
+                                  }}
+                                  disabled={isSavingFrameGeneration}
+                                  onConfirm={() =>
+                                    void chooseFrameGeneration(multiplier)
+                                  }
+                                >
+                                  {multiplier === 0
+                                    ? "Off"
+                                    : `LSFG ${multiplier}x${multiplier === 2 ? " (Recommended en NUC)" : ""}`}
+                                </Focusable>
+                              ),
+                            )}
+                          </>
+                        )}
+                        {displayProfileMenu === "hdr" && displayProfile && (
+                          <>
+                            {(
+                              [
+                                {
+                                  id: "system",
+                                  label: "System",
+                                  mode: "SYSTEM",
+                                  rtx: null,
+                                },
+                                {
+                                  id: "automatic",
+                                  label: "Automatic",
+                                  mode: "AUTO",
+                                  rtx: null,
+                                },
+                                {
+                                  id: "native",
+                                  label: "Native HDR",
+                                  mode: "ON",
+                                  rtx: null,
+                                },
+                                {
+                                  id: "rtx-natural",
+                                  label: "RTX HDR Natural",
+                                  mode: null,
+                                  rtx: "NATURAL",
+                                },
+                                {
+                                  id: "rtx-vibrant",
+                                  label: "RTX HDR Vibrant",
+                                  mode: null,
+                                  rtx: "VIBRANT",
+                                },
+                                {
+                                  id: "disabled",
+                                  label: "Disabled",
+                                  mode: "OFF",
+                                  rtx: null,
+                                },
+                              ] as const
+                            )
+                              .filter(
+                                (choice) => !choice.rtx || rtxHdrAvailable,
+                              )
+                              .map((choice, index, values) => (
+                                <Focusable
+                                  key={choice.id}
+                                  focusId={`details-display-hdr-${choice.id}`}
+                                  scopeId={CONTEXT_MENU_SCOPE_ID}
+                                  className="details-context-menu-item"
+                                  role="menuitem"
+                                  navigation={{
+                                    up:
+                                      index > 0
+                                        ? `details-display-hdr-${values[index - 1].id}`
+                                        : undefined,
+                                    down:
+                                      index < values.length - 1
+                                        ? `details-display-hdr-${values[index + 1].id}`
+                                        : undefined,
+                                  }}
+                                  onConfirm={() =>
+                                    choice.rtx
+                                      ? void chooseRtxHdr(choice.rtx)
+                                      : void chooseDisplayHdr(
+                                          choice.mode ?? "SYSTEM",
+                                        )
+                                  }
+                                >
+                                  {choice.label}
+                                </Focusable>
+                              ))}
+                          </>
+                        )}
+                        {displayProfileMenu === "resolution" && (
+                          <>
+                            <Focusable
+                              focusId="details-display-resolution-auto"
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
+                              className="details-context-menu-item"
+                              role="menuitem"
+                              onConfirm={() => {
+                                if (!displayProfile) return;
+                                void saveProfile({
+                                  ...displayProfile,
+                                  enabled: false,
+                                  resolutionMode: "SYSTEM",
+                                });
+                                setDisplayProfileMenu("profile");
+                              }}
+                            >
+                              Auto / Desktop
+                            </Focusable>
+                            {resolutionModes.map((mode, index) => {
+                              const focusId =
+                                "details-display-resolution-" +
+                                mode.width +
+                                "x" +
+                                mode.height;
+                              const previous =
+                                index === 0
+                                  ? "details-display-resolution-auto"
+                                  : "details-display-resolution-" +
+                                    resolutionModes[index - 1].width +
+                                    "x" +
+                                    resolutionModes[index - 1].height;
+                              const next =
+                                index === resolutionModes.length - 1
+                                  ? undefined
+                                  : "details-display-resolution-" +
+                                    resolutionModes[index + 1].width +
+                                    "x" +
+                                    resolutionModes[index + 1].height;
+                              return (
+                                <Focusable
+                                  key={focusId}
+                                  focusId={focusId}
+                                  scopeId={CONTEXT_MENU_SCOPE_ID}
+                                  className="details-context-menu-item"
+                                  role="menuitem"
+                                  navigation={{ up: previous, down: next }}
+                                  onConfirm={() =>
+                                    void chooseDisplayResolution(mode)
+                                  }
+                                >
+                                  {mode.width} × {mode.height}
+                                </Focusable>
+                              );
+                            })}
+                          </>
+                        )}
+                        {displayProfileMenu === "refresh" &&
+                          refreshModes.length === 0 && (
+                            <p className="details-context-menu-empty">
+                              No hay frecuencias disponibles.
+                            </p>
+                          )}
+                        {displayProfileMenu === "refresh" &&
+                          refreshModes.map((refreshRate, index) => (
+                            <Focusable
+                              key={refreshRate}
+                              focusId={"details-display-refresh-" + refreshRate}
+                              scopeId={CONTEXT_MENU_SCOPE_ID}
                               className="details-context-menu-item"
                               role="menuitem"
                               navigation={{
                                 up:
-                                  index === 0
-                                    ? undefined
-                                    : multiplier === 2
-                                      ? "details-frame-generation-off"
-                                      : `details-frame-generation-${multiplier - 1}`,
+                                  index > 0
+                                    ? "details-display-refresh-" +
+                                      refreshModes[index - 1]
+                                    : undefined,
                                 down:
-                                  index === 3
-                                    ? undefined
-                                    : multiplier === 0
-                                      ? "details-frame-generation-2"
-                                      : `details-frame-generation-${multiplier + 1}`,
+                                  index < refreshModes.length - 1
+                                    ? "details-display-refresh-" +
+                                      refreshModes[index + 1]
+                                    : undefined,
                               }}
-                              disabled={isSavingFrameGeneration}
                               onConfirm={() =>
-                                void chooseFrameGeneration(multiplier)
+                                void chooseDisplayRefreshRate(refreshRate)
                               }
                             >
-                              {multiplier === 0
-                                ? "Off"
-                                : `LSFG ${multiplier}x${multiplier === 2 ? " (Recommended en NUC)" : ""}`}
+                              {refreshRate} Hz
                             </Focusable>
                           ))}
-                        </>
-                      )}
-                      {displayProfileMenu === "hdr" && displayProfile && (
-                        <>
-                          {(
-                            [
-                              {
-                                id: "system",
-                                label: "System",
-                                mode: "SYSTEM",
-                                rtx: null,
-                              },
-                              {
-                                id: "automatic",
-                                label: "Automatic",
-                                mode: "AUTO",
-                                rtx: null,
-                              },
-                              {
-                                id: "native",
-                                label: "Native HDR",
-                                mode: "ON",
-                                rtx: null,
-                              },
-                              {
-                                id: "rtx-natural",
-                                label: "RTX HDR Natural",
-                                mode: null,
-                                rtx: "NATURAL",
-                              },
-                              {
-                                id: "rtx-vibrant",
-                                label: "RTX HDR Vibrant",
-                                mode: null,
-                                rtx: "VIBRANT",
-                              },
-                              {
-                                id: "disabled",
-                                label: "Disabled",
-                                mode: "OFF",
-                                rtx: null,
-                              },
-                            ] as const
-                          )
-                            .filter((choice) => !choice.rtx || rtxHdrAvailable)
-                            .map((choice, index, values) => (
-                              <Focusable
-                                key={choice.id}
-                                focusId={`details-display-hdr-${choice.id}`}
-                                scopeId="details"
-                                className="details-context-menu-item"
-                                role="menuitem"
-                                navigation={{
-                                  up:
-                                    index > 0
-                                      ? `details-display-hdr-${values[index - 1].id}`
-                                      : undefined,
-                                  down:
-                                    index < values.length - 1
-                                      ? `details-display-hdr-${values[index + 1].id}`
-                                      : undefined,
-                                }}
-                                onConfirm={() =>
-                                  choice.rtx
-                                    ? void chooseRtxHdr(choice.rtx)
-                                    : void chooseDisplayHdr(
-                                        choice.mode ?? "SYSTEM",
-                                      )
-                                }
-                              >
-                                {choice.label}
-                              </Focusable>
-                            ))}
-                        </>
-                      )}
-                      {displayProfileMenu === "resolution" && (
-                        <>
-                          <Focusable
-                            focusId="details-display-resolution-auto"
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            onConfirm={() => {
-                              if (!displayProfile) return;
-                              void saveProfile({
-                                ...displayProfile,
-                                enabled: false,
-                                resolutionMode: "SYSTEM",
-                              });
-                              setDisplayProfileMenu("profile");
-                            }}
-                          >
-                            Auto / Desktop
-                          </Focusable>
-                          {resolutionModes.map((mode, index) => {
-                            const focusId =
-                              "details-display-resolution-" +
-                              mode.width +
-                              "x" +
-                              mode.height;
-                            const previous =
-                              index === 0
-                                ? "details-display-resolution-auto"
-                                : "details-display-resolution-" +
-                                  resolutionModes[index - 1].width +
-                                  "x" +
-                                  resolutionModes[index - 1].height;
-                            const next =
-                              index === resolutionModes.length - 1
-                                ? undefined
-                                : "details-display-resolution-" +
-                                  resolutionModes[index + 1].width +
-                                  "x" +
-                                  resolutionModes[index + 1].height;
-                            return (
-                              <Focusable
-                                key={focusId}
-                                focusId={focusId}
-                                scopeId="details"
-                                className="details-context-menu-item"
-                                role="menuitem"
-                                navigation={{ up: previous, down: next }}
-                                onConfirm={() =>
-                                  void chooseDisplayResolution(mode)
-                                }
-                              >
-                                {mode.width} × {mode.height}
-                              </Focusable>
-                            );
-                          })}
-                        </>
-                      )}
-                      {displayProfileMenu === "refresh" &&
-                        refreshModes.length === 0 && (
-                          <p className="details-context-menu-empty">
-                            No hay frecuencias disponibles.
-                          </p>
-                        )}
-                      {displayProfileMenu === "refresh" &&
-                        refreshModes.map((refreshRate, index) => (
-                          <Focusable
-                            key={refreshRate}
-                            focusId={"details-display-refresh-" + refreshRate}
-                            scopeId="details"
-                            className="details-context-menu-item"
-                            role="menuitem"
-                            navigation={{
-                              up:
-                                index > 0
-                                  ? "details-display-refresh-" +
-                                    refreshModes[index - 1]
-                                  : undefined,
-                              down:
-                                index < refreshModes.length - 1
-                                  ? "details-display-refresh-" +
-                                    refreshModes[index + 1]
-                                  : undefined,
-                            }}
-                            onConfirm={() =>
-                              void chooseDisplayRefreshRate(refreshRate)
-                            }
-                          >
-                            {refreshRate} Hz
-                          </Focusable>
-                        ))}
-                    </div>,
-                    document.body,
-                  )}
+                      </div>,
+                      document.body,
+                    )}
+                  </FocusScope>
+                )}
               </div>
             </div>
             {message && (
