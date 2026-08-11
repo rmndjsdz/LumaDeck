@@ -72,6 +72,7 @@ import { GameCapabilitiesPanel } from "../game-capabilities/GameCapabilitiesPane
 import { hardwareCapabilitiesService } from "../graphics-profile/hardware-capabilities-service";
 import { MediaImage } from "../../ui/performance/MediaImage";
 import { recordMediaTiming } from "../../ui/performance/media-timing";
+import { DetailsTabContent } from "./DetailsTabContent";
 import {
   getDetailsReadiness,
   shouldShowEmptyScreenshots,
@@ -1768,11 +1769,9 @@ export function DetailsView({
             parentRegionId: "details-sections",
           }}
         >
-          <div
-            key={activeSection}
-            className={`details-tab-content is-${detailsContentDirection}`}
-            data-transition-direction={detailsContentDirection}
-            data-active-section={activeSection}
+          <DetailsTabContent
+            activeSection={activeSection}
+            direction={detailsContentDirection}
           >
             {activeSection === "activity" ? (
               <ActivityView game={game} />
@@ -1898,7 +1897,7 @@ export function DetailsView({
                 </div>
               </section>
             )}
-          </div>
+          </DetailsTabContent>
         </NavigationContent>
         {screenshotViewerOpen && (
           <ScreenshotViewer

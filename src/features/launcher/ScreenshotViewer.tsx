@@ -59,7 +59,7 @@ export function ScreenshotViewer({
   onClose: () => void;
 }) {
   const { engine } = useNavigation();
-  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const hideControlsTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
@@ -139,32 +139,19 @@ export function ScreenshotViewer({
   }, [currentIndex, screenshots]);
 
   const measureTargetRect = useCallback((): ViewerRect | null => {
-    const viewport = viewportRef.current?.getBoundingClientRect();
-    if (!viewport) return null;
-    const image = imageRef.current;
-    const aspectRatio =
-      image && image.naturalWidth > 0 && image.naturalHeight > 0
-        ? image.naturalWidth / image.naturalHeight
-        : 16 / 9;
-    const maxWidth = isFullscreen
-      ? viewport.width
-      : Math.min(viewport.width * 0.9, window.innerWidth * 0.9);
-    const maxHeight = isFullscreen
-      ? viewport.height
-      : Math.min(viewport.height * 0.76, window.innerHeight * 0.76);
-    const width = Math.min(maxWidth, maxHeight * aspectRatio);
-    const height = width / aspectRatio;
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const stageRect = stage.getBoundingClientRect();
+    const stageStyle = window.getComputedStyle(stage);
     return {
-      left: viewport.left + (viewport.width - width) / 2,
-      top: viewport.top + (viewport.height - height) / 2,
-      width,
-      height,
-      borderRadius: isFullscreen ? "0px" : "16px",
-      boxShadow: isFullscreen
-        ? "none"
-        : "0 30px 100px rgba(0, 0, 0, 0.62), 0 0 42px rgba(82, 151, 255, 0.2)",
+      left: stageRect.left,
+      top: stageRect.top,
+      width: stageRect.width,
+      height: stageRect.height,
+      borderRadius: stageStyle.borderRadius,
+      boxShadow: stageStyle.boxShadow,
     };
-  }, [isFullscreen]);
+  }, []);
 
   useLayoutEffect(() => {
     transitionFrameRef.current = window.requestAnimationFrame(() => {
@@ -203,15 +190,23 @@ export function ScreenshotViewer({
   );
 
   const getPanBounds = useCallback((): ScreenshotPan => {
-    const viewport = viewportRef.current;
+    const stage = stageRef.current;
     const image = imageRef.current;
-    if (!viewport || !image || zoom <= SCREENSHOT_DEFAULT_ZOOM) {
+    if (!stage || !image || zoom <= SCREENSHOT_DEFAULT_ZOOM) {
       return SCREENSHOT_DEFAULT_PAN;
     }
+    const naturalWidth = image.naturalWidth || 16;
+    const naturalHeight = image.naturalHeight || 9;
+    const containScale = Math.min(
+      stage.clientWidth / naturalWidth,
+      stage.clientHeight / naturalHeight,
+    );
+    const containedWidth = naturalWidth * containScale;
+    const containedHeight = naturalHeight * containScale;
     const scale = zoom / 100;
     return {
-      x: Math.max(0, (image.offsetWidth * scale - viewport.clientWidth) / 2),
-      y: Math.max(0, (image.offsetHeight * scale - viewport.clientHeight) / 2),
+      x: Math.max(0, (containedWidth * scale - stage.clientWidth) / 2),
+      y: Math.max(0, (containedHeight * scale - stage.clientHeight) / 2),
     };
   }, [zoom]);
 
@@ -376,84 +371,100 @@ export function ScreenshotViewer({
         }}
       >
         <div
-          ref={viewportRef}
           className="details-screenshot-viewer-viewport"
           aria-label={`${gameTitle} screenshot viewer`}
         >
-          <div
-            className={`details-screenshot-viewer-counter${controlsVisible ? " is-visible" : ""}`}
-            aria-hidden={!controlsVisible}
-          >
-            {currentIndex + 1} / {screenshots.length}
+          <div className="details-screenshot-viewer-stage-shell">
+            <div ref={stageRef} className="details-screenshot-viewer-stage">
+              <div
+                className={`details-screenshot-viewer-counter${controlsVisible ? " is-visible" : ""}`}
+                aria-hidden={!controlsVisible}
+              >
+                {currentIndex + 1} / {screenshots.length}
+              </div>
+              <Focusable
+                focusId={FULLSCREEN_FOCUS_ID}
+                scopeId={VIEWER_SCOPE_ID}
+                className={`details-screenshot-viewer-fullscreen${controlsVisible ? " is-visible" : ""}`}
+                ariaLabel={
+                  isFullscreen ? "Exit fullscreen" : "Enter fullscreen"
+                }
+                ariaPressed={isFullscreen}
+                disabled={!controlsVisible}
+                onConfirm={toggleFullscreen}
+              >
+                <span aria-hidden="true">⛶</span>
+              </Focusable>
+              <Focusable
+                focusId={PREVIOUS_FOCUS_ID}
+                scopeId={VIEWER_SCOPE_ID}
+                className={`details-screenshot-viewer-side-arrow previous${controlsVisible ? " is-visible" : ""}${isIdle ? " is-idle" : ""}`}
+                ariaLabel="Previous screenshot"
+                disabled={!controlsVisible}
+                onConfirm={() => changeScreenshot(-1)}
+              >
+                <span aria-hidden="true">‹</span>
+              </Focusable>
+              <Focusable
+                focusId={IMAGE_FOCUS_ID}
+                scopeId={VIEWER_SCOPE_ID}
+                className="details-screenshot-viewer-image-button"
+                ariaLabel={`${gameTitle} screenshot ${currentIndex + 1}`}
+                style={sharedElementStyle}
+                onConfirm={toggleControls}
+              >
+                <MediaImage
+                  imageRef={imageRef}
+                  gameId={gameId}
+                  mediaType="screenshot"
+                  key={`${currentScreenshot}-${currentIndex}`}
+                  src={currentScreenshot}
+                  alt={`${gameTitle} screenshot ${currentIndex + 1}`}
+                  className="details-screenshot-viewer-image"
+                  draggable={false}
+                  style={{
+                    transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom / 100})`,
+                  }}
+                  onReady={() => setImageLoadVersion((version) => version + 1)}
+                />
+              </Focusable>
+              <Focusable
+                focusId={NEXT_FOCUS_ID}
+                scopeId={VIEWER_SCOPE_ID}
+                className={`details-screenshot-viewer-side-arrow next${controlsVisible ? " is-visible" : ""}${isIdle ? " is-idle" : ""}`}
+                ariaLabel="Next screenshot"
+                disabled={!controlsVisible}
+                onConfirm={() => changeScreenshot(1)}
+              >
+                <span aria-hidden="true">›</span>
+              </Focusable>
+            </div>
           </div>
-          <Focusable
-            focusId={FULLSCREEN_FOCUS_ID}
-            scopeId={VIEWER_SCOPE_ID}
-            className={`details-screenshot-viewer-fullscreen${controlsVisible ? " is-visible" : ""}`}
-            ariaLabel={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-            ariaPressed={isFullscreen}
-            disabled={!controlsVisible}
-            onConfirm={toggleFullscreen}
-          >
-            <span aria-hidden="true">⛶</span>
-          </Focusable>
-          <Focusable
-            focusId={PREVIOUS_FOCUS_ID}
-            scopeId={VIEWER_SCOPE_ID}
-            className={`details-screenshot-viewer-side-arrow previous${controlsVisible ? " is-visible" : ""}${isIdle ? " is-idle" : ""}`}
-            ariaLabel="Previous screenshot"
-            disabled={!controlsVisible}
-            onConfirm={() => changeScreenshot(-1)}
-          >
-            <span aria-hidden="true">‹</span>
-          </Focusable>
-          <Focusable
-            focusId={IMAGE_FOCUS_ID}
-            scopeId={VIEWER_SCOPE_ID}
-            className="details-screenshot-viewer-image-button"
-            ariaLabel={`${gameTitle} screenshot ${currentIndex + 1}`}
-            style={sharedElementStyle}
-            onConfirm={toggleControls}
-          >
-            <MediaImage
-              imageRef={imageRef}
-              gameId={gameId}
-              mediaType="screenshot"
-              key={`${currentScreenshot}-${currentIndex}`}
-              src={currentScreenshot}
-              alt={`${gameTitle} screenshot ${currentIndex + 1}`}
-              className="details-screenshot-viewer-image"
-              draggable={false}
-              style={{
-                transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom / 100})`,
-              }}
-              onReady={() => setImageLoadVersion((version) => version + 1)}
-            />
-          </Focusable>
-          <Focusable
-            focusId={NEXT_FOCUS_ID}
-            scopeId={VIEWER_SCOPE_ID}
-            className={`details-screenshot-viewer-side-arrow next${controlsVisible ? " is-visible" : ""}${isIdle ? " is-idle" : ""}`}
-            ariaLabel="Next screenshot"
-            disabled={!controlsVisible}
-            onConfirm={() => changeScreenshot(1)}
-          >
-            <span aria-hidden="true">›</span>
-          </Focusable>
           <div
             className={`details-screenshot-viewer-thumbnails${controlsVisible ? " is-visible" : ""}`}
             aria-hidden="true"
           >
             {screenshots.map((screenshot, index) => (
-              <MediaImage
-                gameId={gameId}
-                mediaType="screenshot"
+              <span
+                className={`details-screenshot-viewer-thumbnail${index === currentIndex ? " is-selected" : ""}`}
                 key={`${screenshot}-${index}`}
-                src={screenshot}
-                alt=""
-                className={index === currentIndex ? "is-selected" : undefined}
-                draggable={false}
-              />
+              >
+                <MediaImage
+                  gameId={gameId}
+                  mediaType="screenshot"
+                  src={screenshot}
+                  alt=""
+                  draggable={false}
+                />
+                {index === currentIndex ? (
+                  <span
+                    className="details-screenshot-viewer-thumbnail-check"
+                    aria-hidden="true"
+                  >
+                    &#x2713;
+                  </span>
+                ) : null}
+              </span>
             ))}
           </div>
         </div>
@@ -462,10 +473,54 @@ export function ScreenshotViewer({
           aria-hidden={!controlsVisible}
         >
           <span className="details-screenshot-viewer-controls">
-            <span>A Mostrar/Ocultar controles</span>
-            <span>B Cerrar</span>
+            <span className="details-screenshot-viewer-hud-item">
+              <span
+                className="details-screenshot-viewer-hud-icon"
+                aria-hidden="true"
+              >
+                &#x24D8;
+              </span>
+              <span>Mostrar / Ocultar controles</span>
+            </span>
+            <span className="details-screenshot-viewer-hud-item">
+              <span
+                className="details-screenshot-viewer-hud-keys"
+                aria-hidden="true"
+              >
+                <b>LB</b>
+                <b>RB</b>
+              </span>
+              <span>Cambiar imagen</span>
+            </span>
+            <span className="details-screenshot-viewer-hud-item">
+              <span
+                className="details-screenshot-viewer-hud-keys"
+                aria-hidden="true"
+              >
+                <b>LT</b>
+                <b>RT</b>
+              </span>
+              <span>Zoom</span>
+            </span>
+            <span className="details-screenshot-viewer-hud-item">
+              <span
+                className="details-screenshot-viewer-hud-icon"
+                aria-hidden="true"
+              >
+                &#x2733;
+              </span>
+              <span>Mover</span>
+            </span>
+            <span className="details-screenshot-viewer-hud-item is-close">
+              <span
+                className="details-screenshot-viewer-hud-keys"
+                aria-hidden="true"
+              >
+                <b>B</b>
+              </span>
+              <span>Cerrar</span>
+            </span>
             <span>← → Cambiar imagen</span>
-            <span>LT / RT Zoom</span>
           </span>
         </div>
       </NavigationDialog>

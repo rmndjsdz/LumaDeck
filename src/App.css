@@ -1,6 +1,6 @@
 :root {
   color: #e7edf7;
-  background: #08111f;
+  background: #07101d;
   font-family:
     Inter,
     ui-sans-serif,
@@ -36,7 +36,7 @@ body,
   min-width: 100%;
   min-height: 100%;
   margin: 0;
-  background: #08111f;
+  background: #07101d;
 }
 
 .bluetooth-view {
@@ -5736,38 +5736,7 @@ body:has(.library-view) {
   overflow: hidden;
   border-top: 1px solid rgba(181, 211, 247, 0.12);
   background: var(--shell-bg);
-}
-
-.app-shell-details .details-tab-content.is-forward {
-  animation: details-tab-content-forward var(--motion-standard)
-    var(--ease-enter) both;
-}
-
-.app-shell-details .details-tab-content.is-backward {
-  animation: details-tab-content-backward var(--motion-standard)
-    var(--ease-enter) both;
-}
-
-@keyframes details-tab-content-forward {
-  from {
-    opacity: 0;
-    transform: translate3d(22px, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-}
-
-@keyframes details-tab-content-backward {
-  from {
-    opacity: 0;
-    transform: translate3d(-22px, 0, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
+  will-change: opacity, transform;
 }
 
 .details-tab-badge {
@@ -9569,5 +9538,332 @@ body:has(.library-view) {
 
   .app-shell-details .details-metric:nth-child(4) {
     border-top: 1px solid rgba(181, 211, 247, 0.2);
+  }
+}
+
+/* Final cascade for the restored viewer layout. */
+.details-screenshot-viewer-backdrop {
+  z-index: 9;
+  box-sizing: border-box;
+  padding: clamp(82px, 8vh, 104px) clamp(24px, 4.2vw, 72px)
+    clamp(16px, 2vh, 28px);
+  place-items: stretch;
+}
+
+.details-screenshot-viewer-backdrop.is-fullscreen {
+  z-index: 80;
+  padding: 0;
+}
+
+.details-screenshot-viewer-backdrop
+  > [data-focus-scope="details-screenshot-viewer"] {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.details-screenshot-viewer {
+  --viewer-gap: clamp(10px, 1.4vh, 16px);
+  --thumbnail-height: clamp(74px, 10vh, 122px);
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.details-screenshot-viewer-viewport {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) var(--thumbnail-height);
+  gap: var(--viewer-gap);
+  width: 100%;
+  height: 100%;
+  place-items: stretch;
+  overflow: visible;
+}
+
+.details-screenshot-viewer-stage-shell {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+}
+
+.details-screenshot-viewer-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: visible;
+  border: 1px solid rgba(181, 211, 247, 0.24);
+  border-radius: 16px;
+  background: rgba(3, 10, 18, 0.72);
+  box-shadow:
+    0 30px 100px rgba(0, 0, 0, 0.62),
+    0 0 42px rgba(82, 151, 255, 0.2);
+}
+
+.details-screenshot-viewer-image-button {
+  position: fixed;
+  overflow: hidden;
+  border-radius: 16px;
+}
+
+.details-screenshot-viewer-counter {
+  top: clamp(-30px, -2.8vh, -18px);
+  z-index: 8;
+}
+
+.details-screenshot-viewer-fullscreen {
+  top: 14px;
+  right: 14px;
+  width: clamp(42px, 3.2vw, 54px);
+  height: clamp(42px, 3.2vw, 54px);
+  border-radius: 50%;
+}
+
+.details-screenshot-viewer-side-arrow {
+  width: clamp(56px, 4.2vw, 78px);
+  height: clamp(56px, 4.2vw, 78px);
+  border-radius: 50%;
+}
+
+.details-screenshot-viewer-side-arrow.previous {
+  left: clamp(14px, 1.5vw, 28px);
+}
+
+.details-screenshot-viewer-side-arrow.next {
+  right: clamp(14px, 1.5vw, 28px);
+}
+
+.details-screenshot-viewer-hud {
+  right: auto;
+  bottom: calc(var(--thumbnail-height) + var(--viewer-gap) + 12px);
+  left: 50%;
+  z-index: 7;
+  display: flex;
+  width: min(88%, 1000px);
+  min-height: 58px;
+  box-sizing: border-box;
+  justify-content: center;
+  padding: 10px 16px;
+  border: 1px solid rgba(181, 211, 247, 0.15);
+  border-radius: 10px;
+  background: rgba(4, 10, 18, 0.64);
+  transform: translate(-50%, 8px);
+}
+
+.details-screenshot-viewer-controls {
+  display: grid;
+  grid-template-columns: 1.35fr repeat(3, 1fr) 0.7fr;
+  width: 100%;
+  align-items: center;
+  justify-content: stretch;
+  gap: 0;
+  color: #c3d1e4;
+  font-size: clamp(0.58rem, 0.65vw, 0.72rem);
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.details-screenshot-viewer-hud-item {
+  display: flex;
+  min-width: 0;
+  min-height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-left: 1px solid rgba(181, 211, 247, 0.13);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.details-screenshot-viewer-hud-item:first-child {
+  border-left: 0;
+}
+
+.details-screenshot-viewer-hud-item.is-close {
+  color: #e9eff8;
+}
+
+.details-screenshot-viewer-hud-icon {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(220, 233, 251, 0.8);
+  border-radius: 50%;
+  font-size: 0.9rem;
+}
+
+.details-screenshot-viewer-hud-keys {
+  display: inline-flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.details-screenshot-viewer-hud-keys b {
+  display: inline-grid;
+  min-width: 23px;
+  height: 23px;
+  box-sizing: border-box;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: #eef5ff;
+  background: rgba(142, 188, 255, 0.22);
+  font-size: 0.62rem;
+}
+
+.details-screenshot-viewer-hud-item.is-close
+  .details-screenshot-viewer-hud-keys
+  b {
+  border: 1px solid rgba(255, 86, 79, 0.92);
+  border-radius: 50%;
+  color: #ff8c86;
+  background: rgba(123, 19, 23, 0.6);
+}
+
+.details-screenshot-viewer-thumbnails {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  display: flex;
+  width: 100%;
+  height: var(--thumbnail-height);
+  align-items: stretch;
+  justify-content: stretch;
+  gap: clamp(6px, 0.8vw, 14px);
+  opacity: 0.82;
+  transform: none;
+}
+
+.details-screenshot-viewer-thumbnail {
+  position: relative;
+  min-width: 0;
+  flex: 1 1 0;
+  overflow: visible;
+  border: 1px solid rgba(181, 211, 247, 0.22);
+  border-radius: 8px;
+  background: rgba(3, 10, 18, 0.72);
+  transition:
+    opacity var(--motion-focus-fast) var(--ease-standard),
+    border-color var(--motion-focus-fast) var(--ease-focus),
+    box-shadow var(--motion-focus-fast) var(--ease-focus),
+    transform var(--motion-focus-fast) var(--ease-focus);
+}
+
+.details-screenshot-viewer-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  opacity: 0.52;
+}
+
+.details-screenshot-viewer-thumbnail.is-selected {
+  border-color: rgba(73, 177, 255, 0.98);
+  box-shadow:
+    0 0 0 2px rgba(73, 177, 255, 0.38),
+    0 0 22px rgba(82, 151, 255, 0.3);
+  opacity: 1;
+  transform: translateY(-2px);
+}
+
+.details-screenshot-viewer-thumbnail.is-selected img {
+  opacity: 1;
+}
+
+.details-screenshot-viewer-thumbnail-check {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 2px solid #f4f8ff;
+  border-radius: 50%;
+  color: #162840;
+  background: #f4f8ff;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.details-screenshot-viewer-backdrop.is-fullscreen
+  .details-screenshot-viewer-viewport {
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+}
+
+.details-screenshot-viewer-backdrop.is-fullscreen
+  .details-screenshot-viewer-thumbnails {
+  display: none;
+}
+
+.details-screenshot-viewer-backdrop.is-fullscreen
+  .details-screenshot-viewer-stage {
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  box-shadow: none;
+}
+
+.details-screenshot-viewer-backdrop.is-fullscreen
+  .details-screenshot-viewer-image-button {
+  border-radius: 0;
+}
+
+.details-screenshot-viewer-backdrop.is-fullscreen
+  .details-screenshot-viewer-hud {
+  bottom: 16px;
+}
+
+.details-screenshot-viewer-controls
+  > span:not(.details-screenshot-viewer-hud-item) {
+  display: none;
+}
+
+@media (max-width: 620px) {
+  .details-screenshot-viewer-backdrop {
+    padding: 74px 10px 12px;
+  }
+
+  .details-screenshot-viewer {
+    --viewer-gap: 8px;
+    --thumbnail-height: 64px;
+  }
+
+  .details-screenshot-viewer-hud {
+    width: 96%;
+    min-height: 48px;
+    padding: 6px 4px;
+  }
+
+  .details-screenshot-viewer-controls {
+    font-size: 0.52rem;
+  }
+
+  .details-screenshot-viewer-hud-item {
+    gap: 3px;
+    padding: 0 3px;
+  }
+
+  .details-screenshot-viewer-hud-icon,
+  .details-screenshot-viewer-hud-keys b {
+    width: 18px;
+    min-width: 18px;
+    height: 18px;
+    font-size: 0.5rem;
+  }
+
+  .details-screenshot-viewer-thumbnail-check {
+    top: 3px;
+    right: 3px;
+    width: 16px;
+    height: 16px;
+    font-size: 0.58rem;
   }
 }
