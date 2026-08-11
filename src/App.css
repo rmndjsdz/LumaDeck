@@ -30,6 +30,15 @@
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
+html,
+body,
+#root {
+  min-width: 100%;
+  min-height: 100%;
+  margin: 0;
+  background: #08111f;
+}
+
 .bluetooth-view {
   max-width: 1180px;
   margin: 0 auto;
@@ -3875,6 +3884,7 @@ html[data-cursor="hidden"] * {
   position: relative;
   min-height: 100vh;
   color: var(--shell-text);
+  background: var(--shell-bg);
 }
 .app-shell-main {
   position: relative;
@@ -4121,6 +4131,13 @@ html[data-cursor="hidden"] * {
   display: block;
   width: 100%;
   aspect-ratio: 3 / 4;
+  object-fit: cover;
+}
+.background-layer > .background-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-position: center;
   object-fit: cover;
 }
 .game-card-body {
@@ -7366,7 +7383,6 @@ body:has(.library-view) {
   border-radius: 50%;
   object-fit: cover;
 }
-
 .activity-friend > div {
   display: grid;
   gap: 3px;
@@ -7676,7 +7692,7 @@ body:has(.library-view) {
 .app-shell-details .app-footer {
   z-index: 10;
   border-top: 0;
-  background: transparent;
+  background: rgba(6, 14, 26, 0.94);
 }
 .app-shell-details .footer-controls {
   gap: clamp(18px, 1.2vw, 24px);
@@ -9094,6 +9110,7 @@ body:has(.library-view) {
 .app-shell-home .app-shell-main {
   padding-right: clamp(32px, 4vw, 96px);
   padding-left: clamp(32px, 4vw, 96px);
+  background: var(--shell-bg);
 }
 .app-shell-home .home-hero {
   width: 100%;

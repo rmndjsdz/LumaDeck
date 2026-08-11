@@ -1,6 +1,7 @@
 import type { Game } from "../catalog/game-types";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import { recordRender } from "../../ui/performance/performance-counters";
+import { MediaImage } from "../../ui/performance/MediaImage";
 
 interface GameCardProps {
   game: Game;
@@ -32,7 +33,9 @@ export function GameCard({
       ariaLabel={`${game.title}, ${game.platform}, ${game.status}`}
       onConfirm={() => onOpen(game)}
     >
-      <img
+      <MediaImage
+        gameId={game.id}
+        mediaType="grid"
         className="game-card-cover"
         src={
           compact && !vertical

@@ -17,6 +17,7 @@ mod hltb;
 mod launch_display;
 mod launchbox;
 mod lossless_scaling;
+mod media_server;
 mod network;
 pub mod news;
 mod news_steam;
@@ -71,6 +72,51 @@ fn record_weather_event(
         return Err("weather event details are too large".to_string());
     }
     database.log_weather(event, &details);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_media_server_url(server: State<'_, media_server::MediaServer>) -> String {
+    server.base_url().to_string()
+}
+
+#[tauri::command]
+fn record_media_timing(
+    database: State<'_, DatabaseState>,
+    stage: String,
+    timestamp_ms: f64,
+    game_id: String,
+    media_type: String,
+    path: String,
+    url: String,
+    duration_ms: Option<f64>,
+    detail: String,
+) -> Result<(), String> {
+    if stage.len() > 64 || game_id.len() > 256 || media_type.len() > 32 {
+        return Err("invalid media timing".to_string());
+    }
+    let clean = |value: String, max: usize| {
+        value
+            .chars()
+            .filter(|character| *character != '\r' && *character != '\n')
+            .take(max)
+            .collect::<String>()
+    };
+    database.log(
+        "media-timing",
+        &stage,
+        &format!(
+            "timestamp_ms={timestamp_ms:.3} gameId={} type={} path={} url={} duration_ms={} detail={}",
+            clean(game_id, 256),
+            clean(media_type, 32),
+            clean(path, 2048),
+            clean(url, 2048),
+            duration_ms
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_default(),
+            clean(detail, 512),
+        ),
+    );
     Ok(())
 }
 
@@ -1150,12 +1196,57 @@ fn get_steam_image_sync_status(
 
 #[tauri::command]
 fn get_library_games(state: State<'_, DatabaseState>) -> Result<Vec<settings::LocalGame>, String> {
-    map_command_result(
-        &state,
-        "library-read",
-        "get_library_games",
-        settings::get_local_games(&state),
-    )
+    let started = Instant::now();
+    state.log(
+        "media-timing",
+        "MEDIA_INDEX_START",
+        &format!("timestamp_ms={} type=all", epoch_millis()),
+    );
+    let result = settings::get_local_game_summaries(&state);
+    if let Ok(games) = &result {
+        state.log(
+            "media-timing",
+            "MEDIA_INDEX_READY",
+            &format!(
+                "timestamp_ms={} type=all duration_ms={} game_count={}",
+                epoch_millis(),
+                started.elapsed().as_millis(),
+                games.len()
+            ),
+        );
+    }
+    map_command_result(&state, "library-read", "get_library_games", result)
+}
+
+#[tauri::command]
+fn get_library_game(
+    state: State<'_, DatabaseState>,
+    game_id: String,
+) -> Result<settings::LocalGame, String> {
+    let started = Instant::now();
+    state.log(
+        "media-timing",
+        "GAME_MEDIA_QUERY",
+        &format!(
+            "timestamp_ms={} gameId={} type=all source=details",
+            epoch_millis(),
+            game_id
+        ),
+    );
+    let result = settings::get_local_game(&state, &game_id);
+    if result.is_ok() {
+        state.log(
+            "media-timing",
+            "MEDIA_INDEX_READY",
+            &format!(
+                "timestamp_ms={} gameId={} type=details duration_ms={}",
+                epoch_millis(),
+                game_id,
+                started.elapsed().as_millis()
+            ),
+        );
+    }
+    map_command_result(&state, "library-read", "get_library_game", result)
 }
 
 #[tauri::command]
@@ -3318,6 +3409,13 @@ fn unix_timestamp() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
+fn epoch_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or_default()
+}
+
 fn steam_command_error(error: SteamError) -> String {
     match error {
         SteamError::Offline => "STEAM_OFFLINE".to_string(),
@@ -3515,6 +3613,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let app_started_at_ms = epoch_millis();
             let app_data_dir = app.path().app_data_dir()?;
             let executable_path = std::env::current_exe()?;
             let data_directory =
@@ -3523,6 +3622,22 @@ pub fn run() {
                 eprintln!("[settings] startup database initialization failed: {error:?}");
                 Box::<dyn std::error::Error>::from(error)
             })?;
+            let media_server =
+                media_server::MediaServer::start(database.data_directory.root().to_path_buf())?;
+            database.log(
+                "media-timing",
+                "APP_START",
+                &format!("timestamp_ms={app_started_at_ms} elapsed_ms=0"),
+            );
+            database.log(
+                "media-timing",
+                "DB_READY",
+                &format!(
+                    "timestamp_ms={} duration_ms={}",
+                    epoch_millis(),
+                    epoch_millis().saturating_sub(app_started_at_ms)
+                ),
+            );
             if let Err(error) = launch_display::recover_pending(&database) {
                 database.log(
                     "display-profile",
@@ -3548,6 +3663,7 @@ pub fn run() {
                 }
             }
             app.manage(database);
+            app.manage(media_server);
             let bluetooth_service = bluetooth::BluetoothService::default();
             bluetooth_service.configure_logging(app.state::<DatabaseState>().logs_directory());
             app.manage(bluetooth_service);
@@ -3572,6 +3688,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             record_weather_event,
+            get_media_server_url,
+            record_media_timing,
             get_bluetooth_state,
             get_bluetooth_diagnostics,
             record_bluetooth_client_diagnostic,
@@ -3639,6 +3757,7 @@ pub fn run() {
             sync_hltb_library,
             cancel_hltb_sync,
             get_library_games,
+            get_library_game,
             get_launchbox_catalog_status,
             refresh_launchbox_catalog,
             refresh_emulator_metadata,

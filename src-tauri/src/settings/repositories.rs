@@ -2187,6 +2187,26 @@ impl<'a> SettingsRepository<'a> {
     }
 
     pub fn get_local_games(&self) -> Result<Vec<LocalGame>, DatabaseError> {
+        self.get_local_games_with_options(None, true)
+    }
+
+    pub fn get_local_game_summaries(&self) -> Result<Vec<LocalGame>, DatabaseError> {
+        self.get_local_games_with_options(None, false)
+    }
+
+    pub fn get_local_game(&self, game_id: &str) -> Result<LocalGame, DatabaseError> {
+        self.get_local_games_with_options(Some(game_id), true)?
+            .into_iter()
+            .next()
+            .ok_or(DatabaseError::GameNotFound)
+    }
+
+    fn get_local_games_with_options(
+        &self,
+        game_id: Option<&str>,
+        include_details: bool,
+    ) -> Result<Vec<LocalGame>, DatabaseError> {
+        let media_index_started = std::time::Instant::now();
         let connection = self
             .state
             .connection
@@ -2259,10 +2279,12 @@ impl<'a> SettingsRepository<'a> {
                              AND ((a.width = 1024 AND a.height = 1024) OR (a.width = 512 AND a.height = 512))
                            ORDER BY s.updated_at DESC LIMIT 1), '') AS square_cover
                  , g.hidden, g.source, g.emulator_id, g.game_path, g.title_id
-             FROM games g LEFT JOIN game_details d ON d.game_id = g.id ORDER BY g.sort_title",
+             FROM games g LEFT JOIN game_details d ON d.game_id = g.id
+             WHERE (?1 IS NULL OR g.id = ?1) ORDER BY g.sort_title",
         )?;
         let mut games = statement
-            .query_map([], |row| {
+            .query_map(params![game_id], |row| {
+                let game_id: String = row.get(0)?;
                 let release_date: String = row.get(10)?;
                 let release_year = release_date
                     .get(0..4)
@@ -2279,21 +2301,43 @@ impl<'a> SettingsRepository<'a> {
                 let icon_fallback: String = row.get(24)?;
                 let square_cover_url: String = row.get(25)?;
                 Ok(LocalGame {
-                    id: row.get(0)?,
+                    id: game_id.clone(),
                     title: row.get(1)?,
                     sort_title: row.get(2)?,
                     platform: row.get(3)?,
                     provider: row.get(4)?,
-                    cover_url: resolve_local_asset_path(self.state, &cover_url, &cover_fallback),
-                    vertical_cover_url: resolve_local_asset_path(
+                    cover_url: resolve_media_asset_path(
                         self.state,
+                        &game_id,
+                        "grid",
+                        &cover_url,
+                        &cover_fallback,
+                    ),
+                    vertical_cover_url: resolve_media_asset_path(
+                        self.state,
+                        &game_id,
+                        "grid",
                         &vertical_cover_url,
                         &vertical_cover_fallback,
                     ),
-                    square_cover_url: resolve_local_asset_path(self.state, &square_cover_url, ""),
-                    logo_url: resolve_local_asset_path(self.state, &logo_url, &logo_fallback),
-                    background_url: resolve_local_asset_path(
+                    square_cover_url: resolve_media_asset_path(
                         self.state,
+                        &game_id,
+                        "grid",
+                        &square_cover_url,
+                        "",
+                    ),
+                    logo_url: resolve_media_asset_path(
+                        self.state,
+                        &game_id,
+                        "logo",
+                        &logo_url,
+                        &logo_fallback,
+                    ),
+                    background_url: resolve_media_asset_path(
+                        self.state,
+                        &game_id,
+                        "hero",
                         &background_url,
                         &background_fallback,
                     ),
@@ -2339,59 +2383,74 @@ impl<'a> SettingsRepository<'a> {
                 games.retain(|game| game.provider != "Steam" || game.installed);
             }
         }
-        for game in &mut games {
-            let mut genres_statement = connection
-                .prepare("SELECT value FROM steam_game_genres WHERE game_id = ?1 ORDER BY value")?;
-            game.genres = genres_statement
-                .query_map(params![game.id], |genre_row| genre_row.get(0))?
-                .collect::<Result<Vec<String>, _>>()?;
-            if game.genres.is_empty() {
-                let mut tags_statement = connection.prepare(
-                    "SELECT value FROM steam_game_tags WHERE game_id = ?1 ORDER BY value",
+        if include_details {
+            for game in &mut games {
+                if media_trace_enabled(&game.id) {
+                    self.state.log(
+                        "media-timing",
+                        "GAME_MEDIA_QUERY",
+                        &format!(
+                            "timestamp_ms={} gameId={} type=all",
+                            epoch_millis(),
+                            game.id
+                        ),
+                    );
+                }
+                let mut genres_statement = connection.prepare(
+                    "SELECT value FROM steam_game_genres WHERE game_id = ?1 ORDER BY value",
                 )?;
-                game.genres = tags_statement
-                    .query_map(params![game.id], |tag_row| tag_row.get(0))?
+                game.genres = genres_statement
+                    .query_map(params![game.id], |genre_row| genre_row.get(0))?
                     .collect::<Result<Vec<String>, _>>()?;
-            }
-            let mut screenshots_statement = connection.prepare(
+                if game.genres.is_empty() {
+                    let mut tags_statement = connection.prepare(
+                        "SELECT value FROM steam_game_tags WHERE game_id = ?1 ORDER BY value",
+                    )?;
+                    game.genres = tags_statement
+                        .query_map(params![game.id], |tag_row| tag_row.get(0))?
+                        .collect::<Result<Vec<String>, _>>()?;
+                }
+                let mut screenshots_statement = connection.prepare(
                 "SELECT local_path FROM steam_game_assets WHERE game_id = ?1 AND asset_type = 'screenshot' AND local_path IS NOT NULL ORDER BY external_id",
             )?;
-            game.screenshots = screenshots_statement
-                .query_map(params![game.id], |screenshot_row| screenshot_row.get(0))?
-                .collect::<Result<Vec<String>, _>>()?
-                .into_iter()
-                .map(|path| resolve_local_asset_path(self.state, &path, ""))
-                .collect();
+                game.screenshots = screenshots_statement
+                    .query_map(params![game.id], |screenshot_row| screenshot_row.get(0))?
+                    .collect::<Result<Vec<String>, _>>()?
+                    .into_iter()
+                    .map(|path| {
+                        resolve_media_asset_path(self.state, &game.id, "screenshot", &path, "")
+                    })
+                    .collect();
 
-            let mut movies_statement = connection.prepare(
+                let mut movies_statement = connection.prepare(
                 "SELECT full_url FROM steam_game_media WHERE game_id = ?1 AND media_type = 'movie' AND full_url IS NOT NULL AND full_url <> '' ORDER BY external_id",
             )?;
-            let movies = movies_statement
-                .query_map(params![game.id], |movie_row| movie_row.get(0))?
-                .collect::<Result<Vec<String>, _>>()?;
+                let movies = movies_statement
+                    .query_map(params![game.id], |movie_row| movie_row.get(0))?
+                    .collect::<Result<Vec<String>, _>>()?;
 
-            let steam_details = connection
-                .query_row(
-                    "SELECT steam_app_id, steam_description, steam_short_description,
+                let steam_details = connection
+                    .query_row(
+                        "SELECT steam_app_id, steam_description, steam_short_description,
                         steam_multiplayer, steam_single_player, steam_cloud,
                         steam_trading_cards, steam_workshop
                      FROM game_details WHERE game_id = ?1",
-                    params![game.id],
-                    |row| {
-                        Ok((
-                            row.get::<_, Option<i64>>(0)?,
-                            row.get::<_, Option<String>>(1)?,
-                            row.get::<_, Option<String>>(2)?,
-                            row.get::<_, Option<i64>>(3)?,
-                            row.get::<_, Option<i64>>(4)?,
-                            row.get::<_, Option<i64>>(5)?,
-                            row.get::<_, Option<i64>>(6)?,
-                            row.get::<_, Option<i64>>(7)?,
-                        ))
-                    },
-                )
-                .optional()?;
-            let hltb = connection
+                        params![game.id],
+                        |row| {
+                            Ok((
+                                row.get::<_, Option<i64>>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                                row.get::<_, Option<i64>>(3)?,
+                                row.get::<_, Option<i64>>(4)?,
+                                row.get::<_, Option<i64>>(5)?,
+                                row.get::<_, Option<i64>>(6)?,
+                                row.get::<_, Option<i64>>(7)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let hltb = connection
                 .query_row(
                     "SELECT game_id, hltb_id, matched_title, main_story_minutes, main_extra_minutes,
                         completionist_minutes, match_confidence, match_type, last_synced_at,
@@ -2415,66 +2474,66 @@ impl<'a> SettingsRepository<'a> {
                     },
                 )
                 .optional()?;
-            if let Some((
-                steam_app_id,
-                description,
-                short_description,
-                multiplayer,
-                single_player,
-                cloud,
-                trading_cards,
-                workshop,
-            )) = steam_details
-            {
-                let tags = connection
-                    .prepare("SELECT value FROM steam_game_tags WHERE game_id = ?1")?
-                    .query_map(params![game.id], |tag_row| tag_row.get(0))?
-                    .collect::<Result<Vec<String>, _>>()?;
-                let categories = connection
+                if let Some((
+                    steam_app_id,
+                    description,
+                    short_description,
+                    multiplayer,
+                    single_player,
+                    cloud,
+                    trading_cards,
+                    workshop,
+                )) = steam_details
+                {
+                    let tags = connection
+                        .prepare("SELECT value FROM steam_game_tags WHERE game_id = ?1")?
+                        .query_map(params![game.id], |tag_row| tag_row.get(0))?
+                        .collect::<Result<Vec<String>, _>>()?;
+                    let categories = connection
                     .prepare(
                         "SELECT value FROM steam_game_categories WHERE game_id = ?1 ORDER BY value",
                     )?
                     .query_map(params![game.id], |category_row| category_row.get(0))?
                     .collect::<Result<Vec<String>, _>>()?;
-                game.details = Some(LocalGameDetails {
-                    steam: Some(LocalSteamDetails {
-                        app_id: steam_app_id.unwrap_or_default(),
-                        description,
-                        short_description,
-                        tags,
-                        genres: game.genres.clone(),
-                        categories,
-                        screenshots: game.screenshots.clone(),
-                        movies,
-                        multiplayer: multiplayer.map(|value| value != 0),
-                        single_player: single_player.map(|value| value != 0),
-                        cloud: cloud.map(|value| value != 0),
-                        trading_cards: trading_cards.map(|value| value != 0),
-                        workshop: workshop.map(|value| value != 0),
-                    }),
-                    launchbox: None,
-                    hltb: hltb.clone(),
-                });
-            }
-            if game.details.is_none() && hltb.is_some() {
-                game.details = Some(LocalGameDetails {
-                    steam: None,
-                    launchbox: None,
-                    hltb,
-                });
-            } else if let Some(details) = game.details.as_mut() {
-                details.hltb = hltb;
-            }
+                    game.details = Some(LocalGameDetails {
+                        steam: Some(LocalSteamDetails {
+                            app_id: steam_app_id.unwrap_or_default(),
+                            description,
+                            short_description,
+                            tags,
+                            genres: game.genres.clone(),
+                            categories,
+                            screenshots: game.screenshots.clone(),
+                            movies,
+                            multiplayer: multiplayer.map(|value| value != 0),
+                            single_player: single_player.map(|value| value != 0),
+                            cloud: cloud.map(|value| value != 0),
+                            trading_cards: trading_cards.map(|value| value != 0),
+                            workshop: workshop.map(|value| value != 0),
+                        }),
+                        launchbox: None,
+                        hltb: hltb.clone(),
+                    });
+                }
+                if game.details.is_none() && hltb.is_some() {
+                    game.details = Some(LocalGameDetails {
+                        steam: None,
+                        launchbox: None,
+                        hltb,
+                    });
+                } else if let Some(details) = game.details.as_mut() {
+                    details.hltb = hltb;
+                }
 
-            if game.source == "emulator" {
-                if let Some(launchbox) = crate::launchbox::get_game_metadata(
-                    &connection,
-                    &game.id,
-                    game.title_id.as_deref(),
-                    &game.title,
-                    &game.platform,
-                )? {
-                    self.state.log(
+                if game.source == "emulator" {
+                    if let Some(launchbox) = crate::launchbox::get_game_metadata(
+                        &connection,
+                        &game.id,
+                        game.title_id.as_deref(),
+                        &game.title,
+                        &game.platform,
+                    )? {
+                        self.state.log(
                         "launchbox-metadata",
                         "metadata_resolved",
                         &format!(
@@ -2501,50 +2560,67 @@ impl<'a> SettingsRepository<'a> {
                                 .unwrap_or_else(|| "<none>".to_string())
                         ),
                     );
-                    if let Some(description) = launchbox.description.as_deref() {
-                        if !description.is_empty() {
-                            game.description = description.to_string();
+                        if let Some(description) = launchbox.description.as_deref() {
+                            if !description.is_empty() {
+                                game.description = description.to_string();
+                            }
                         }
-                    }
-                    if !launchbox.normalized_genres.is_empty() {
-                        game.genres = launchbox.normalized_genres.clone();
-                    }
-                    if let Some(release_date) = launchbox.release_date.as_deref() {
-                        game.release_year = release_date
-                            .get(0..4)
-                            .and_then(|value| value.parse::<i64>().ok())
-                            .unwrap_or(game.release_year);
-                    }
-                    if !launchbox.screenshots.is_empty() {
-                        game.screenshots = launchbox
+                        if !launchbox.normalized_genres.is_empty() {
+                            game.genres = launchbox.normalized_genres.clone();
+                        }
+                        if let Some(release_date) = launchbox.release_date.as_deref() {
+                            game.release_year = release_date
+                                .get(0..4)
+                                .and_then(|value| value.parse::<i64>().ok())
+                                .unwrap_or(game.release_year);
+                        }
+                        if !launchbox.screenshots.is_empty() {
+                            game.screenshots = launchbox
+                                .screenshots
+                                .iter()
+                                .map(|path| resolve_local_asset_path(self.state, path, ""))
+                                .collect();
+                        }
+                        let mut launchbox = launchbox;
+                        launchbox.screenshots = launchbox
                             .screenshots
                             .iter()
                             .map(|path| resolve_local_asset_path(self.state, path, ""))
                             .collect();
-                    }
-                    let mut launchbox = launchbox;
-                    launchbox.screenshots = launchbox
-                        .screenshots
-                        .iter()
-                        .map(|path| resolve_local_asset_path(self.state, path, ""))
-                        .collect();
-                    if let Some(details) = game.details.as_mut() {
-                        details.launchbox = Some(launchbox);
-                    } else {
-                        game.details = Some(LocalGameDetails {
-                            steam: None,
-                            launchbox: Some(launchbox),
-                            hltb: None,
-                        });
+                        if let Some(details) = game.details.as_mut() {
+                            details.launchbox = Some(launchbox);
+                        } else {
+                            game.details = Some(LocalGameDetails {
+                                steam: None,
+                                launchbox: Some(launchbox),
+                                hltb: None,
+                            });
+                        }
                     }
                 }
-            }
 
-            if !asset_is_available(&game.cover_url) && asset_is_available(&game.vertical_cover_url)
-            {
-                game.cover_url = game.vertical_cover_url.clone();
+                if !asset_is_available(&game.cover_url)
+                    && asset_is_available(&game.vertical_cover_url)
+                {
+                    game.cover_url = game.vertical_cover_url.clone();
+                }
+            }
+        } else {
+            for game in &mut games {
+                game.description.clear();
+                game.genres.clear();
             }
         }
+        self.state.log(
+            "media-timing",
+            "GAME_MEDIA_QUERY",
+            &format!(
+                "timestamp_ms={} gameId=* type=all duration_ms={} game_count={}",
+                epoch_millis(),
+                media_index_started.elapsed().as_millis(),
+                games.len()
+            ),
+        );
         Ok(games)
     }
 
@@ -3630,6 +3706,64 @@ impl<'a> SettingsRepository<'a> {
     }
 }
 
+fn resolve_media_asset_path(
+    state: &DatabaseState,
+    game_id: &str,
+    media_type: &str,
+    value: &str,
+    fallback: &str,
+) -> String {
+    if !media_trace_enabled(game_id) {
+        return resolve_local_asset_path(state, value, fallback);
+    }
+    let lookup_started = std::time::Instant::now();
+    state.log(
+        "media-timing",
+        "CACHE_METADATA_HIT",
+        &format!(
+            "timestamp_ms={} gameId={} type={} path={}",
+            epoch_millis(),
+            game_id,
+            media_type,
+            value
+        ),
+    );
+    state.log(
+        "media-timing",
+        "LOCAL_FILE_LOOKUP_START",
+        &format!(
+            "timestamp_ms={} gameId={} type={} path={}",
+            epoch_millis(),
+            game_id,
+            media_type,
+            value
+        ),
+    );
+    let resolved = resolve_local_asset_path(state, value, fallback);
+    let found = !is_remote_asset(&resolved) && Path::new(&resolved).is_file();
+    if found {
+        state.log(
+            "media-timing",
+            "LOCAL_FILE_FOUND",
+            &format!(
+                "timestamp_ms={} gameId={} type={} path={} duration_ms={}",
+                epoch_millis(),
+                game_id,
+                media_type,
+                resolved,
+                lookup_started.elapsed().as_micros() as f64 / 1000.0
+            ),
+        );
+    }
+    resolved
+}
+
+fn media_trace_enabled(game_id: &str) -> bool {
+    std::env::var("LUDECK_MEDIA_TRACE_GAME_ID")
+        .map(|value| value == game_id)
+        .unwrap_or(false)
+}
+
 pub(crate) fn resolve_local_asset_path(
     state: &DatabaseState,
     value: &str,
@@ -3678,6 +3812,13 @@ fn is_remote_asset(value: &str) -> bool {
         || value.starts_with("https://")
         || value.starts_with("data:")
         || value.starts_with("asset:")
+}
+
+fn epoch_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or_default()
 }
 
 fn asset_is_available(value: &str) -> bool {

@@ -16,7 +16,6 @@ export function ViewTransition({
   const setTransitionActive = useNavigationStore((state) => state.updateDebug);
   return (
     <div
-      key={`${view}-${transitionId}`}
       className="view-transition"
       data-view={view}
       data-transition-id={transitionId}

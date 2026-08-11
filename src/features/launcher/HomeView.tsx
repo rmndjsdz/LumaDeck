@@ -7,6 +7,7 @@ import { NavigationRowGroup } from "../../ui/navigation/layouts/NavigationRowGro
 import type { NavigationScreenDefinition } from "../../ui/navigation/screen/navigation-screen-contract";
 import { GameCard } from "./GameCard";
 import { resolveFeaturedGame } from "./home-feature-selection";
+import { MediaImage } from "../../ui/performance/MediaImage";
 
 export const HOME_SCREEN_DEFINITION = {
   id: "home",
@@ -101,6 +102,7 @@ export function HomeView({ games, onOpen, onViewLibrary }: HomeViewProps) {
   );
 }
 
+
 function HomeHero({
   game,
   onOpen,
@@ -142,11 +144,15 @@ function renderHeroScene(
               <h1 id={headingId} className="visually-hidden">
                 {game.title}
               </h1>
-              <img
+              <MediaImage
+                gameId={game.id}
+                mediaType="logo"
                 className="home-hero-logo"
                 src={game.logoUrl}
                 alt={`${game.title} logo`}
                 draggable={false}
+                loading="eager"
+                decoding="async"
               />
             </>
           ) : (

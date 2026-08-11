@@ -299,6 +299,14 @@ pub fn get_local_games(state: &DatabaseState) -> Result<Vec<LocalGame>, Database
     SettingsRepository::new(state).get_local_games()
 }
 
+pub fn get_local_game_summaries(state: &DatabaseState) -> Result<Vec<LocalGame>, DatabaseError> {
+    SettingsRepository::new(state).get_local_game_summaries()
+}
+
+pub fn get_local_game(state: &DatabaseState, game_id: &str) -> Result<LocalGame, DatabaseError> {
+    SettingsRepository::new(state).get_local_game(game_id)
+}
+
 pub fn set_game_favorite(
     state: &DatabaseState,
     game_id: &str,

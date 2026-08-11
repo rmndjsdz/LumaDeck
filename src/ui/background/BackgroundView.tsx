@@ -6,6 +6,9 @@ import {
   BackgroundManager,
   type BackgroundTelemetry,
 } from "./background-manager";
+import { recordMediaTiming } from "../performance/media-timing";
+import { mediaManager } from "../performance/media-manager";
+import { MediaImage } from "../performance/MediaImage";
 
 interface BackgroundViewProps {
   games: Game[];
@@ -18,6 +21,7 @@ export function BackgroundView({ games, fallbackGameId }: BackgroundViewProps) {
   const manager = useMemo(
     () =>
       new BackgroundManager({
+        mediaManager,
         onTelemetry: handleTelemetry,
       }),
     [],
@@ -58,36 +62,93 @@ export function BackgroundView({ games, fallbackGameId }: BackgroundViewProps) {
       targetBackgroundUrls[0] ?? null,
       navigationPhase,
       targetBackgroundUrls[1] ?? null,
+      targetGame?.id,
     );
     manager.preload(preloadUrls);
-  }, [manager, navigationPhase, preloadUrls, targetBackgroundUrls]);
+  }, [
+    manager,
+    navigationPhase,
+    preloadUrls,
+    targetBackgroundUrls,
+    targetGame?.id,
+  ]);
 
   useEffect(() => () => manager.dispose(), [manager]);
 
   return (
     <div className="background-view" aria-hidden="true">
-      <div
-        className="background-layer background-layer-current"
-        style={
-          snapshot.currentUrl
-            ? { backgroundImage: `url("${snapshot.currentUrl}")` }
-            : undefined
-        }
-      />
+      <div className="background-layer background-layer-current">
+        <MediaImage
+          gameId={targetGame?.id ?? fallbackGameId ?? "background"}
+          mediaType="hero"
+          src={snapshot.currentUrl ?? undefined}
+          alt=""
+          aria-hidden="true"
+          className="background-image"
+        />
+      </div>
       <div
         className={`background-layer background-layer-incoming${snapshot.incomingVisible ? " is-visible" : ""}`}
-        style={
-          snapshot.incomingUrl
-            ? { backgroundImage: `url("${snapshot.incomingUrl}")` }
-            : undefined
-        }
-      />
+      >
+        <MediaImage
+          gameId={targetGame?.id ?? fallbackGameId ?? "background"}
+          mediaType="hero"
+          src={snapshot.incomingUrl ?? undefined}
+          alt=""
+          aria-hidden="true"
+          className="background-image"
+        />
+      </div>
       <div className="background-vignette" />
     </div>
   );
 }
 
 function handleTelemetry(event: BackgroundTelemetry): void {
+  if (event.type === "request" && event.gameId) {
+    recordMediaTiming("IMG_REQUEST", {
+      gameId: event.gameId,
+      type: "hero",
+      path: event.url,
+    });
+  } else if (event.type === "load" && event.gameId) {
+    recordMediaTiming("IMG_LOAD", {
+      gameId: event.gameId,
+      type: "hero",
+      path: event.url,
+    });
+  } else if (event.type === "decoded" && event.gameId) {
+    recordMediaTiming("IMG_DECODED", {
+      gameId: event.gameId,
+      type: "hero",
+      path: event.url,
+      durationMs: event.decodeTimeMs,
+    });
+  } else if (event.type === "error" && event.gameId) {
+    recordMediaTiming("IMG_ERROR", {
+      gameId: event.gameId,
+      type: "hero",
+      path: event.url,
+    });
+  } else if (event.type === "cache-hit" && event.gameId) {
+    recordMediaTiming("BACKGROUND_CACHE_HIT", {
+      gameId: event.gameId,
+      type: "hero",
+      path: event.url,
+    });
+  } else if (event.type === "cache-miss" && event.gameId) {
+    recordMediaTiming("BACKGROUND_CACHE_MISS", {
+      gameId: event.gameId,
+      type: "hero",
+      path: event.url,
+    });
+  } else if (event.type === "cache-evict" && event.gameId) {
+    recordMediaTiming("BACKGROUND_CACHE_EVICT", {
+      gameId: event.gameId,
+      type: "hero",
+      path: event.url,
+    });
+  }
   const debug = useNavigationStore.getState().debug;
   const patch = {
     backgroundRequestId:

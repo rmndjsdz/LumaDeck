@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { Focusable } from "../../ui/navigation/focus/Focusable";
+import { MediaImage } from "../../ui/performance/MediaImage";
 import { NavigationDialog } from "../../ui/navigation/layouts/NavigationDialog";
 import { useNavigation } from "../../ui/navigation/navigation-context";
 import type { NavigationAction } from "../../ui/navigation/core/navigation-types";
@@ -44,12 +45,14 @@ type ViewerRect = ScreenshotViewerOrigin;
 
 export function ScreenshotViewer({
   gameTitle,
+  gameId,
   screenshots,
   initialIndex,
   origin,
   onClose,
 }: {
   gameTitle: string;
+  gameId: string;
   screenshots: readonly string[];
   initialIndex: number;
   origin: ScreenshotViewerOrigin | null;
@@ -412,17 +415,19 @@ export function ScreenshotViewer({
             style={sharedElementStyle}
             onConfirm={toggleControls}
           >
-            <img
-              ref={imageRef}
+            <MediaImage
+              imageRef={imageRef}
+              gameId={gameId}
+              mediaType="screenshot"
+              key={`${currentScreenshot}-${currentIndex}`}
               src={currentScreenshot}
               alt={`${gameTitle} screenshot ${currentIndex + 1}`}
               className="details-screenshot-viewer-image"
-              key={`${currentScreenshot}-${currentIndex}`}
               draggable={false}
-              onLoad={() => setImageLoadVersion((version) => version + 1)}
               style={{
                 transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom / 100})`,
               }}
+              onReady={() => setImageLoadVersion((version) => version + 1)}
             />
           </Focusable>
           <Focusable
@@ -440,7 +445,9 @@ export function ScreenshotViewer({
             aria-hidden="true"
           >
             {screenshots.map((screenshot, index) => (
-              <img
+              <MediaImage
+                gameId={gameId}
+                mediaType="screenshot"
                 key={`${screenshot}-${index}`}
                 src={screenshot}
                 alt=""

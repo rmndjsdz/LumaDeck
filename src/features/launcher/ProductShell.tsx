@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useGames } from "../catalog/catalog-query";
 import type { Game } from "../catalog/game-types";
 import { getVisibleGames } from "../catalog/game-visibility";
@@ -22,6 +23,7 @@ import { LibraryView } from "./LibraryView";
 import { ViewTransition } from "../../ui/motion/ViewTransition";
 import { recordRender } from "../../ui/performance/performance-counters";
 import { markPerformance } from "../../ui/performance/performance-marks";
+import { recordMediaTiming } from "../../ui/performance/media-timing";
 import { WeatherWidget } from "../../ui/weather/WeatherWidget";
 import { ScreenNavigationAdapter } from "../../ui/navigation/screen/ScreenNavigationAdapter";
 import {
@@ -37,6 +39,13 @@ import { providerSettingsService } from "../settings/provider-settings-service";
 import type { SettingsLevel, SteamProfile } from "../settings/settings-types";
 import { GameSessionScreen } from "../game-session/GameSessionScreen";
 import { NetworkConnectionIndicator } from "../settings/NetworkConnectionIndicator";
+import { useNavigationStore } from "../../stores/navigation-store";
+import {
+  descriptorsForGame,
+  mediaManager,
+} from "../../ui/performance/media-manager";
+import { getHomeCriticalGames } from "./home-media";
+import { fetchGameDetails } from "../catalog/catalog-query";
 
 type PrimaryProductView = Exclude<ProductView, "details">;
 
@@ -51,9 +60,11 @@ export function ProductShell() {
   recordRender("app-shell");
   const { engine, inputManager, registry } = useNavigation();
   const { data: games = [], isPending, isError } = useGames();
+  const queryClient = useQueryClient();
   const visibleGames = useMemo(() => getVisibleGames(games), [games]);
   const activeView = useProductStore((state) => state.activeView);
   const selectedGameId = useProductStore((state) => state.selectedGameId);
+  const activeFocusId = useNavigationStore((state) => state.activeFocusId);
   const returnView = useProductStore((state) => state.returnView);
   const viewTransitionId = useProductStore((state) => state.viewTransitionId);
   const setView = useProductStore((state) => state.setView);
@@ -62,6 +73,82 @@ export function ProductShell() {
   const [steamProfile, setSteamProfile] = useState<SteamProfile | null>(null);
   const settingsBackRef = useRef<(() => boolean) | null>(null);
   const selectedGame = games.find((game) => game.id === selectedGameId);
+  const homeCriticalGames = useMemo(
+    () => getHomeCriticalGames(visibleGames),
+    [visibleGames],
+  );
+  const predictiveGames = useMemo(() => {
+    const focusedIndex = visibleGames.findIndex((game) =>
+      Boolean(activeFocusId && activeFocusId.endsWith(game.id)),
+    );
+    const start = focusedIndex >= 0 ? focusedIndex : 0;
+    const candidates = [
+      selectedGame,
+      ...[-2, -1, 0, 1, 2].map((offset) => visibleGames[start + offset]),
+    ];
+    const unique = new Map<string, Game>();
+    for (const game of candidates) {
+      if (game) unique.set(game.id, game);
+    }
+    return [...unique.values()];
+  }, [activeFocusId, selectedGame, visibleGames]);
+  const [homeMediaReady, setHomeMediaReady] = useState(false);
+  const detailsPreloadRef = useRef(new Map<string, Promise<Game>>());
+  const pendingOpenRef = useRef(0);
+
+  const prepareDetails = useCallback(
+    (game: Game): Promise<Game> => {
+      const existing = detailsPreloadRef.current.get(game.id);
+      if (existing) return existing;
+      const promise = (async () => {
+        recordMediaTiming("DETAILS_PRELOAD_START", {
+          gameId: game.id,
+          type: "screenshot",
+          path: game.screenshots[0],
+          detail: JSON.stringify({ source: "details-preload" }),
+        });
+        const hydratedGame = await queryClient.ensureQueryData<Game>({
+          queryKey: ["game-details", game.id],
+          queryFn: () => fetchGameDetails(game),
+          staleTime: Infinity,
+        });
+        recordMediaTiming("DETAILS_DATA_READY", {
+          gameId: hydratedGame.id,
+          type: "screenshot",
+          path: hydratedGame.screenshots[0],
+          detail: JSON.stringify({
+            screenshots: hydratedGame.screenshots.length,
+            description: Boolean(hydratedGame.description),
+            details: Boolean(hydratedGame.details),
+          }),
+        });
+        mediaManager.touchDetailsGame(hydratedGame);
+        await mediaManager.preloadGame(hydratedGame, {
+          includeScreenshots: true,
+        });
+        recordMediaTiming("DETAILS_MEDIA_READY", {
+          gameId: hydratedGame.id,
+          type: "screenshot",
+          path: hydratedGame.screenshots[0],
+          detail: JSON.stringify({ cache: mediaManager.getStats() }),
+        });
+        recordMediaTiming("DETAILS_CRITICAL_READY", {
+          gameId: hydratedGame.id,
+          type: "screenshot",
+          path: hydratedGame.screenshots[0],
+          detail: JSON.stringify({
+            description: Boolean(hydratedGame.description),
+            screenshots: hydratedGame.screenshots.length,
+            cache: mediaManager.getStats(),
+          }),
+        });
+        return hydratedGame;
+      })();
+      detailsPreloadRef.current.set(game.id, promise);
+      return promise;
+    },
+    [queryClient],
+  );
   const primaryFocusByScreen = useMemo(
     () => new Map<PrimaryProductView, string>(),
     [],
@@ -141,6 +228,88 @@ export function ProductShell() {
     markPerformance("main-content-updated");
   }, [activeView, viewTransitionId]);
 
+  useEffect(() => {
+    if (isPending || isError || homeCriticalGames.length === 0) {
+      setHomeMediaReady(false);
+      return;
+    }
+    mediaManager.setHomeHotset(homeCriticalGames);
+    let cancelled = false;
+    recordMediaTiming("HOME_DETAILS_HOTSET_START", {
+      gameId: "home",
+      type: "hero",
+      detail: JSON.stringify({ games: homeCriticalGames.length }),
+    });
+    void Promise.all(
+      homeCriticalGames.map((game) => prepareDetails(game)),
+    ).then(() => {
+      if (cancelled) return;
+      setHomeMediaReady(true);
+      recordMediaTiming("HOME_MEDIA_READY", {
+        gameId: "home",
+        type: "hero",
+        detail: JSON.stringify({
+          games: homeCriticalGames.length,
+          cache: mediaManager.getStats(),
+        }),
+      });
+      recordMediaTiming("HOME_DETAILS_HOTSET_READY", {
+        gameId: "home",
+        type: "hero",
+        detail: JSON.stringify({
+          games: homeCriticalGames.length,
+          cache: mediaManager.getStats(),
+        }),
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [homeCriticalGames, isError, isPending, prepareDetails]);
+
+  useEffect(() => {
+    if (activeView !== "library" || isPending || isError) return;
+    const focusedGame = visibleGames.find((game) =>
+      Boolean(activeFocusId && activeFocusId.endsWith(game.id)),
+    );
+    if (focusedGame) void prepareDetails(focusedGame);
+  }, [
+    activeFocusId,
+    activeView,
+    isError,
+    isPending,
+    prepareDetails,
+    visibleGames,
+  ]);
+
+  useEffect(() => {
+    if (isPending || isError || predictiveGames.length === 0) return;
+    const includeScreenshots = activeView === "details";
+    if (activeView === "details" && selectedGame) {
+      mediaManager.touchDetailsGame(selectedGame);
+    }
+    const descriptors = predictiveGames.flatMap((game) =>
+      descriptorsForGame(game, {
+        includeScreenshots: includeScreenshots && game.id === selectedGameId,
+      }),
+    );
+    void mediaManager.preload(descriptors).then(() => {
+      if (activeView !== "details" || !selectedGame) return;
+      recordMediaTiming("DETAILS_MEDIA_READY", {
+        gameId: selectedGame.id,
+        type: "screenshot",
+        detail: JSON.stringify({ cache: mediaManager.getStats() }),
+      });
+    });
+  }, [
+    activeView,
+    isError,
+    isPending,
+    predictiveGames,
+    selectedGame,
+    selectedGameId,
+  ]);
+
   useLayoutEffect(() => {
     if (activeView === "library") engine.notifyRouteActive("product-shell");
   }, [activeView, engine]);
@@ -189,18 +358,33 @@ export function ProductShell() {
     [inputManager, primaryScreenNavigator],
   );
   const handleOpen = (game: Game) => {
-    markPerformance("view-requested");
+    const requestId = ++pendingOpenRef.current;
     const openerFocusId = engine.getActiveFocusId();
-    navigationRuntimeTrace.setOpener(game.id, openerFocusId);
-    navigationRuntimeTrace.record("details_open", {
-      details: {
-        openerGameId: game.id,
-        openerFocusId,
-        returnView: activeView,
-      },
-    });
-    engine.prepareScopeOpen("details", openerFocusId ?? undefined);
-    openDetails(game.id, activeView, openerFocusId);
+    const returnViewForOpen = activeView;
+    void prepareDetails(game)
+      .then(() => {
+        if (requestId !== pendingOpenRef.current) return;
+        markPerformance("view-requested");
+        recordMediaTiming("DETAILS_TRANSITION_START", {
+          gameId: game.id,
+          type: "screenshot",
+          path: game.screenshots[0],
+        });
+        navigationRuntimeTrace.setOpener(game.id, openerFocusId);
+        navigationRuntimeTrace.record("details_open", {
+          details: {
+            openerGameId: game.id,
+            openerFocusId,
+            returnView: returnViewForOpen,
+          },
+        });
+        engine.prepareScopeOpen("details", openerFocusId ?? undefined);
+        openDetails(game.id, returnViewForOpen, openerFocusId);
+      })
+      .catch((error: unknown) => {
+        if (requestId !== pendingOpenRef.current) return;
+        console.warn("[details] critical data preparation failed", error);
+      });
   };
   const handleCloseDetails = () => {
     navigationRuntimeTrace.record("details_close", {
@@ -333,25 +517,30 @@ export function ProductShell() {
               backHandlerRef={settingsBackRef}
             />
           )}
-          {activeView !== "settings" && !isPending && !isError && (
-            <ViewTransition view={activeView}>
-              {activeView === "home" && (
-                <HomeView
-                  games={visibleGames}
-                  onOpen={handleOpen}
-                  onViewLibrary={() => navigate("library")}
-                />
-              )}
-              {activeView === "library" && <LibraryView onOpen={handleOpen} />}
-              {activeView === "details" && (
-                <DetailsView
-                  game={selectedGame}
-                  games={games}
-                  onClose={handleCloseDetails}
-                />
-              )}
-            </ViewTransition>
-          )}
+          {activeView !== "settings" &&
+            !isPending &&
+            !isError &&
+            (activeView !== "home" || homeMediaReady) && (
+              <ViewTransition view={activeView}>
+                {activeView === "home" && (
+                  <HomeView
+                    games={visibleGames}
+                    onOpen={handleOpen}
+                    onViewLibrary={() => navigate("library")}
+                  />
+                )}
+                {activeView === "library" && (
+                  <LibraryView onOpen={handleOpen} />
+                )}
+                {activeView === "details" && (
+                  <DetailsView
+                    game={selectedGame}
+                    games={games}
+                    onClose={handleCloseDetails}
+                  />
+                )}
+              </ViewTransition>
+            )}
         </main>
         <footer className="app-footer">
           <div className="footer-controls">

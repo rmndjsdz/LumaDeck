@@ -16,6 +16,7 @@ import type {
   SteamGameMetrics,
 } from "../catalog/game-types";
 import { getVisibleGames } from "../catalog/game-visibility";
+import { fetchGameDetails } from "../catalog/catalog-query";
 import { getGameBackgroundUrl } from "../catalog/game-media";
 import { toPlainText } from "../catalog/text-utils";
 import { useProductStore } from "../../stores/product-store";
@@ -69,11 +70,17 @@ import {
 } from "./ScreenshotViewer";
 import { GameCapabilitiesPanel } from "../game-capabilities/GameCapabilitiesPanel";
 import { hardwareCapabilitiesService } from "../graphics-profile/hardware-capabilities-service";
+import { MediaImage } from "../../ui/performance/MediaImage";
+import { recordMediaTiming } from "../../ui/performance/media-timing";
+import {
+  getDetailsReadiness,
+  shouldShowEmptyScreenshots,
+} from "./details-readiness";
 
 const CONTEXT_MENU_SCOPE_ID = "details-context-menu";
 
 export function DetailsView({
-  game,
+  game: initialGame,
   games,
   onClose,
 }: {
@@ -83,6 +90,54 @@ export function DetailsView({
 }) {
   const closeDetails = useProductStore((state) => state.closeDetails);
   const queryClient = useQueryClient();
+  const mediaQuery = useQuery({
+    queryKey: ["game-details", initialGame?.id],
+    queryFn: async (): Promise<Game> => {
+      if (!initialGame) throw new Error("Game not found");
+      const queryStartedAt = performance.now();
+      recordMediaTiming("DETAILS_QUERY_FETCH_START", {
+        gameId: initialGame.id,
+        type: "screenshot",
+        path: initialGame.screenshots[0],
+        detail: JSON.stringify({ source: "get_library_game" }),
+      });
+      try {
+        const resolvedGame = await fetchGameDetails(initialGame);
+        recordMediaTiming("DETAILS_QUERY_FETCH_END", {
+          gameId: resolvedGame.id,
+          type: "screenshot",
+          path: resolvedGame.screenshots[0],
+          durationMs: performance.now() - queryStartedAt,
+          detail: JSON.stringify({
+            source: "get_library_game",
+            screenshots: resolvedGame.screenshots.length,
+          }),
+        });
+        return resolvedGame;
+      } catch (error) {
+        recordMediaTiming("DETAILS_QUERY_FETCH_END", {
+          gameId: initialGame.id,
+          type: "screenshot",
+          path: initialGame.screenshots[0],
+          durationMs: performance.now() - queryStartedAt,
+          detail: JSON.stringify({
+            source: "get_library_game",
+            error: String(error),
+          }),
+        });
+        throw error;
+      }
+    },
+    enabled: Boolean(initialGame?.id),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  // Details is not allowed to render the catalogue snapshot while its
+  // persisted details row is still hydrating. ProductShell normally opens
+  // this view only after the same query and media are ready, but keeping the
+  // guard here makes the invariant local to the view as well.
+  const game = mediaQuery.data;
   const { engine } = useNavigation();
   const [message, setMessage] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -140,6 +195,102 @@ export function DetailsView({
   const [liveMetrics, setLiveMetrics] = useState<SteamGameMetrics | null>(null);
   const [isRefreshingMetrics, setIsRefreshingMetrics] = useState(false);
   const handleClose = onClose ?? closeDetails;
+  const openingGameRef = useRef(initialGame);
+  const detailsLifecycleState = useRef({ version: 0 }).current;
+  const openingQueryStateRef = useRef({
+    dataPresent: Boolean(mediaQuery.data),
+    status: mediaQuery.status,
+    fetchStatus: mediaQuery.fetchStatus,
+    isStale: mediaQuery.isStale,
+  });
+
+  useEffect(() => {
+    const openingGame = openingGameRef.current;
+    if (!openingGame?.id) return;
+    const lifecycleVersion = ++detailsLifecycleState.version;
+    const openingQueryState = openingQueryStateRef.current;
+    const queryKey = ["game-details", openingGame.id] as const;
+    const cachedQuery = queryClient.getQueryCache().find({ queryKey });
+    recordMediaTiming("DETAILS_OPEN", {
+      gameId: openingGame.id,
+      type: "screenshot",
+      path: openingGame.screenshots[0],
+      detail: JSON.stringify({
+        queryKey,
+        source: openingQueryState.dataPresent ? "query-cache" : "initial-game",
+        queryExists: Boolean(cachedQuery),
+        queryStatus: cachedQuery?.state.status ?? openingQueryState.status,
+        fetchStatus:
+          cachedQuery?.state.fetchStatus ?? openingQueryState.fetchStatus,
+        dataPresent: Boolean(cachedQuery?.state.data),
+        dataUpdatedAt: cachedQuery?.state.dataUpdatedAt ?? 0,
+        isInvalidated: cachedQuery?.state.isInvalidated ?? false,
+        isStale: cachedQuery?.isStale() ?? openingQueryState.isStale,
+        staleTime: "Infinity",
+        gcTime: cachedQuery?.gcTime ?? null,
+        screenshots: openingGame.screenshots.length,
+      }),
+    });
+    return () => {
+      queueMicrotask(() => {
+        if (detailsLifecycleState.version !== lifecycleVersion) return;
+        const leavingQuery = queryClient.getQueryCache().find({ queryKey });
+        recordMediaTiming("DETAILS_LEAVE", {
+          gameId: openingGame.id,
+          type: "screenshot",
+          path: openingGame.screenshots[0],
+          detail: JSON.stringify({
+            queryExists: Boolean(leavingQuery),
+            dataPresent: Boolean(leavingQuery?.state.data),
+            dataUpdatedAt: leavingQuery?.state.dataUpdatedAt ?? 0,
+            isInvalidated: leavingQuery?.state.isInvalidated ?? false,
+            isStale: leavingQuery?.isStale() ?? true,
+            gcTime: leavingQuery?.gcTime ?? null,
+            screenshots: openingGame.screenshots.length,
+          }),
+        });
+      });
+    };
+  }, [queryClient, detailsLifecycleState]);
+
+  const renderedScreenshotUrl = game?.screenshots[0];
+  const renderedScreenshotCount = game?.screenshots.length ?? 0;
+  const queryDataPresent = Boolean(mediaQuery.data);
+
+  useEffect(() => {
+    if (!initialGame?.id) return;
+    const queryKey = ["game-details", initialGame.id] as const;
+    const cachedQuery = queryClient.getQueryCache().find({ queryKey });
+    recordMediaTiming("DETAILS_QUERY_STATE", {
+      gameId: initialGame.id,
+      type: "screenshot",
+      path: renderedScreenshotUrl,
+      detail: JSON.stringify({
+        queryKey,
+        queryStatus: cachedQuery?.state.status ?? mediaQuery.status,
+        fetchStatus: cachedQuery?.state.fetchStatus ?? mediaQuery.fetchStatus,
+        dataPresent: Boolean(cachedQuery?.state.data),
+        dataUpdatedAt: cachedQuery?.state.dataUpdatedAt ?? 0,
+        isInvalidated: cachedQuery?.state.isInvalidated ?? false,
+        isStale: cachedQuery?.isStale() ?? mediaQuery.isStale,
+        staleTime: "Infinity",
+        gcTime: cachedQuery?.gcTime ?? null,
+        screenshots: renderedScreenshotCount,
+        dataSource: queryDataPresent ? "query-cache" : "initial-game",
+      }),
+    });
+  }, [
+    initialGame?.id,
+    queryDataPresent,
+    renderedScreenshotCount,
+    renderedScreenshotUrl,
+    mediaQuery.data,
+    mediaQuery.dataUpdatedAt,
+    mediaQuery.fetchStatus,
+    mediaQuery.isStale,
+    mediaQuery.status,
+    queryClient,
+  ]);
 
   const applyLiveMetrics = useCallback(
     (metrics: SteamGameMetrics) => {
@@ -859,6 +1010,9 @@ export function DetailsView({
         : [],
     [game, steamDetails?.screenshots],
   );
+
+  if (!initialGame) return <p className="empty-state">Game not found.</p>;
+  if (getDetailsReadiness(game, mediaQuery.status) === "waiting") return null;
 
   if (!game) return <p className="empty-state">Game not found.</p>;
 
@@ -1719,22 +1873,28 @@ export function DetailsView({
                           ariaLabel={`${game.title} screenshot ${index + 1}`}
                           onConfirm={() => openScreenshotViewer(index)}
                         >
-                          <img
+                          <MediaImage
+                            gameId={game.id}
+                            mediaType="screenshot"
+                            reactKey={`${game.id}-screenshot-${index}`}
                             src={screenshot}
                             alt=""
                             className="details-screenshot"
-                            loading={index === 0 ? "eager" : "lazy"}
+                            loading="eager"
                             decoding="async"
                             draggable={false}
                           />
                         </Focusable>
                       ))}
                     </NavigationGrid>
-                  ) : (
+                  ) : shouldShowEmptyScreenshots(
+                      game,
+                      screenshotUrls.length,
+                    ) ? (
                     <p className="details-empty-media">
                       No screenshots available.
                     </p>
-                  )}
+                  ) : null}
                 </div>
               </section>
             )}
@@ -1743,6 +1903,7 @@ export function DetailsView({
         {screenshotViewerOpen && (
           <ScreenshotViewer
             gameTitle={game.title}
+            gameId={game.id}
             screenshots={screenshotUrls}
             initialIndex={screenshotViewerInitialIndex}
             origin={screenshotViewerOrigin}

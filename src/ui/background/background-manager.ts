@@ -1,6 +1,7 @@
 import { motionTokens } from "../motion/motion-tokens";
 import { markPerformance } from "../performance/performance-marks";
 import type { NavigationPhase } from "../navigation/core/navigation-types";
+import { MediaManager } from "../performance/media-manager";
 
 export interface BackgroundSnapshot {
   currentUrl: string | null;
@@ -9,21 +10,30 @@ export interface BackgroundSnapshot {
 }
 
 export type BackgroundTelemetry =
-  | { type: "request"; requestId: number; url: string }
-  | { type: "decoded"; requestId: number; url: string; decodeTimeMs: number }
+  | { type: "request"; requestId: number; url: string; gameId?: string }
+  | { type: "load"; requestId: number; url: string; gameId?: string }
+  | {
+      type: "decoded";
+      requestId: number;
+      url: string;
+      decodeTimeMs: number;
+      gameId?: string;
+    }
   | { type: "crossfade-started"; requestId: number }
   | { type: "crossfade-finished"; requestId: number }
-  | { type: "cache-hit"; url: string }
-  | { type: "cache-miss"; url: string }
+  | { type: "cache-hit"; url: string; gameId?: string }
+  | { type: "cache-miss"; url: string; gameId?: string }
+  | { type: "cache-evict"; url: string; gameId?: string }
   | { type: "pending"; pending: boolean }
   | { type: "cancelled"; requestId: number }
-  | { type: "error"; requestId: number; url: string };
+  | { type: "error"; requestId: number; url: string; gameId?: string };
 
 export interface BackgroundManagerOptions {
   durationMs?: number;
   imageFactory?: () => HTMLImageElement;
   reducedMotion?: () => boolean;
   maxCacheEntries?: number;
+  mediaManager?: MediaManager;
   onTelemetry?: (event: BackgroundTelemetry) => void;
 }
 
@@ -31,16 +41,18 @@ type Listener = () => void;
 
 interface CacheEntry {
   url: string;
-  image: HTMLImageElement;
+  gameId?: string;
   promise: Promise<HTMLImageElement>;
   state: "pending" | "ready";
   lastUsed: number;
+  unsubscribe: (() => void) | null;
 }
 
 interface ActiveRequest {
   requestId: number;
   url: string;
   fallbackUrl: string | null;
+  gameId?: string;
 }
 
 const isDeferredPhase = (phase: NavigationPhase): boolean =>
@@ -48,9 +60,9 @@ const isDeferredPhase = (phase: NavigationPhase): boolean =>
 
 export class BackgroundManager {
   private readonly durationMs: number;
-  private readonly imageFactory: () => HTMLImageElement;
   private readonly reducedMotion: () => boolean;
   private readonly maxCacheEntries: number;
+  private readonly mediaManager: MediaManager;
   private readonly onTelemetry?: (event: BackgroundTelemetry) => void;
   private readonly listeners = new Set<Listener>();
   private readonly cache = new Map<string, CacheEntry>();
@@ -69,13 +81,18 @@ export class BackgroundManager {
   public constructor(options: BackgroundManagerOptions = {}) {
     this.durationMs =
       options.durationMs ?? motionTokens.duration.backgroundCrossfade;
-    this.imageFactory = options.imageFactory ?? (() => new Image());
     this.reducedMotion =
       options.reducedMotion ??
       (() =>
         typeof window !== "undefined" &&
         window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     this.maxCacheEntries = options.maxCacheEntries ?? 6;
+    this.mediaManager =
+      options.mediaManager ??
+      new MediaManager({
+        imageFactory: options.imageFactory,
+        maxEntries: this.maxCacheEntries,
+      });
     this.onTelemetry = options.onTelemetry;
   }
 
@@ -95,6 +112,7 @@ export class BackgroundManager {
     url: string | null,
     phase: NavigationPhase = this.phase,
     fallbackUrl: string | null = null,
+    gameId?: string,
   ): void {
     if (!url) return;
     // React StrictMode replays effects during development. The external
@@ -122,7 +140,7 @@ export class BackgroundManager {
     }
     if (url === this.snapshot.currentUrl) return;
     if (this.activeRequest?.url === url) return;
-    this.startVisualRequest(url, fallbackUrl);
+    this.startVisualRequest(url, fallbackUrl, gameId);
   }
 
   public preload(urls: readonly (string | null)[]): void {
@@ -140,6 +158,7 @@ export class BackgroundManager {
     this.disposed = true;
     this.clearTransition();
     this.listeners.clear();
+    for (const entry of this.cache.values()) entry.unsubscribe?.();
     this.cache.clear();
     this.activeRequest = null;
   }
@@ -147,91 +166,95 @@ export class BackgroundManager {
   private startVisualRequest(
     url: string,
     fallbackUrl: string | null = null,
+    gameId?: string,
   ): void {
     this.requestId += 1;
     const requestId = this.requestId;
     this.clearTransition();
-    this.activeRequest = { requestId, url, fallbackUrl };
+    this.activeRequest = { requestId, url, fallbackUrl, gameId };
     this.snapshot = {
       ...this.snapshot,
       incomingUrl: url,
       incomingVisible: false,
     };
-    this.emit({ type: "request", requestId, url });
+    this.emit({ type: "request", requestId, url, gameId });
     markPerformance("background-requested");
     this.notify();
 
-    void this.ensureCached(url).catch(() => undefined);
+    void this.ensureCached(url, gameId).catch(() => undefined);
   }
 
-  private ensureCached(url: string): Promise<HTMLImageElement> {
+  private ensureCached(
+    url: string,
+    gameId?: string,
+  ): Promise<HTMLImageElement> {
     const existing = this.cache.get(url);
     if (existing) {
       existing.lastUsed = ++this.cacheClock;
-      this.emit({ type: "cache-hit", url });
+      this.emit({ type: "cache-hit", url, gameId: existing.gameId });
       if (existing.state === "ready") this.handleCacheReady(url);
       return existing.promise;
     }
 
-    const image = this.imageFactory();
     const startedAt = performance.now();
+    const mediaPromise = this.mediaManager.ensure({
+      gameId: gameId ?? "background",
+      mediaType: "hero",
+      url,
+    });
     const entry: CacheEntry = {
       url,
-      image,
+      gameId,
       state: "pending",
       lastUsed: ++this.cacheClock,
-      promise: Promise.resolve(image),
+      promise: mediaPromise,
+      unsubscribe: null,
     };
-    entry.promise = new Promise<HTMLImageElement>((resolve, reject) => {
-      let settled = false;
-      image.onload = () => {
-        const finish = (): void => {
-          if (settled) return;
-          settled = true;
-          entry.state = "ready";
-          entry.lastUsed = ++this.cacheClock;
-          const decodeTimeMs = performance.now() - startedAt;
-          this.emit({
-            type: "decoded",
-            requestId: this.requestId,
-            url,
-            decodeTimeMs,
-          });
-          markPerformance("background-decoded");
-          resolve(image);
-          this.trimCache();
-          if (
-            ![...this.cache.values()].some((item) => item.state === "pending")
-          ) {
-            this.emit({ type: "pending", pending: false });
-          }
-          this.handleCacheReady(url);
-        };
-        const decode =
-          typeof image.decode === "function" ? image.decode() : undefined;
-        if (decode) {
-          void decode.then(() => finish()).catch(reject);
-        } else {
-          finish();
+    entry.promise = mediaPromise
+      .then((image) => {
+        this.emit({
+          type: "load",
+          requestId: this.requestId,
+          url,
+          gameId: entry.gameId,
+        });
+        entry.state = "ready";
+        entry.lastUsed = ++this.cacheClock;
+        const decodeTimeMs = performance.now() - startedAt;
+        this.emit({
+          type: "decoded",
+          requestId: this.requestId,
+          url,
+          decodeTimeMs,
+          gameId: entry.gameId,
+        });
+        markPerformance("background-decoded");
+        this.trimCache();
+        if (![...this.cache.values()].some((item) => item.state === "pending")) {
+          this.emit({ type: "pending", pending: false });
         }
-      };
-      image.onerror = () => {
-        if (settled) return;
-        settled = true;
+        this.handleCacheReady(url);
+        return image;
+      })
+      .catch((error: unknown) => {
         this.cache.delete(url);
+        entry.unsubscribe?.();
+        entry.unsubscribe = null;
         this.handleCacheError(url);
-        reject(new Error(`Background failed to load: ${url}`));
-      };
-      image.src = url;
-      if (
-        image.complete &&
-        (image.naturalWidth > 0 || url.startsWith("data:"))
-      ) {
-        image.onload(new Event("load"));
+        throw error;
+      });
+    this.cache.set(url, entry);
+    entry.unsubscribe = this.mediaManager.subscribe(url, () => {
+      const state = this.mediaManager.getSnapshot(url).state;
+      if (state === "ready") {
+        entry.state = "ready";
+        entry.lastUsed = ++this.cacheClock;
+        this.handleCacheReady(url);
+      } else if (state === "error") {
+        this.handleCacheError(url);
       }
     });
-    this.cache.set(url, entry);
-    this.emit({ type: "cache-miss", url });
+    this.emit({ type: "cache-miss", url, gameId });
     this.emit({ type: "pending", pending: true });
     this.trimCache();
     return entry.promise;
@@ -252,6 +275,7 @@ export class BackgroundManager {
     const { requestId } = activeRequest;
     if (!this.isCurrentRequest(requestId, url)) return;
     if (this.phase !== "settling" && this.phase !== "idle") return;
+    if (this.snapshot.incomingVisible) return;
     this.snapshot = { ...this.snapshot, incomingVisible: true };
     this.emit({ type: "crossfade-started", requestId });
     markPerformance("crossfade-started");
@@ -273,7 +297,7 @@ export class BackgroundManager {
     const fallbackUrl = activeRequest.fallbackUrl;
     this.activeRequest = null;
     if (fallbackUrl && fallbackUrl !== url) {
-      this.startVisualRequest(fallbackUrl);
+      this.startVisualRequest(fallbackUrl, null, activeRequest.gameId);
       return;
     }
     this.snapshot = {
@@ -281,7 +305,12 @@ export class BackgroundManager {
       incomingUrl: null,
       incomingVisible: false,
     };
-    this.emit({ type: "error", requestId: activeRequest.requestId, url });
+    this.emit({
+      type: "error",
+      requestId: activeRequest.requestId,
+      url,
+      gameId: activeRequest.gameId,
+    });
     this.notify();
   }
 
@@ -319,6 +348,13 @@ export class BackgroundManager {
       const oldest = candidates.sort((a, b) => a.lastUsed - b.lastUsed)[0];
       if (!oldest) return;
       this.cache.delete(oldest.url);
+      oldest.unsubscribe?.();
+      oldest.unsubscribe = null;
+      this.emit({
+        type: "cache-evict",
+        url: oldest.url,
+        gameId: oldest.gameId,
+      });
     }
   }
 
