@@ -4,6 +4,8 @@ La suite usa Vitest con `jsdom`.
 
 ## Unitarias
 
+- contrato de Details Atomic View: orden de tabs y separación de contenido
+  editorial/técnico;
 - mapa de teclado y exclusión de campos editables;
 - repetición, aceleración y cancelación;
 - deadzone y transición direccional de gamepad;
@@ -46,6 +48,11 @@ La validación manual aceptada por el Product Owner confirmó el foco inicial,
 la navegación entre filas, la restauración exacta, Up/Down tras Back, las
 columnas, la salida a navegación principal, mouse, gamepad y la ausencia de
 regresiones visibles en Library, Details, UI y estilos.
+
+Details Atomic View requiere además comprobar visualmente que `Resumen` y
+`Rendimiento` caben completos, sin scroll vertical normal, en 1920×1080,
+2560×1440 y 3840×2160. jsdom no ofrece layout fiable para comparar
+`scrollHeight` y `clientHeight`, así que la suite no simula esos valores.
 
 ## Comandos
 

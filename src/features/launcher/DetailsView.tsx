@@ -77,6 +77,10 @@ import {
   getDetailsReadiness,
   shouldShowEmptyScreenshots,
 } from "./details-readiness";
+import {
+  DETAILS_TAB_ORDER,
+  type DetailsSection,
+} from "./details-view-contract";
 
 const CONTEXT_MENU_SCOPE_ID = "details-context-menu";
 
@@ -174,15 +178,7 @@ export function DetailsView({
   const [isUpdatingFavorite, setIsUpdatingFavorite] = useState(false);
   const [isUpdatingHidden, setIsUpdatingHidden] = useState(false);
   const [artworkModifierOpen, setArtworkModifierOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState<
-    | "summary"
-    | "activity"
-    | "achievements"
-    | "news"
-    | "dlc"
-    | "related"
-    | "reviews"
-  >("summary");
+  const [activeSection, setActiveSection] = useState<DetailsSection>("summary");
   const [screenshotViewerOpen, setScreenshotViewerOpen] = useState(false);
   const [screenshotViewerInitialIndex, setScreenshotViewerInitialIndex] =
     useState(0);
@@ -929,22 +925,25 @@ export function DetailsView({
 
   const selectDetailsSection = (focusId: string) => {
     const nextSection =
-      focusId === "details-tab-activity"
-        ? "activity"
-        : focusId === "details-tab-achievements"
-          ? "achievements"
-          : focusId === "details-tab-news"
-            ? "news"
-            : focusId === "details-tab-dlc"
-              ? "dlc"
-              : focusId === "details-tab-related"
-                ? "related"
-                : focusId === "details-tab-reviews"
-                  ? "reviews"
-                  : "summary";
+      focusId === "details-tab-performance"
+        ? "performance"
+        : focusId === "details-tab-activity"
+          ? "activity"
+          : focusId === "details-tab-achievements"
+            ? "achievements"
+            : focusId === "details-tab-news"
+              ? "news"
+              : focusId === "details-tab-dlc"
+                ? "dlc"
+                : focusId === "details-tab-related"
+                  ? "related"
+                  : focusId === "details-tab-reviews"
+                    ? "reviews"
+                    : "summary";
     if (nextSection === activeSection) return;
     setDetailsContentDirection(
-      activeSection === "summary" && nextSection === "activity"
+      DETAILS_TAB_ORDER.indexOf(nextSection) >
+        DETAILS_TAB_ORDER.indexOf(activeSection)
         ? "forward"
         : "backward",
     );
@@ -954,29 +953,10 @@ export function DetailsView({
   const handleDetailsAction = (action: NavigationAction): boolean => {
     if (action !== "page-next" && action !== "page-previous") return false;
 
-    const navigableTabs = [
-      "details-tab-summary",
-      "details-tab-activity",
-      "details-tab-achievements",
-      "details-tab-news",
-      "details-tab-dlc",
-      "details-tab-related",
-      "details-tab-reviews",
-    ] as const;
-    const currentIndex =
-      activeSection === "summary"
-        ? 0
-        : activeSection === "activity"
-          ? 1
-          : activeSection === "achievements"
-            ? 2
-            : activeSection === "news"
-              ? 3
-              : activeSection === "dlc"
-                ? 4
-                : activeSection === "related"
-                  ? 5
-                  : 6;
+    const navigableTabs = DETAILS_TAB_ORDER.map(
+      (section) => `details-tab-${section}`,
+    );
+    const currentIndex = DETAILS_TAB_ORDER.indexOf(activeSection);
     const offset = action === "page-next" ? 1 : -1;
     const nextTab = navigableTabs[currentIndex + offset];
     if (!nextTab) return true;
@@ -1705,7 +1685,9 @@ export function DetailsView({
             entryFocusId:
               activeSection === "summary" && screenshotUrls.length > 0
                 ? "details-screenshot-0"
-                : undefined,
+                : activeSection === "performance"
+                  ? "details-capability-native_hdr"
+                  : undefined,
             entryFocusPolicy: "remembered",
           }}
           ariaLabel="Game sections"
@@ -1716,6 +1698,13 @@ export function DetailsView({
             className="details-tab"
           >
             Resumen
+          </NavigationTab>
+          <NavigationTab
+            focusId="details-tab-performance"
+            scopeId="details"
+            className="details-tab"
+          >
+            Rendimiento
           </NavigationTab>
           <NavigationTab
             focusId="details-tab-activity"
@@ -1775,6 +1764,13 @@ export function DetailsView({
           >
             {activeSection === "activity" ? (
               <ActivityView game={game} />
+            ) : activeSection === "performance" ? (
+              <GameCapabilitiesPanel
+                gameId={game.id}
+                steamAppId={steamDetails?.appId ?? null}
+                screenshotUrls={screenshotUrls}
+                backgroundUrl={backgroundUrl}
+              />
             ) : activeSection === "achievements" ? (
               <AchievementsView gameId={game.id} />
             ) : activeSection === "news" ? (
@@ -1848,10 +1844,6 @@ export function DetailsView({
                       <li key={feature}>{feature}</li>
                     ))}
                   </ul>
-                  <GameCapabilitiesPanel
-                    gameId={game.id}
-                    steamAppId={steamDetails?.appId ?? null}
-                  />
                 </div>
                 <div className="details-summary-screenshots">
                   <p className="eyebrow">Capturas de pantalla</p>

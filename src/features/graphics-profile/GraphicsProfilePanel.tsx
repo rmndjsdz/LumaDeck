@@ -50,21 +50,40 @@ export function GraphicsProfilePanel({
 
   return (
     <section
-      className="graphics-profile-panel"
+      className="graphics-profile-section"
       aria-labelledby="graphics-profile-heading"
     >
-      <p className="eyebrow">Recomendado para este equipo</p>
-      <h3 id="graphics-profile-heading">Perfil gráfico sugerido</h3>
-      {query.isPending && (
-        <p className="graphics-profile-status">Calculando recomendación…</p>
-      )}
-      {query.error && (
-        <p className="graphics-profile-status">
-          No hay suficiente información de hardware para recomendar un perfil.
-        </p>
-      )}
-      {query.data && <RecommendationContent profile={query.data} />}
-      {hardwareQuery.data && <HardwareSummary hardware={hardwareQuery.data} />}
+      <div className="graphics-profile-section-heading">
+        <div>
+          <p className="eyebrow">Perfil gráfico sugerido</p>
+          <h3 id="graphics-profile-heading" className="visually-hidden">
+            Perfil gráfico sugerido
+          </h3>
+        </div>
+        <span className="graphics-profile-context">
+          Basado en tu hardware y la evidencia disponible
+          <span aria-hidden="true">ⓘ</span>
+        </span>
+      </div>
+      <div className="graphics-profile-panel">
+        {query.isPending && (
+          <p className="graphics-profile-status">Calculando recomendación…</p>
+        )}
+        {query.error && (
+          <p className="graphics-profile-status">
+            No hay suficiente información de hardware para recomendar un perfil.
+          </p>
+        )}
+        {query.data && (
+          <RecommendationContent
+            profile={query.data}
+            hardware={hardwareQuery.data}
+          />
+        )}
+        {!query.data && hardwareQuery.data && (
+          <HardwareSummary hardware={hardwareQuery.data} />
+        )}
+      </div>
     </section>
   );
 }
@@ -85,12 +104,25 @@ function HardwareSummary({ hardware }: { hardware: HardwareCapabilities }) {
 
 function RecommendationContent({
   profile,
+  hardware,
 }: {
   profile: RecommendedGraphicsProfile;
+  hardware?: HardwareCapabilities;
 }) {
   return (
-    <>
+    <div className="graphics-profile-content">
       <dl className="graphics-profile-list">
+        <RecommendationItem
+          label="Resolución objetivo"
+          value={resolutionLabel(profile)}
+          secondary={resolutionDescriptor(profile) ?? undefined}
+          primary
+        />
+        <RecommendationItem
+          label="Frecuencia"
+          value={refreshRateLabel(profile)}
+          primary
+        />
         <RecommendationItem
           label="HDR"
           value={hdrLabel(profile.display.hdrMode)}
@@ -101,43 +133,64 @@ function RecommendationContent({
             profile.upscaling.technology,
             profile.upscaling.mode,
           )}
+          secondary={upscalingModeLabel(profile.upscaling.mode) ?? undefined}
         />
         <RecommendationItem
           label="Frame Generation"
           value={frameGenerationLabel(profile)}
+          secondary={frameGenerationStateLabel(profile.frameGeneration.mode)}
         />
-        <RecommendationItem label="Pantalla" value={displayLabel(profile)} />
       </dl>
-      {profile.warnings.length > 0 && (
-        <ul className="graphics-profile-warnings">
-          {profile.warnings.map((warning) => (
-            <li key={warning}>{warning}</li>
-          ))}
-        </ul>
-      )}
-      <details className="graphics-profile-reasons">
-        <summary>¿Por qué? · Confianza {profile.confidence}</summary>
-        <ul>
-          {profile.reasons.map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
-      </details>
-    </>
+      <div className="graphics-profile-meta-row">
+        <p className="graphics-profile-display-note">
+          Puedes ajustar la pantalla desde Configuración &gt; Pantalla
+        </p>
+        <div className="graphics-profile-meta-details">
+          {profile.warnings.length > 0 && (
+            <details className="graphics-profile-warnings">
+              <summary>Advertencias ({profile.warnings.length})</summary>
+              <ul>
+                {profile.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <details className="graphics-profile-reasons">
+            <summary>
+              ¿Por qué? · Confianza {confidenceLabel(profile.confidence)}
+            </summary>
+            <ul>
+              {profile.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          </details>
+          {hardware && <HardwareSummary hardware={hardware} />}
+        </div>
+      </div>
+    </div>
   );
 }
 
 function RecommendationItem({
   label,
   value,
+  secondary,
+  primary = false,
 }: {
   label: string;
   value: string;
+  secondary?: string;
+  primary?: boolean;
 }) {
   return (
-    <div>
+    <div className={primary ? "is-primary" : undefined}>
       <dt>{label}</dt>
       <dd>{value}</dd>
+      {secondary && (
+        <span className="graphics-profile-secondary">{secondary}</span>
+      )}
     </div>
   );
 }
@@ -174,13 +227,52 @@ function frameGenerationLabel(profile: RecommendedGraphicsProfile): string {
   return "Desconocido";
 }
 
-function displayLabel(profile: RecommendedGraphicsProfile): string {
+function resolutionLabel(profile: RecommendedGraphicsProfile): string {
   const resolution = profile.display.resolution;
-  const size = resolution
+  return resolution
     ? `${resolution.width} × ${resolution.height}`
-    : "Auto";
-  const refresh = profile.display.refreshRate
-    ? ` @ ${profile.display.refreshRate} Hz`
-    : "";
-  return `${size}${refresh}`;
+    : "Desconocido";
+}
+
+function refreshRateLabel(profile: RecommendedGraphicsProfile): string {
+  return profile.display.refreshRate
+    ? `${profile.display.refreshRate} Hz`
+    : "Desconocido";
+}
+
+function resolutionDescriptor(
+  profile: RecommendedGraphicsProfile,
+): string | null {
+  const resolution = profile.display.resolution;
+  if (!resolution) return null;
+  if (resolution.width === 3840 && resolution.height === 2160) return "4K UHD";
+  if (resolution.width === 2560 && resolution.height === 1440) return "1440p";
+  if (resolution.width === 1920 && resolution.height === 1080) return "1080p";
+  return `${resolution.width} × ${resolution.height}`;
+}
+
+function upscalingModeLabel(
+  mode: RecommendedGraphicsProfile["upscaling"]["mode"],
+): string | null {
+  if (mode === "RECOMMENDED") return "Equilibrado";
+  if (mode === "AUTO") return "Automático";
+  if (mode === "NONE") return "No disponible";
+  return null;
+}
+
+function frameGenerationStateLabel(
+  mode: RecommendedGraphicsProfile["frameGeneration"]["mode"],
+): string {
+  if (mode === "NATIVE") return "Activado";
+  if (mode === "OFF") return "No recomendado";
+  if (mode === "ALTERNATIVE_AVAILABLE") return "Alternativa disponible";
+  return "Desconocido";
+}
+
+function confidenceLabel(
+  confidence: RecommendedGraphicsProfile["confidence"],
+): string {
+  if (confidence === "HIGH") return "Alta";
+  if (confidence === "MEDIUM") return "Media";
+  return "Baja";
 }

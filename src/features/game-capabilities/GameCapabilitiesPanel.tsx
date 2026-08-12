@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import { NavigationDialog } from "../../ui/navigation/layouts/NavigationDialog";
 import { useNavigation } from "../../ui/navigation/navigation-context";
+import { MediaImage } from "../../ui/performance/MediaImage";
 import {
   capabilitySourceLabel,
   capabilityValueLabel,
@@ -27,7 +28,7 @@ const capabilityRows: readonly {
   { kind: "NATIVE_HDR", label: "HDR nativo", key: "nativeHdr" },
   {
     kind: "HIGH_FIDELITY_UPSCALING",
-    label: "High-fidelity upscaling",
+    label: "Upscaling",
     key: "highFidelityUpscaling",
   },
   {
@@ -51,10 +52,14 @@ export function GameCapabilitiesPanel({
   gameId,
   steamAppId,
   gogProductId = null,
+  screenshotUrls = [],
+  backgroundUrl = null,
 }: {
   gameId: string;
   steamAppId: number | null;
   gogProductId?: string | null;
+  screenshotUrls?: readonly string[];
+  backgroundUrl?: string | null;
 }) {
   const queryClient = useQueryClient();
   const { engine } = useNavigation();
@@ -125,6 +130,13 @@ export function GameCapabilitiesPanel({
   };
 
   const capabilities = query.data;
+  const sourceLabel = capabilities
+    ? commonSourceLabel([
+        capabilities.nativeHdr,
+        capabilities.highFidelityUpscaling,
+        capabilities.frameGeneration,
+      ])
+    : null;
 
   return (
     <section
@@ -133,8 +145,14 @@ export function GameCapabilitiesPanel({
     >
       <div className="game-capabilities-header">
         <div>
-          <p className="eyebrow">Capacidades</p>
-          <h3 id="game-capabilities-heading">Conocimiento técnico</h3>
+          <h3 id="game-capabilities-heading" className="visually-hidden">
+            Capacidades del juego
+          </h3>
+          {sourceLabel && (
+            <span className="game-capabilities-source">
+              Fuente: {sourceLabel}
+            </span>
+          )}
         </div>
         <Focusable
           focusId="details-capabilities-refresh"
@@ -158,12 +176,16 @@ export function GameCapabilitiesPanel({
       {capabilities && (
         <>
           <div className="game-capabilities-list">
-            {capabilityRows.map(({ kind, key, label }) => (
+            {capabilityRows.map(({ kind, key, label }, index) => (
               <CapabilityRow
                 key={kind}
                 capability={capabilities[key]}
                 focusId={capabilityFocusId(kind)}
+                kind={kind}
                 label={label}
+                gameId={gameId}
+                backgroundUrl={screenshotUrls[index] ?? backgroundUrl}
+                mediaType={screenshotUrls[index] ? "screenshot" : "hero"}
                 onConfirm={() => openOverride(kind)}
               />
             ))}
@@ -214,12 +236,20 @@ export function GameCapabilitiesPanel({
 function CapabilityRow({
   capability,
   focusId,
+  kind,
+  gameId,
   label,
+  backgroundUrl,
+  mediaType,
   onConfirm,
 }: {
   capability: ResolvedCapability;
   focusId: string;
+  kind: GameCapabilityKind;
+  gameId: string;
   label: string;
+  backgroundUrl?: string;
+  mediaType: "hero" | "screenshot";
   onConfirm: () => void;
 }) {
   return (
@@ -230,23 +260,132 @@ function CapabilityRow({
       ariaLabel={`${label}: ${capabilityValueLabel(capability.value)}`}
       onConfirm={onConfirm}
     >
-      <span className="game-capability-row-copy">
+      {backgroundUrl && (
+        <MediaImage
+          gameId={gameId}
+          mediaType={mediaType}
+          reactKey={`${gameId}-capability-${label}`}
+          src={backgroundUrl}
+          alt=""
+          className="game-capability-card-image"
+          loading="eager"
+          decoding="async"
+          draggable={false}
+        />
+      )}
+      <span className="game-capability-card-heading">
+        <span className="game-capability-card-icon" aria-hidden="true">
+          {capabilityIcon(label)}
+        </span>
         <span className="game-capability-label">{label}</span>
+      </span>
+      <CapabilityArt kind={kind} />
+      <span className="game-capability-row-copy">
+        <span className="game-capability-description">
+          {capabilityDescription(label, capability.value)}
+        </span>
         {capability.technologies.length > 0 && (
           <span className="game-capability-technologies">
-            {capability.technologies.join(" · ")}
+            Métodos: {capability.technologies.join(", ")}
           </span>
         )}
-        <span className="game-capability-source">
-          {capabilitySourceLabel(capability.source)}
-          {capability.stale ? " · Offline" : ""}
-          {capability.hasConflict ? " · Override contradice evidencia" : ""}
+        <span
+          className={`game-capability-state ${capabilityStateClass(capability)}`}
+        >
+          {capabilityStateLabel(capability)}
         </span>
       </span>
-      <strong className="game-capability-value">
-        {capabilityValueLabel(capability.value)}
-      </strong>
     </Focusable>
+  );
+}
+
+function capabilityIcon(label: string): string {
+  if (label === "HDR nativo") return "HDR";
+  if (label === "Upscaling") return "U↗";
+  return "FG";
+}
+
+function capabilityDescription(
+  label: string,
+  value: ResolvedCapability["value"],
+): string {
+  if (value === "UNKNOWN") return "No hay evidencia suficiente disponible.";
+  if (label === "HDR nativo") {
+    return value === "YES"
+      ? "El juego declara soporte HDR nativo."
+      : "El juego no declara soporte HDR nativo.";
+  }
+  if (label === "Upscaling") {
+    return value === "YES"
+      ? "El juego declara compatibilidad con upscaling."
+      : "El juego no declara compatibilidad con upscaling.";
+  }
+  return value === "YES"
+    ? "El juego declara compatibilidad con frame generation."
+    : "El juego no declara compatibilidad con frame generation.";
+}
+
+function capabilityStateLabel(capability: ResolvedCapability): string {
+  if (capability.value === "NO" && capability.alternativeAvailable === "YES") {
+    return "Parcialmente compatible";
+  }
+  if (capability.value === "YES") return "Compatible";
+  if (capability.value === "NO") return "No compatible";
+  return "Desconocido";
+}
+
+function capabilityStateClass(capability: ResolvedCapability): string {
+  if (capability.value === "NO" && capability.alternativeAvailable === "YES") {
+    return "is-partial";
+  }
+  return `is-${capability.value.toLowerCase()}`;
+}
+
+function commonSourceLabel(
+  capabilities: readonly ResolvedCapability[],
+): string | null {
+  const sources = [
+    ...new Set(
+      capabilities
+        .map((capability) => capabilitySourceLabel(capability.source))
+        .filter((source) => source !== "Sin evidencia"),
+    ),
+  ];
+  if (sources.length === 1) return sources[0];
+  if (sources.length > 1) return "Evidencia por capacidad";
+  return null;
+}
+
+function CapabilityArt({ kind }: { kind: GameCapabilityKind }) {
+  return (
+    <span
+      className={`game-capability-art is-${kind.toLowerCase()}`}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 100 100" fill="none">
+        {kind === "NATIVE_HDR" && (
+          <>
+            <circle cx="50" cy="50" r="17" />
+            <path d="M50 5v18M50 77v18M5 50h18M77 50h18M18 18l13 13M69 69l13 13M82 18 69 31M31 69 18 82" />
+          </>
+        )}
+        {kind === "HIGH_FIDELITY_UPSCALING" && (
+          <>
+            <path d="M14 72V45h27V72H14ZM59 55V28h27v27H59Z" />
+            <path d="m38 62 23-23M49 39h12v12" />
+            <circle cx="24" cy="24" r="8" />
+          </>
+        )}
+        {kind === "FRAME_GENERATION" && (
+          <>
+            <circle cx="50" cy="50" r="35" />
+            <circle cx="50" cy="50" r="20" />
+            <circle cx="50" cy="50" r="8" />
+            <path d="M50 4v12M50 84v12M4 50h12M84 50h12" />
+          </>
+        )}
+      </svg>
+    </span>
   );
 }
 

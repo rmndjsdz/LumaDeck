@@ -1,5 +1,29 @@
 # Sistema de navegación
 
+## Details Atomic View Contract
+
+Cada pestaña de Game Details es una vista funcional atómica y autocontenida.
+En las resoluciones soportadas, el contenido principal debe caber en el
+viewport disponible sin scroll vertical como navegación normal. Header, Hero,
+tabs y footer mantienen su estructura; cambiar de pestaña cambia de pantalla
+funcional. Cuando un dominio no cabe, se divide semánticamente o se
+reorganiza, sin reducir progresivamente tipografía/padding ni ocultar contenido
+real mediante `overflow: hidden`.
+
+La pestaña `Resumen` contiene identidad editorial (descripción,
+características y capturas). `Rendimiento` contiene las capacidades técnicas
+del juego y el perfil recomendado para el hardware/display actual. La
+capacidad del juego y la recomendación para este equipo se muestran como
+conceptos separados y reutilizan las queries existentes de capacidades y
+perfil gráfico.
+
+El contrato de tabs y el orden funcional viven en
+`src/features/launcher/details-view-contract.ts`. La prueba asociada protege
+la estructura y evita que el contenido técnico vuelva a Resumen. Vitest/jsdom
+no calcula layout real, por lo que no se usa una aserción falsa de
+`scrollHeight`; el cumplimiento dimensional se verifica con browser QA en
+1920×1080, 2560×1440 y 3840×2160.
+
 ## Flujo unificado
 
 Los adaptadores traducen eventos físicos a `NavigationAction`. `InputManager`
