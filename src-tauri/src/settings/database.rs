@@ -122,6 +122,10 @@ pub struct DatabaseState {
     pub(crate) storage_migration_status: Arc<Mutex<StorageMigrationStatus>>,
     pub(crate) steamgriddb_query_cache: Arc<Mutex<SteamGridDbQueryCache>>,
     pub(crate) steamgriddb_search_generation: Arc<AtomicU64>,
+    pub(crate) artwork_enrichment_running: Arc<AtomicBool>,
+    pub(crate) artwork_enrichment_cancel_requested: Arc<AtomicBool>,
+    pub(crate) artwork_enrichment_status:
+        Arc<Mutex<crate::artwork_enrichment::ArtworkEnrichmentStatus>>,
     pub(crate) review_request_coordinator: ReviewRequestCoordinator,
     pub(crate) launchbox_catalog_runtime: Mutex<LaunchBoxCatalogRuntime>,
 }
@@ -313,6 +317,11 @@ impl DatabaseState {
             ))),
             steamgriddb_query_cache: Arc::new(Mutex::new(SteamGridDbQueryCache::default())),
             steamgriddb_search_generation: Arc::new(AtomicU64::new(0)),
+            artwork_enrichment_running: Arc::new(AtomicBool::new(false)),
+            artwork_enrichment_cancel_requested: Arc::new(AtomicBool::new(false)),
+            artwork_enrichment_status: Arc::new(Mutex::new(
+                crate::artwork_enrichment::ArtworkEnrichmentStatus::default(),
+            )),
             review_request_coordinator: ReviewRequestCoordinator::default(),
             launchbox_catalog_runtime: Mutex::new(launchbox_runtime),
         };
@@ -1467,6 +1476,120 @@ fn run_migrations(connection: &Connection) -> Result<(), DatabaseError> {
         )?;
         transaction.commit()?;
     }
+    if applied < 33 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "ALTER TABLE pcgamingwiki_capability_evidence
+                RENAME TO pcgamingwiki_capability_evidence_legacy;
+             CREATE TABLE pcgamingwiki_capability_evidence (
+                game_id TEXT NOT NULL,
+                capability TEXT NOT NULL CHECK (capability IN ('NATIVE_HDR', 'HIGH_FIDELITY_UPSCALING', 'FRAME_GENERATION', 'FOUR_K', 'SIXTY_FPS', 'HIGH_REFRESH_120_FPS')),
+                normalized_value TEXT NOT NULL CHECK (normalized_value IN ('YES', 'NO', 'UNKNOWN')),
+                source_value TEXT,
+                technologies_json TEXT NOT NULL DEFAULT '[]',
+                source TEXT NOT NULL,
+                source_page TEXT NOT NULL,
+                source_field TEXT NOT NULL,
+                confidence TEXT NOT NULL CHECK (confidence IN ('HIGH', 'MEDIUM', 'LOW')),
+                observed_at TEXT NOT NULL,
+                provider_version INTEGER NOT NULL,
+                stale INTEGER NOT NULL DEFAULT 0 CHECK (stale IN (0, 1)),
+                alternative_available TEXT NOT NULL DEFAULT 'UNKNOWN'
+                    CHECK (alternative_available IN ('YES', 'NO', 'UNKNOWN')),
+                source_note TEXT,
+                PRIMARY KEY (game_id, capability),
+                FOREIGN KEY (game_id) REFERENCES pcgamingwiki_game_mapping(game_id) ON DELETE CASCADE
+             );
+             INSERT INTO pcgamingwiki_capability_evidence(
+                game_id, capability, normalized_value, source_value, technologies_json,
+                source, source_page, source_field, confidence, observed_at, provider_version,
+                stale, alternative_available, source_note
+             )
+             SELECT game_id, capability, normalized_value, source_value, technologies_json,
+                source, source_page, source_field, confidence, observed_at, provider_version,
+                stale, alternative_available, source_note
+             FROM pcgamingwiki_capability_evidence_legacy;
+             DROP TABLE pcgamingwiki_capability_evidence_legacy;
+             CREATE INDEX idx_pcgw_evidence_page
+                ON pcgamingwiki_capability_evidence(source_page);
+             INSERT INTO schema_migrations(version, applied_at) VALUES (33, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
+    if applied < 34 {
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute_batch(
+            "CREATE TABLE IF NOT EXISTS artwork_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                external_asset_id INTEGER NOT NULL,
+                external_game_id INTEGER,
+                kind TEXT NOT NULL,
+                grid_style TEXT,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                source_mime_type TEXT NOT NULL,
+                cached_mime_type TEXT NOT NULL,
+                cache_key TEXT NOT NULL UNIQUE,
+                cached_path TEXT NOT NULL,
+                checksum TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                downloaded_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS game_artwork_selections (
+                game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                slot TEXT NOT NULL,
+                artwork_asset_id INTEGER NOT NULL REFERENCES artwork_assets(id),
+                selection_source TEXT NOT NULL,
+                selected_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (game_id, slot)
+             );
+             ALTER TABLE game_artwork_selections
+                ADD COLUMN provenance TEXT NOT NULL DEFAULT 'legacy';
+             ALTER TABLE game_artwork_selections
+                ADD COLUMN user_locked INTEGER NOT NULL DEFAULT 1 CHECK (user_locked IN (0, 1));
+             UPDATE game_artwork_selections
+                SET selection_source = CASE
+                    WHEN selection_source = 'steamgriddb' THEN 'steamgriddb_manual'
+                    ELSE selection_source
+                END,
+                provenance = CASE
+                    WHEN selection_source = 'steamgriddb' THEN 'steamgriddb_manual'
+                    ELSE provenance
+                END,
+                user_locked = 1;
+             ALTER TABLE artwork_assets ADD COLUMN source_url_hash TEXT NOT NULL DEFAULT '';
+             ALTER TABLE artwork_assets ADD COLUMN cached_width INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE artwork_assets ADD COLUMN cached_height INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE artwork_assets ADD COLUMN selected_automatically INTEGER NOT NULL DEFAULT 0
+                CHECK (selected_automatically IN (0, 1));
+             ALTER TABLE artwork_assets ADD COLUMN user_locked INTEGER NOT NULL DEFAULT 1
+                CHECK (user_locked IN (0, 1));
+             CREATE TABLE IF NOT EXISTS artwork_negative_cache (
+                game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                slot TEXT NOT NULL,
+                status TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                PRIMARY KEY (game_id, provider, slot)
+             );
+             CREATE INDEX IF NOT EXISTS idx_artwork_negative_cache_expiry
+                ON artwork_negative_cache(expires_at);
+             CREATE TABLE IF NOT EXISTS artwork_enrichment_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary_json TEXT NOT NULL
+             );
+             INSERT INTO schema_migrations(version, applied_at) VALUES (34, datetime('now'));",
+        )?;
+        transaction.commit()?;
+    }
     Ok(())
 }
 
@@ -1523,7 +1646,7 @@ mod tests {
         let provider_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))
             .expect("provider count");
-        assert_eq!(migration_count, 32);
+        assert_eq!(migration_count, 34);
         assert_eq!(provider_count, 7);
         let table_count: i64 = connection
             .query_row(
@@ -1708,7 +1831,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration version");
-        assert_eq!(migration_version, 32);
+        assert_eq!(migration_version, 34);
         drop(reopened);
         let _ = fs::remove_file(path);
     }

@@ -5,20 +5,35 @@ import {
   readDisplayCapabilities,
 } from "./graphics-profile-service";
 import {
+  hasUsableNvidiaOpsProfile,
+  nvidiaOpsService,
+} from "./nvidia-ops-service";
+import type { NvidiaOpsProfile } from "./nvidia-ops-types";
+import {
   formatVram,
   hardwareCapabilitiesService,
   hardwareVendorLabel,
 } from "./hardware-capabilities-service";
 import type {
+  DisplayCapabilities,
   HardwareCapabilities,
   RecommendedGraphicsProfile,
 } from "./graphics-profile-types";
+import { unknownDisplay } from "./graphics-profile-types";
+
+type ProfileSource = "NVIDIA_OPS" | "LUMADECK";
 
 export function GraphicsProfilePanel({
   gameId,
+  steamAppId,
+  title,
+  executablePath,
   capabilities,
 }: {
   gameId: string;
+  steamAppId: number | null;
+  title: string | null;
+  executablePath: string | null;
   capabilities: ResolvedGameCapabilities;
 }) {
   const hardwareQuery = useQuery({
@@ -28,21 +43,48 @@ export function GraphicsProfilePanel({
     refetchOnWindowFocus: false,
     retry: false,
   });
+  const displayQuery = useQuery({
+    queryKey: ["graphics-profile-display", gameId],
+    queryFn: () => readDisplayCapabilities(gameId),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
   const query = useQuery({
     queryKey: [
       "graphics-profile",
       gameId,
+      steamAppId,
       capabilities.resolvedAt,
       hardwareQuery.data?.observedAt ?? 0,
+      displayQuery.data?.currentResolution?.width ?? 0,
+      displayQuery.data?.currentResolution?.height ?? 0,
     ],
-    queryFn: async () =>
-      graphicsProfileService.resolve(
+    queryFn: async () => {
+      const display = displayQuery.data ?? unknownDisplay;
+      try {
+        const ops = await nvidiaOpsService.get(
+          gameId,
+          steamAppId,
+          title,
+          executablePath,
+          display.currentResolution,
+        );
+        if (hasUsableNvidiaOpsProfile(ops)) {
+          return profileFromNvidiaOps(gameId, ops.profile, display);
+        }
+      } catch {
+        // OPS is optional. The existing resolver remains the product fallback.
+      }
+      const fallback = await graphicsProfileService.resolve(
         gameId,
         capabilities,
-        await readDisplayCapabilities(gameId),
+        display,
         hardwareQuery.data,
-      ),
-    enabled: hardwareQuery.isSuccess,
+      );
+      return { ...fallback, source: "LUMADECK" as const };
+    },
+    enabled: displayQuery.isSuccess || displayQuery.isError,
     staleTime: 7 * 24 * 60 * 60 * 1000,
     refetchOnWindowFocus: false,
     retry: false,
@@ -61,7 +103,9 @@ export function GraphicsProfilePanel({
           </h3>
         </div>
         <span className="graphics-profile-context">
-          Basado en tu hardware y la evidencia disponible
+          {query.data?.source === "NVIDIA_OPS"
+            ? "Recomendado por NVIDIA"
+            : "Basado en tu hardware y la evidencia disponible"}
           <span aria-hidden="true">ⓘ</span>
         </span>
       </div>
@@ -71,7 +115,7 @@ export function GraphicsProfilePanel({
         )}
         {query.error && (
           <p className="graphics-profile-status">
-            No hay suficiente información de hardware para recomendar un perfil.
+            No hay suficiente información para recomendar un perfil.
           </p>
         )}
         {query.data && (
@@ -86,6 +130,121 @@ export function GraphicsProfilePanel({
       </div>
     </section>
   );
+}
+
+function profileFromNvidiaOps(
+  gameId: string,
+  profile: NvidiaOpsProfile,
+  display: DisplayCapabilities,
+): RecommendedGraphicsProfile & { source: ProfileSource } {
+  const upscalingMode =
+    settingValue(profile, "dlssSuperResolution") ??
+    settingValue(profile, "fsr1") ??
+    settingValue(profile, "fsr3");
+  const upscalingTechnology = settingValue(profile, "upscalingTechnology");
+  const frameGeneration =
+    settingValue(profile, "dlssFrameGeneration") ??
+    settingValue(profile, "fsrFrameGeneration");
+  const frameGenerationTechnology = frameGeneration
+    ? profile.settings.find(
+        (setting) =>
+          setting.canonicalKey === "dlssFrameGeneration" ||
+          setting.canonicalKey === "fsrFrameGeneration",
+      )
+    : undefined;
+
+  return {
+    gameId,
+    source: "NVIDIA_OPS",
+    sourceVersion: profile.sourceVersion,
+    popIndex: profile.popIndex,
+    belowMinSpec: profile.belowMinSpec,
+    settings: profile.settings,
+    display: {
+      displayId: display.displayId,
+      resolution: profile.resolution,
+      refreshRate: null,
+      hdrMode: "UNKNOWN",
+    },
+    upscaling: {
+      mode: upscalingMode ? "RECOMMENDED" : "UNKNOWN",
+      modeLabel: upscalingMode,
+      technology: upscalingTechnology
+        ? technologyFromValue(upscalingTechnology)
+        : null,
+    },
+    frameGeneration: {
+      mode: frameGeneration
+        ? isDisabledValue(frameGeneration)
+          ? "OFF"
+          : "NATIVE"
+        : "UNKNOWN",
+      modeLabel: frameGeneration,
+      technology: frameGenerationTechnology
+        ? technologyFromKey(frameGenerationTechnology.canonicalKey)
+        : null,
+    },
+    losslessScaling: { recommendation: "NOT_AVAILABLE" },
+    confidence: profile.confidence,
+    provenance: {
+      resolution: "NVIDIA_OPS",
+      refreshRate: "UNKNOWN",
+      hdr: "UNKNOWN",
+      upscaling: "NVIDIA_OPS",
+      frameGeneration: "NVIDIA_OPS",
+    },
+    reasons: [
+      `NVIDIA OPS seleccionó el POP ${profile.popIndex} desde metadata local.`,
+      profile.sourceVersion
+        ? `Versión local de NVIDIA: ${profile.sourceVersion}.`
+        : "El paquete local de NVIDIA no expone versión.",
+    ],
+    warnings: profile.belowMinSpec
+      ? [
+          "NVIDIA marca este equipo por debajo del objetivo recomendado para este juego.",
+        ]
+      : [],
+  };
+}
+
+function settingValue(profile: NvidiaOpsProfile, key: string): string | null {
+  return (
+    profile.settings.find((setting) => setting.canonicalKey === key)?.value ??
+    null
+  );
+}
+
+function technologyFromValue(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("dlss")) {
+    return { name: "DLSS", version: null, label: value };
+  }
+  if (normalized.includes("fsr")) {
+    return { name: "FSR", version: null, label: value };
+  }
+  if (normalized.includes("xess")) {
+    return { name: "XeSS", version: null, label: value };
+  }
+  return { name: "OPS_UPSCALING", version: null, label: value };
+}
+
+function technologyFromKey(key: string) {
+  if (key === "fsrFrameGeneration") {
+    return {
+      name: "FSR_FRAME_GENERATION",
+      version: null,
+      label: "FSR Frame Generation",
+    };
+  }
+  return {
+    name: "DLSS_FRAME_GENERATION",
+    version: null,
+    label: "NVIDIA RTX Frame Generation",
+  };
+}
+
+function isDisabledValue(value: string): boolean {
+  return ["off", "disabled", "no"].includes(value.trim().toLowerCase());
 }
 
 function HardwareSummary({ hardware }: { hardware: HardwareCapabilities }) {
@@ -109,23 +268,38 @@ function RecommendationContent({
   profile: RecommendedGraphicsProfile;
   hardware?: HardwareCapabilities;
 }) {
+  const sourceLabel = profile.source === "NVIDIA_OPS" ? "NVIDIA OPS" : null;
   return (
     <div className="graphics-profile-content">
+      {sourceLabel && (
+        <p className="graphics-profile-source" aria-label="Fuente del perfil">
+          Fuente: {sourceLabel}
+        </p>
+      )}
       <dl className="graphics-profile-list">
         <RecommendationItem
-          label="Resolución objetivo"
+          label={
+            profile.provenance.resolution === "LOCAL_DISPLAY"
+              ? "Resolución de pantalla"
+              : "Resolución objetivo"
+          }
           value={resolutionLabel(profile)}
           secondary={resolutionDescriptor(profile) ?? undefined}
           primary
         />
         <RecommendationItem
-          label="Frecuencia"
+          label={
+            profile.provenance.refreshRate === "LOCAL_DISPLAY"
+              ? "Frecuencia de pantalla"
+              : "Frecuencia"
+          }
           value={refreshRateLabel(profile)}
           primary
         />
         <RecommendationItem
           label="HDR"
           value={hdrLabel(profile.display.hdrMode)}
+          secondary={hdrRecommendationSecondary(profile)}
         />
         <RecommendationItem
           label="Upscaling"
@@ -133,12 +307,19 @@ function RecommendationContent({
             profile.upscaling.technology,
             profile.upscaling.mode,
           )}
-          secondary={upscalingModeLabel(profile.upscaling.mode) ?? undefined}
+          secondary={
+            profile.upscaling.modeLabel ??
+            upscalingModeLabel(profile.upscaling.mode) ??
+            undefined
+          }
         />
         <RecommendationItem
           label="Frame Generation"
           value={frameGenerationLabel(profile)}
-          secondary={frameGenerationStateLabel(profile.frameGeneration.mode)}
+          secondary={
+            profile.frameGeneration.modeLabel ??
+            frameGenerationStateLabel(profile.frameGeneration.mode)
+          }
         />
       </dl>
       <div className="graphics-profile-meta-row">
@@ -146,6 +327,12 @@ function RecommendationContent({
           Puedes ajustar la pantalla desde Configuración &gt; Pantalla
         </p>
         <div className="graphics-profile-meta-details">
+          {profile.belowMinSpec && (
+            <p className="graphics-profile-below-min-spec">
+              NVIDIA marca este equipo por debajo del objetivo recomendado para
+              este juego.
+            </p>
+          )}
           {profile.warnings.length > 0 && (
             <details className="graphics-profile-warnings">
               <summary>Advertencias ({profile.warnings.length})</summary>
@@ -217,13 +404,24 @@ function technologyLabel(
   return "Desconocido";
 }
 
+function hdrRecommendationSecondary(
+  profile: RecommendedGraphicsProfile,
+): string | undefined {
+  if (profile.display.hdrMode === "RTX_HDR_NATURAL") {
+    return "Alternativa al HDR nativo";
+  }
+  if (profile.display.hdrMode === "NATIVE") {
+    return "Soportado por el juego";
+  }
+  return undefined;
+}
+
 function frameGenerationLabel(profile: RecommendedGraphicsProfile): string {
   const { frameGeneration } = profile;
   if (frameGeneration.technology) return frameGeneration.technology.label;
   if (frameGeneration.mode === "OFF") return "No disponible";
-  if (frameGeneration.mode === "ALTERNATIVE_AVAILABLE") {
+  if (frameGeneration.mode === "ALTERNATIVE_AVAILABLE")
     return "Alternativa disponible";
-  }
   return "Desconocido";
 }
 
@@ -237,7 +435,7 @@ function resolutionLabel(profile: RecommendedGraphicsProfile): string {
 function refreshRateLabel(profile: RecommendedGraphicsProfile): string {
   return profile.display.refreshRate
     ? `${profile.display.refreshRate} Hz`
-    : "Desconocido";
+    : "No especificada";
 }
 
 function resolutionDescriptor(

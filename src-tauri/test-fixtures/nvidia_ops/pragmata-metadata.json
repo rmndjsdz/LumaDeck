@@ -1,0 +1,19 @@
+{
+  "regular_rtx": {
+    "version": "fixture-pragmata-v1",
+    "ops": [
+      {
+        "resolution": "3840x2160",
+        "pops": 1,
+        "rate": 40,
+        "belowMinSpec": true
+      },
+      {
+        "resolution": "2560x1440",
+        "pops": 17,
+        "rate": 40,
+        "belowMinSpec": false
+      }
+    ]
+  }
+}

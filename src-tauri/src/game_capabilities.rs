@@ -15,6 +15,9 @@ pub enum GameCapabilityKind {
     NativeHdr,
     HighFidelityUpscaling,
     FrameGeneration,
+    FourK,
+    SixtyFps,
+    HighRefresh120Fps,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,6 +106,9 @@ pub struct ResolvedGameCapabilities {
     pub native_hdr: ResolvedCapability,
     pub high_fidelity_upscaling: ResolvedCapability,
     pub frame_generation: ResolvedCapability,
+    pub four_k: ResolvedCapability,
+    pub sixty_fps: ResolvedCapability,
+    pub high_refresh_120_fps: ResolvedCapability,
     pub resolved_at: i64,
     pub provider_status: Option<PcgamingwikiResolutionStatus>,
     pub provider_error: Option<String>,
@@ -315,6 +321,27 @@ pub fn resolve_game_capabilities(
             override_map.get(&GameCapabilityKind::FrameGeneration),
             resolved_at,
         ),
+        four_k: resolve_one(
+            game_id,
+            GameCapabilityKind::FourK,
+            &evidence,
+            override_map.get(&GameCapabilityKind::FourK),
+            resolved_at,
+        ),
+        sixty_fps: resolve_one(
+            game_id,
+            GameCapabilityKind::SixtyFps,
+            &evidence,
+            override_map.get(&GameCapabilityKind::SixtyFps),
+            resolved_at,
+        ),
+        high_refresh_120_fps: resolve_one(
+            game_id,
+            GameCapabilityKind::HighRefresh120Fps,
+            &evidence,
+            override_map.get(&GameCapabilityKind::HighRefresh120Fps),
+            resolved_at,
+        ),
         resolved_at,
         provider_status: None,
         provider_error: None,
@@ -524,11 +551,27 @@ fn load_provider_evidence(
             let source: String = row.get(6)?;
             let confidence: String = row.get(9)?;
             let technologies_json: String = row.get(5)?;
+            let capability = parse_capability(&row.get::<_, String>(0)?).ok_or_else(|| {
+                rusqlite::Error::InvalidParameterName("capability".to_string())
+            })?;
+            let mut source_value: Option<String> = row.get(2)?;
+            let mut alternative_available = parse_value(&row.get::<_, String>(3)?)
+                .unwrap_or(GameCapabilityValue::Unknown);
+            let mut source_note: Option<String> = row.get(4)?;
+            if capability == GameCapabilityKind::NativeHdr
+                && source_note.as_deref()
+                    == Some("See the engine page to force native HDR output, or the glossary page for other alternatives.")
+            {
+                source_note = None;
+                alternative_available = GameCapabilityValue::Unknown;
+                source_value = source_value
+                    .as_deref()
+                    .and_then(|value| value.split_once(" — ").map(|(raw, _)| raw.to_string()))
+                    .or(source_value);
+            }
             Ok(GameCapabilityEvidence {
                 game_id: game_id.to_string(),
-                capability: parse_capability(&row.get::<_, String>(0)?).ok_or_else(|| {
-                    rusqlite::Error::InvalidParameterName("capability".to_string())
-                })?,
+                capability,
                 value: parse_value(&row.get::<_, String>(1)?).ok_or_else(|| {
                     rusqlite::Error::InvalidParameterName("normalized_value".to_string())
                 })?,
@@ -537,10 +580,9 @@ fn load_provider_evidence(
                 } else {
                     GameCapabilitySource::None
                 },
-                source_value: row.get(2)?,
-                alternative_available: parse_value(&row.get::<_, String>(3)?)
-                    .unwrap_or(GameCapabilityValue::Unknown),
-                source_note: row.get(4)?,
+                source_value,
+                alternative_available,
+                source_note,
                 confidence: parse_confidence(&confidence).unwrap_or(GameCapabilityConfidence::Low),
                 technologies: serde_json::from_str(&technologies_json).unwrap_or_default(),
                 observed_at: row.get(10)?,
@@ -562,6 +604,9 @@ fn evidence_from_provider(
         &capabilities.native_hdr,
         &capabilities.high_fidelity_upscaling,
         &capabilities.frame_generation,
+        &capabilities.four_k,
+        &capabilities.sixty_fps,
+        &capabilities.high_refresh_120_fps,
     ]
     .into_iter()
     .map(|item| GameCapabilityEvidence {
@@ -590,6 +635,11 @@ fn map_capability(value: pcgamingwiki::PcgamingwikiCapability) -> GameCapability
         }
         pcgamingwiki::PcgamingwikiCapability::FrameGeneration => {
             GameCapabilityKind::FrameGeneration
+        }
+        pcgamingwiki::PcgamingwikiCapability::FourK => GameCapabilityKind::FourK,
+        pcgamingwiki::PcgamingwikiCapability::SixtyFps => GameCapabilityKind::SixtyFps,
+        pcgamingwiki::PcgamingwikiCapability::HighRefresh120Fps => {
+            GameCapabilityKind::HighRefresh120Fps
         }
     }
 }
@@ -633,6 +683,9 @@ fn parse_capability(value: &str) -> Option<GameCapabilityKind> {
         "NATIVE_HDR" => Some(GameCapabilityKind::NativeHdr),
         "HIGH_FIDELITY_UPSCALING" => Some(GameCapabilityKind::HighFidelityUpscaling),
         "FRAME_GENERATION" => Some(GameCapabilityKind::FrameGeneration),
+        "FOUR_K" => Some(GameCapabilityKind::FourK),
+        "SIXTY_FPS" => Some(GameCapabilityKind::SixtyFps),
+        "HIGH_REFRESH_120_FPS" => Some(GameCapabilityKind::HighRefresh120Fps),
         _ => None,
     }
 }
@@ -670,6 +723,9 @@ fn capability_name(value: GameCapabilityKind) -> &'static str {
         GameCapabilityKind::NativeHdr => "NATIVE_HDR",
         GameCapabilityKind::HighFidelityUpscaling => "HIGH_FIDELITY_UPSCALING",
         GameCapabilityKind::FrameGeneration => "FRAME_GENERATION",
+        GameCapabilityKind::FourK => "FOUR_K",
+        GameCapabilityKind::SixtyFps => "SIXTY_FPS",
+        GameCapabilityKind::HighRefresh120Fps => "HIGH_REFRESH_120_FPS",
     }
 }
 
@@ -758,6 +814,38 @@ mod tests {
             GameCapabilitySource::Pcgamingwiki
         );
         assert!(!resolved.native_hdr.has_conflict);
+    }
+
+    #[test]
+    fn resolves_game_video_capabilities_independently_from_display() {
+        let resolved = resolve_game_capabilities(
+            "marvel",
+            vec![
+                evidence(
+                    GameCapabilityKind::FourK,
+                    GameCapabilityValue::Yes,
+                    &[],
+                    false,
+                ),
+                evidence(
+                    GameCapabilityKind::SixtyFps,
+                    GameCapabilityValue::Yes,
+                    &[],
+                    false,
+                ),
+                evidence(
+                    GameCapabilityKind::HighRefresh120Fps,
+                    GameCapabilityValue::No,
+                    &[],
+                    false,
+                ),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(resolved.four_k.value, GameCapabilityValue::Yes);
+        assert_eq!(resolved.sixty_fps.value, GameCapabilityValue::Yes);
+        assert_eq!(resolved.high_refresh_120_fps.value, GameCapabilityValue::No);
+        assert_eq!(resolved.native_hdr.value, GameCapabilityValue::Unknown);
     }
 
     #[test]

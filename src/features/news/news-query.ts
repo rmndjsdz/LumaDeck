@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
 import { newsService } from "./news-service";
 import type { NewsFeedViewModel, NewsFilter } from "./news-types";
@@ -14,15 +19,28 @@ export function newsFeedQueryKey(
   return ["news-feed", gameId, filter, "es-419"] as const;
 }
 
-export function useNewsFeed(gameId: string | undefined, filter: NewsFilter) {
-  return useQuery({
+function newsFeedQueryOptions(gameId: string, filter: NewsFilter) {
+  return {
     queryKey: newsFeedQueryKey(gameId, filter),
-    queryFn: () => newsService.getFeed(gameId ?? "", filter),
-    enabled: Boolean(gameId),
+    queryFn: () => newsService.getFeed(gameId, filter),
     staleTime: NEWS_STALE_TIME,
     gcTime: NEWS_CACHE_TIME,
+  };
+}
+
+export function useNewsFeed(gameId: string | undefined, filter: NewsFilter) {
+  return useQuery({
+    ...newsFeedQueryOptions(gameId ?? "", filter),
+    enabled: Boolean(gameId),
     placeholderData: (previousData) => previousData,
   });
+}
+
+export function prefetchNewsFeed(
+  queryClient: QueryClient,
+  gameId: string,
+): Promise<void> {
+  return queryClient.prefetchQuery(newsFeedQueryOptions(gameId, "all"));
 }
 
 export function useNewsSyncState(gameId: string | undefined) {

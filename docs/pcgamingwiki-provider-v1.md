@@ -95,9 +95,17 @@ Después de resolver Cargo, el proveedor llama a:
 action=parse&page=<pageTitle>&redirects=1&prop=wikitext&format=json&formatversion=2
 ```
 
-El parser existente extrae `{{Video}}` para `hdr`, `upscaling`/sus
-tecnologías y `framegen`/sus tecnologías. No se infieren valores desde HTML ni
-se hardcodean los baselines de QA.
+El parser extrae `{{Video}}` para `hdr`, `upscaling` y sus tecnologias,
+`framegen` y sus tecnologias, `4k ultra hd`, `60 fps`, `120 fps` y la
+nota de `120 fps`. Estos campos son capacidades del juego; no se usan para
+estimar rendimiento ni para sustituir el modo actual del display. La ausencia
+de un valor permanece como `UNKNOWN`.
+
+Una nota como `Capped to 60 FPS.` se conserva como evidencia de
+`HIGH_REFRESH_120_FPS`; no se convierte en una estimacion de FPS ni en la
+frecuencia actual del display. Una alternativa o workaround nunca cambia el
+estado de `NATIVE_HDR`: `NO + alternativeAvailable=YES` sigue siendo HDR
+nativo no compatible.
 
 ## Cache y errores
 

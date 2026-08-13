@@ -15,7 +15,7 @@ use std::{
     fs,
     io::{BufReader, Cursor},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -42,8 +42,11 @@ pub struct PreparedArtwork {
     pub grid_style: Option<String>,
     pub width: u32,
     pub height: u32,
+    pub cached_width: u32,
+    pub cached_height: u32,
     pub source_mime_type: String,
     pub cached_mime_type: String,
+    pub source_url_hash: String,
     pub cache_key: String,
     pub cached_path: String,
     pub checksum: String,
@@ -94,30 +97,68 @@ pub async fn prepare_selected_artwork(
             request.style_filter,
         )
         .map_err(ArtworkDownloadError::Candidate)?;
-    let downloaded = download_original(&candidate).await?;
-    let compressed = compress_image(&downloaded.bytes, downloaded.format)?;
-    let checksum = sha256_hex(&compressed);
+    prepare_remote_artwork(&state, &request.game_id, request.slot, &candidate, None).await
+}
+
+pub async fn prepare_remote_artwork(
+    state: &DatabaseState,
+    game_id: &str,
+    slot: ArtworkSlot,
+    candidate: &SteamGridDbRemoteAsset,
+    max_dimension: Option<u32>,
+) -> Result<PreparedArtwork, ArtworkDownloadError> {
+    if let Some(cached) = find_cached_artwork(state, game_id, slot, candidate)? {
+        return Ok(cached);
+    }
+    let downloaded = download_original(candidate).await?;
+    let compressed =
+        compress_image_with_limit(&downloaded.bytes, downloaded.format, max_dimension)?;
+    let checksum = sha256_hex(&compressed.bytes);
     let cache_root = state.data_directory.cache_directory().join("artwork");
     let relative_path = PathBuf::from("artwork").join(format!("{checksum}.webp"));
     let absolute_path = cache_root.join(format!("{checksum}.webp"));
-    let file_reused = write_cache_atomically(&cache_root, &absolute_path, &compressed)?;
+    let file_reused = write_cache_atomically(&cache_root, &absolute_path, &compressed.bytes)?;
     Ok(PreparedArtwork {
-        game_id: request.game_id,
-        slot: request.slot,
+        game_id: game_id.to_string(),
+        slot,
         kind: candidate.kind,
         external_asset_id: candidate.external_asset_id,
         external_game_id: candidate.external_game_id,
-        grid_style: candidate.grid_style.map(|style| style.as_str().to_string()),
+        grid_style: candidate
+            .grid_style
+            .as_ref()
+            .map(|style| style.as_str().to_string()),
         width: downloaded.width,
         height: downloaded.height,
+        cached_width: compressed.width,
+        cached_height: compressed.height,
         source_mime_type: downloaded.format.to_mime_type().to_string(),
         cached_mime_type: "image/webp".to_string(),
+        source_url_hash: sha256_hex(candidate.source_url.as_bytes()),
         cache_key: format!("steamgriddb:{checksum}"),
         cached_path: relative_path.to_string_lossy().replace('\\', "/"),
         checksum,
-        byte_size: compressed.len() as u64,
+        byte_size: compressed.bytes.len() as u64,
         file_reused,
     })
+}
+
+pub fn cleanup_artwork_temporary_files(state: &DatabaseState) -> Result<(), std::io::Error> {
+    let cache_root = state.data_directory.cache_directory().join("artwork");
+    if !cache_root.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(cache_root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            let path = entry.path();
+            if path.is_file() {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn remove_uncommitted_file(
@@ -140,6 +181,12 @@ pub(crate) fn remove_uncommitted_file(
 struct DownloadedImage {
     bytes: Vec<u8>,
     format: ImageFormat,
+    width: u32,
+    height: u32,
+}
+
+struct CompressedImage {
+    bytes: Vec<u8>,
     width: u32,
     height: u32,
 }
@@ -240,10 +287,38 @@ fn validate_image(bytes: &[u8]) -> Result<DownloadedImage, ArtworkDownloadError>
 }
 
 fn compress_image(bytes: &[u8], format: ImageFormat) -> Result<Vec<u8>, ArtworkDownloadError> {
-    let image = ImageReader::with_format(Cursor::new(bytes), format)
+    Ok(compress_image_with_limit(bytes, format, None)?.bytes)
+}
+
+fn compress_image_with_limit(
+    bytes: &[u8],
+    format: ImageFormat,
+    max_dimension: Option<u32>,
+) -> Result<CompressedImage, ArtworkDownloadError> {
+    let mut image = ImageReader::with_format(Cursor::new(bytes), format)
         .decode()
-        .map_err(|_| ArtworkDownloadError::InvalidImage)?
-        .to_rgba8();
+        .map_err(|_| ArtworkDownloadError::InvalidImage)?;
+    if let Some(max_dimension) = max_dimension.filter(|value| *value > 0) {
+        let current_max = image.width().max(image.height());
+        if current_max > max_dimension {
+            image = image.resize(
+                if image.width() >= image.height() {
+                    max_dimension
+                } else {
+                    image.width().saturating_mul(max_dimension) / image.height()
+                },
+                if image.height() >= image.width() {
+                    max_dimension
+                } else {
+                    image.height().saturating_mul(max_dimension) / image.width()
+                },
+                image::imageops::FilterType::Lanczos3,
+            );
+        }
+    }
+    let image = image.to_rgba8();
+    let width = image.width();
+    let height = image.height();
     let mut encoded = Vec::new();
     WebPEncoder::new_lossless(&mut encoded)
         .write_image(
@@ -253,7 +328,11 @@ fn compress_image(bytes: &[u8], format: ImageFormat) -> Result<Vec<u8>, ArtworkD
             ExtendedColorType::Rgba8,
         )
         .map_err(|_| ArtworkDownloadError::Compression)?;
-    Ok(encoded)
+    Ok(CompressedImage {
+        bytes: encoded,
+        width,
+        height,
+    })
 }
 
 fn write_cache_atomically(
@@ -266,12 +345,16 @@ fn write_cache_atomically(
         return Ok(true);
     }
     let temporary = cache_root.join(format!(
-        ".{}.tmp-{}",
+        ".{}.tmp-{}-{}",
         destination
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("artwork"),
-        std::process::id()
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default()
     ));
     fs::write(&temporary, bytes).map_err(ArtworkDownloadError::Storage)?;
     if let Err(error) = fs::rename(&temporary, destination) {
@@ -282,6 +365,88 @@ fn write_cache_atomically(
         return Err(ArtworkDownloadError::Storage(error));
     }
     Ok(false)
+}
+
+fn find_cached_artwork(
+    state: &DatabaseState,
+    _game_id: &str,
+    slot: ArtworkSlot,
+    candidate: &SteamGridDbRemoteAsset,
+) -> Result<Option<PreparedArtwork>, ArtworkDownloadError> {
+    let connection = state
+        .connection
+        .lock()
+        .map_err(|_| ArtworkDownloadError::Storage(std::io::Error::other("database lock")))?;
+    let cached = connection
+        .query_row(
+            "SELECT cached_path, cache_key, checksum, byte_size, source_mime_type,
+                    cached_mime_type, width, height, cached_width, cached_height,
+                    source_url_hash
+             FROM artwork_assets
+             WHERE source = 'steamgriddb' AND external_asset_id = ?1
+               AND COALESCE(external_game_id, 0) = ?2
+             ORDER BY updated_at DESC LIMIT 1",
+            rusqlite::params![candidate.external_asset_id, candidate.external_game_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, String>(10)?,
+                ))
+            },
+        )
+        .ok();
+    let Some((
+        cached_path,
+        cache_key,
+        checksum,
+        byte_size,
+        source_mime_type,
+        cached_mime_type,
+        width,
+        height,
+        cached_width,
+        cached_height,
+        source_url_hash,
+    )) = cached
+    else {
+        return Ok(None);
+    };
+    let absolute_path = state.data_directory.cache_directory().join(&cached_path);
+    if !absolute_path.is_file() {
+        return Ok(None);
+    }
+    Ok(Some(PreparedArtwork {
+        game_id: _game_id.to_string(),
+        slot,
+        kind: candidate.kind,
+        external_asset_id: candidate.external_asset_id,
+        external_game_id: candidate.external_game_id,
+        grid_style: candidate
+            .grid_style
+            .as_ref()
+            .map(|style| style.as_str().to_string()),
+        width: u32::try_from(width).unwrap_or_default(),
+        height: u32::try_from(height).unwrap_or_default(),
+        cached_width: u32::try_from(cached_width).unwrap_or_default(),
+        cached_height: u32::try_from(cached_height).unwrap_or_default(),
+        source_mime_type,
+        cached_mime_type,
+        source_url_hash,
+        cache_key,
+        cached_path,
+        checksum,
+        byte_size: u64::try_from(byte_size).unwrap_or_default(),
+        file_reused: true,
+    }))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -298,7 +463,9 @@ pub fn is_allowed_artwork_host(url: &Url) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{compress_image, is_allowed_artwork_host, validate_image};
+    use super::{
+        compress_image, compress_image_with_limit, is_allowed_artwork_host, validate_image,
+    };
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
     use std::io::Cursor;
 
@@ -337,5 +504,21 @@ mod tests {
         assert!(!is_allowed_artwork_host(
             &reqwest::Url::parse("http://images.steamgriddb.com/a.png").expect("url")
         ));
+    }
+
+    #[test]
+    fn downscale_never_upscales_and_preserves_aspect_ratio() {
+        let image =
+            DynamicImage::ImageRgba8(ImageBuffer::from_pixel(920, 430, Rgba([255, 0, 0, 255])));
+        let mut bytes = Cursor::new(Vec::new());
+        image
+            .write_to(&mut bytes, ImageFormat::Png)
+            .expect("png fixture");
+        let same = compress_image_with_limit(&bytes.get_ref(), ImageFormat::Png, Some(4096))
+            .expect("no upscale");
+        assert_eq!((same.width, same.height), (920, 430));
+        let down = compress_image_with_limit(&bytes.get_ref(), ImageFormat::Png, Some(460))
+            .expect("downscale");
+        assert_eq!((down.width, down.height), (460, 215));
     }
 }

@@ -579,6 +579,21 @@ mod tests {
                 GameCapabilityValue::No,
                 vec![],
             ),
+            four_k: capability(
+                GameCapabilityKind::FourK,
+                GameCapabilityValue::Unknown,
+                vec![],
+            ),
+            sixty_fps: capability(
+                GameCapabilityKind::SixtyFps,
+                GameCapabilityValue::Unknown,
+                vec![],
+            ),
+            high_refresh_120_fps: capability(
+                GameCapabilityKind::HighRefresh120Fps,
+                GameCapabilityValue::Unknown,
+                vec![],
+            ),
             resolved_at: 1,
             provider_status: None,
             provider_error: None,

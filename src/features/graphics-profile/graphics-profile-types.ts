@@ -72,6 +72,17 @@ export type GraphicsProfileInput = {
 
 export type RecommendedGraphicsProfile = {
   gameId: string;
+  source?: "NVIDIA_OPS" | "LUMADECK";
+  sourceVersion?: string | null;
+  popIndex?: number | null;
+  belowMinSpec?: boolean;
+  settings?: {
+    canonicalKey: string;
+    displayName: string;
+    value: string;
+    rawKey: string;
+    rawValue: string;
+  }[];
   display: {
     displayId: string;
     resolution: DisplayResolution | null;
@@ -87,6 +98,7 @@ export type RecommendedGraphicsProfile = {
   };
   upscaling: {
     mode: "RECOMMENDED" | "AUTO" | "NONE" | "UNKNOWN";
+    modeLabel?: string | null;
     technology: {
       name: string;
       version: string | null;
@@ -95,6 +107,7 @@ export type RecommendedGraphicsProfile = {
   };
   frameGeneration: {
     mode: "NATIVE" | "OFF" | "ALTERNATIVE_AVAILABLE" | "UNKNOWN";
+    modeLabel?: string | null;
     technology: {
       name: string;
       version: string | null;
@@ -107,6 +120,43 @@ export type RecommendedGraphicsProfile = {
   confidence: "HIGH" | "MEDIUM" | "LOW";
   reasons: string[];
   warnings: string[];
+  provenance: {
+    resolution:
+      | "PCGAMINGWIKI"
+      | "NVIDIA_OPS"
+      | "LOCAL_HARDWARE"
+      | "LOCAL_DISPLAY"
+      | "LUMADECK_RULE"
+      | "UNKNOWN";
+    refreshRate:
+      | "PCGAMINGWIKI"
+      | "NVIDIA_OPS"
+      | "LOCAL_HARDWARE"
+      | "LOCAL_DISPLAY"
+      | "LUMADECK_RULE"
+      | "UNKNOWN";
+    hdr:
+      | "PCGAMINGWIKI"
+      | "NVIDIA_OPS"
+      | "LOCAL_HARDWARE"
+      | "LOCAL_DISPLAY"
+      | "LUMADECK_RULE"
+      | "UNKNOWN";
+    upscaling:
+      | "PCGAMINGWIKI"
+      | "NVIDIA_OPS"
+      | "LOCAL_HARDWARE"
+      | "LOCAL_DISPLAY"
+      | "LUMADECK_RULE"
+      | "UNKNOWN";
+    frameGeneration:
+      | "PCGAMINGWIKI"
+      | "NVIDIA_OPS"
+      | "LOCAL_HARDWARE"
+      | "LOCAL_DISPLAY"
+      | "LUMADECK_RULE"
+      | "UNKNOWN";
+  };
 };
 
 export const unknownHardware: HardwareCapabilities = {

@@ -6,6 +6,7 @@ mod repositories;
 
 pub use crate::display::{DisplayProfile, PendingDisplayProfileRestore, PendingDisplayRestore};
 pub use artwork_repository::ArtworkApplyResult;
+pub(crate) use artwork_repository::{ArtworkEnrichmentGame, ArtworkRepository, ArtworkSlotState};
 pub use database::{DatabaseError, DatabaseState, LaunchBoxCatalogPhase, LaunchBoxCatalogProgress};
 pub use models::{
     AIConfigurationStatus, ActivityFriend, ActivitySnapshot, DatabaseStatus,
@@ -126,6 +127,59 @@ pub(crate) fn get_current_artwork(
     slot: crate::steamgriddb::ArtworkSlot,
 ) -> Result<Option<String>, DatabaseError> {
     artwork_repository::ArtworkRepository::new(state).get_current_asset(game_id, slot)
+}
+
+pub(crate) fn get_artwork_enrichment_games(
+    state: &DatabaseState,
+    only_non_steam: bool,
+) -> Result<Vec<ArtworkEnrichmentGame>, DatabaseError> {
+    ArtworkRepository::new(state).get_enrichment_games(only_non_steam)
+}
+
+pub(crate) fn get_artwork_slot_state(
+    state: &DatabaseState,
+    game_id: &str,
+    slot: crate::steamgriddb::ArtworkSlot,
+) -> Result<ArtworkSlotState, DatabaseError> {
+    ArtworkRepository::new(state).get_slot_state(game_id, slot)
+}
+
+pub(crate) fn persist_automatic_artwork(
+    state: &DatabaseState,
+    artwork: &crate::artwork::PreparedArtwork,
+) -> Result<bool, DatabaseError> {
+    ArtworkRepository::new(state).persist_automatic_selection(artwork)
+}
+
+pub(crate) fn artwork_negative_cache_valid(
+    state: &DatabaseState,
+    game_id: &str,
+    slot: crate::steamgriddb::ArtworkSlot,
+) -> Result<bool, DatabaseError> {
+    ArtworkRepository::new(state).negative_cache_valid(game_id, slot)
+}
+
+pub(crate) fn store_artwork_negative_cache(
+    state: &DatabaseState,
+    game_id: &str,
+    slot: crate::steamgriddb::ArtworkSlot,
+    ttl_seconds: i64,
+) -> Result<(), DatabaseError> {
+    ArtworkRepository::new(state).store_negative_cache(game_id, slot, ttl_seconds)
+}
+
+pub(crate) fn save_artwork_enrichment_run(
+    state: &DatabaseState,
+    summary_json: &str,
+    status: &str,
+) -> Result<(), DatabaseError> {
+    ArtworkRepository::new(state).save_enrichment_run(summary_json, status)
+}
+
+pub(crate) fn get_last_artwork_enrichment_run(
+    state: &DatabaseState,
+) -> Result<Option<String>, DatabaseError> {
+    ArtworkRepository::new(state).get_last_enrichment_run()
 }
 
 pub fn get_steam_cache(

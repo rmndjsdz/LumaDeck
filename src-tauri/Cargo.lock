@@ -2105,6 +2105,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "thiserror 2.0.19",
+ "tokio",
  "windows",
  "windows-collections",
  "windows-future",

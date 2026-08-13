@@ -15,7 +15,7 @@ const QUERY_TTL_SECS: u64 = 10 * 60;
 const MAX_CACHED_QUERIES: usize = 20;
 static QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum ArtworkKind {
     Grid,
@@ -24,7 +24,7 @@ pub enum ArtworkKind {
     Icon,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum ArtworkSlot {
     #[serde(rename = "grid_horizontal")]
@@ -175,6 +175,9 @@ pub struct LocalGameIdentity {
     pub local_game_id: String,
     pub title: String,
     pub steam_app_id: Option<i64>,
+    pub platform: String,
+    pub source: String,
+    pub title_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -387,6 +390,29 @@ impl SteamGridDbClient {
             .pipe(Ok)
     }
 
+    pub async fn get_assets_for_enrichment(
+        &self,
+        external_game_id: i64,
+        slot: ArtworkSlot,
+    ) -> Result<Vec<SteamGridDbRemoteAsset>, SteamGridDbError> {
+        let endpoint = match slot {
+            ArtworkSlot::GridHorizontal | ArtworkSlot::GridVertical | ArtworkSlot::GridSquare => {
+                "grids"
+            }
+            ArtworkSlot::Hero => "heroes",
+            ArtworkSlot::Logo => "logos",
+            ArtworkSlot::Icon => "icons",
+        };
+        let data: Vec<RawAsset> = self
+            .get_json(&format!("/{endpoint}/game/{external_game_id}"), &Vec::new())
+            .await?;
+        Ok(data
+            .into_iter()
+            .filter_map(|asset| map_remote_asset(asset, external_game_id, slot))
+            .take(MAX_RESULTS_PER_QUERY)
+            .collect())
+    }
+
     async fn get_json<T: DeserializeOwned>(
         &self,
         path: &str,
@@ -424,6 +450,51 @@ impl SteamGridDbClient {
         }
         envelope.data.ok_or(SteamGridDbError::InvalidResponse)
     }
+}
+
+pub fn select_best_asset(
+    slot: ArtworkSlot,
+    assets: &[SteamGridDbRemoteAsset],
+) -> Option<SteamGridDbRemoteAsset> {
+    assets
+        .iter()
+        .filter(|asset| asset_matches_slot(asset, slot))
+        .filter(|asset| !asset.nsfw)
+        .max_by(|left, right| {
+            let left_key = asset_quality_key(left);
+            let right_key = asset_quality_key(right);
+            left_key.cmp(&right_key)
+        })
+        .cloned()
+}
+
+fn asset_matches_slot(asset: &SteamGridDbRemoteAsset, slot: ArtworkSlot) -> bool {
+    let ratio = asset.width as f32 / asset.height as f32;
+    match slot {
+        ArtworkSlot::GridHorizontal => ratio >= 1.45,
+        ArtworkSlot::GridVertical => ratio <= 0.9,
+        ArtworkSlot::GridSquare => (0.9..=1.1).contains(&ratio),
+        ArtworkSlot::Hero => ratio >= 2.0,
+        ArtworkSlot::Logo => true,
+        ArtworkSlot::Icon => true,
+    }
+}
+
+fn asset_quality_key(asset: &SteamGridDbRemoteAsset) -> (u64, i64, i64, i64) {
+    let pixels = u64::from(asset.width) * u64::from(asset.height);
+    let score = asset.score.map(|value| (value * 100.0) as i64).unwrap_or(0);
+    let upvotes = asset.upvotes.unwrap_or(0) - asset.downvotes.unwrap_or(0);
+    let transparency = if asset.kind == ArtworkKind::Logo
+        && asset
+            .mime_type
+            .as_deref()
+            .is_some_and(|mime| mime.eq_ignore_ascii_case("image/png"))
+    {
+        1
+    } else {
+        0
+    };
+    (pixels, transparency, score, upvotes)
 }
 
 fn build_asset_query(slot: ArtworkSlot, style_filter: ArtworkFilterKind) -> Vec<(String, String)> {
@@ -663,9 +734,32 @@ impl<T> Pipe for T {}
 #[cfg(test)]
 mod tests {
     use super::{
-        build_asset_query, is_https_url, ArtworkFilterKind, ArtworkKind, ArtworkSlot,
-        ArtworkTarget, GridStyle, SteamGridDbQueryCache, SteamGridDbRemoteAsset,
+        build_asset_query, is_https_url, select_best_asset, ArtworkFilterKind, ArtworkKind,
+        ArtworkSlot, ArtworkTarget, GridStyle, SteamGridDbQueryCache, SteamGridDbRemoteAsset,
     };
+
+    fn asset(width: u32, height: u32, kind: ArtworkKind) -> SteamGridDbRemoteAsset {
+        SteamGridDbRemoteAsset {
+            external_asset_id: i64::from(width),
+            external_game_id: 7,
+            kind,
+            grid_style: None,
+            width,
+            height,
+            aspect_ratio: width as f32 / height as f32,
+            source_url: "https://images.steamgriddb.com/original.png".to_string(),
+            thumbnail_url: "https://images.steamgriddb.com/thumb.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            score: Some(8.0),
+            upvotes: Some(10),
+            downvotes: Some(1),
+            nsfw: false,
+            locked: false,
+            ephemeral: false,
+            author_name: None,
+            author_steam64: None,
+        }
+    }
 
     #[test]
     fn validates_artwork_target_combinations() {
@@ -770,5 +864,63 @@ mod tests {
         assert!(!is_https_url("http://images.steamgriddb.com/grid.png"));
         assert!(!is_https_url("data:image/png;base64,abc"));
         assert!(!is_https_url("https:///grid.png"));
+    }
+
+    #[test]
+    fn selects_highest_valid_density_without_mixing_aspect_types() {
+        let assets = vec![
+            asset(920, 430, ArtworkKind::Grid),
+            asset(460, 215, ArtworkKind::Grid),
+            asset(600, 900, ArtworkKind::Grid),
+            asset(2048, 2048, ArtworkKind::Grid),
+        ];
+        assert_eq!(
+            select_best_asset(ArtworkSlot::GridHorizontal, &assets)
+                .expect("horizontal")
+                .width,
+            920
+        );
+        assert_eq!(
+            select_best_asset(ArtworkSlot::GridVertical, &assets)
+                .expect("vertical")
+                .height,
+            900
+        );
+        assert_eq!(
+            select_best_asset(ArtworkSlot::GridSquare, &assets)
+                .expect("square")
+                .width,
+            2048
+        );
+    }
+
+    #[test]
+    fn a_larger_wrong_type_never_wins() {
+        let assets = vec![
+            asset(4000, 4000, ArtworkKind::Grid),
+            asset(920, 430, ArtworkKind::Grid),
+        ];
+        assert_eq!(
+            select_best_asset(ArtworkSlot::GridHorizontal, &assets)
+                .expect("horizontal")
+                .width,
+            920
+        );
+    }
+
+    #[test]
+    fn logo_selection_prefers_transparent_png_when_density_is_equal() {
+        let mut png = asset(1024, 512, ArtworkKind::Logo);
+        let mut webp = asset(1024, 512, ArtworkKind::Logo);
+        webp.mime_type = Some("image/webp".to_string());
+        png.upvotes = Some(1);
+        webp.upvotes = Some(100);
+        assert_eq!(
+            select_best_asset(ArtworkSlot::Logo, &[webp, png])
+                .expect("logo")
+                .mime_type
+                .as_deref(),
+            Some("image/png")
+        );
     }
 }

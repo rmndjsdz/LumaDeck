@@ -1,5 +1,10 @@
 export type GameCapabilityKind =
-  "NATIVE_HDR" | "HIGH_FIDELITY_UPSCALING" | "FRAME_GENERATION";
+  | "NATIVE_HDR"
+  | "HIGH_FIDELITY_UPSCALING"
+  | "FRAME_GENERATION"
+  | "FOUR_K"
+  | "SIXTY_FPS"
+  | "HIGH_REFRESH_120_FPS";
 
 export type GameCapabilityValue = "YES" | "NO" | "UNKNOWN";
 
@@ -47,6 +52,9 @@ export type ResolvedGameCapabilities = {
   nativeHdr: ResolvedCapability;
   highFidelityUpscaling: ResolvedCapability;
   frameGeneration: ResolvedCapability;
+  fourK: ResolvedCapability;
+  sixtyFps: ResolvedCapability;
+  highRefresh120Fps: ResolvedCapability;
   resolvedAt: number;
   providerStatus: string | null;
   providerError: string | null;

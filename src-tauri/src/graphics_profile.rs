@@ -80,6 +80,27 @@ pub enum RecommendationConfidence {
     Low,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum GraphicsProfileDataSource {
+    Pcgamingwiki,
+    NvidiaOps,
+    LocalHardware,
+    LocalDisplay,
+    LumadeckRule,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecommendedGraphicsProfileProvenance {
+    pub resolution: GraphicsProfileDataSource,
+    pub refresh_rate: GraphicsProfileDataSource,
+    pub hdr: GraphicsProfileDataSource,
+    pub upscaling: GraphicsProfileDataSource,
+    pub frame_generation: GraphicsProfileDataSource,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecommendedTechnology {
@@ -128,6 +149,7 @@ pub struct RecommendedGraphicsProfile {
     pub confidence: RecommendationConfidence,
     pub reasons: Vec<String>,
     pub warnings: Vec<String>,
+    pub provenance: RecommendedGraphicsProfileProvenance,
 }
 
 #[tauri::command]
@@ -179,6 +201,31 @@ pub fn resolve(input: &GraphicsProfileInput) -> RecommendedGraphicsProfile {
     }
 
     let confidence = confidence_for(&input.game_capabilities, &input.hardware, &input.display);
+    let provenance = RecommendedGraphicsProfileProvenance {
+        resolution: GraphicsProfileDataSource::LocalDisplay,
+        refresh_rate: GraphicsProfileDataSource::LocalDisplay,
+        hdr: if hdr_mode == HdrModeRecommendation::Native {
+            GraphicsProfileDataSource::Pcgamingwiki
+        } else if hdr_mode == HdrModeRecommendation::RtxHdrNatural {
+            GraphicsProfileDataSource::LumadeckRule
+        } else {
+            GraphicsProfileDataSource::Pcgamingwiki
+        },
+        upscaling: if input.game_capabilities.high_fidelity_upscaling.value
+            == GameCapabilityValue::Unknown
+        {
+            GraphicsProfileDataSource::Pcgamingwiki
+        } else {
+            GraphicsProfileDataSource::LumadeckRule
+        },
+        frame_generation: if input.game_capabilities.frame_generation.value
+            == GameCapabilityValue::Unknown
+        {
+            GraphicsProfileDataSource::Pcgamingwiki
+        } else {
+            GraphicsProfileDataSource::LumadeckRule
+        },
+    };
     RecommendedGraphicsProfile {
         game_id: input.game_id.clone(),
         display: RecommendedDisplay {
@@ -198,6 +245,7 @@ pub fn resolve(input: &GraphicsProfileInput) -> RecommendedGraphicsProfile {
         confidence,
         reasons,
         warnings,
+        provenance,
     }
 }
 
@@ -701,6 +749,24 @@ mod tests {
             native_hdr: hdr,
             high_fidelity_upscaling: upscaling,
             frame_generation,
+            four_k: capability(
+                GameCapabilityKind::FourK,
+                GameCapabilityValue::Unknown,
+                &[],
+                GameCapabilityValue::Unknown,
+            ),
+            sixty_fps: capability(
+                GameCapabilityKind::SixtyFps,
+                GameCapabilityValue::Unknown,
+                &[],
+                GameCapabilityValue::Unknown,
+            ),
+            high_refresh_120_fps: capability(
+                GameCapabilityKind::HighRefresh120Fps,
+                GameCapabilityValue::Unknown,
+                &[],
+                GameCapabilityValue::Unknown,
+            ),
             resolved_at: 1,
             provider_status: None,
             provider_error: None,
@@ -825,6 +891,18 @@ mod tests {
         assert_eq!(
             result.lossless_scaling.recommendation,
             LosslessScalingRecommendation::NotRecommended
+        );
+        assert_eq!(
+            result.provenance.resolution,
+            GraphicsProfileDataSource::LocalDisplay
+        );
+        assert_eq!(
+            result.provenance.refresh_rate,
+            GraphicsProfileDataSource::LocalDisplay
+        );
+        assert_eq!(
+            result.provenance.hdr,
+            GraphicsProfileDataSource::LumadeckRule
         );
         assert!(result
             .warnings

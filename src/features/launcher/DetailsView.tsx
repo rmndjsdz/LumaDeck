@@ -41,6 +41,7 @@ import { ActivityView } from "../activity/ActivityView";
 import { AchievementsView } from "../achievements/AchievementsView";
 import { NewsView } from "../news/NewsView";
 import { ReviewsView } from "../reviews/ReviewsView";
+import { prefetchNewsFeed } from "../news/news-query";
 import { newsService } from "../news/news-service";
 import {
   gameSessionService,
@@ -457,6 +458,9 @@ export function DetailsView({
       return;
     }
     let disposed = false;
+    void prefetchNewsFeed(queryClient, gameId).catch(() => {
+      // The NewsView can still read the persistent cache when it mounts.
+    });
     void newsService
       .refresh(gameId, false)
       .then(() => {
@@ -1768,6 +1772,8 @@ export function DetailsView({
               <GameCapabilitiesPanel
                 gameId={game.id}
                 steamAppId={steamDetails?.appId ?? null}
+                title={game.title}
+                executablePath={game.gamePath ?? null}
                 screenshotUrls={screenshotUrls}
                 backgroundUrl={backgroundUrl}
               />

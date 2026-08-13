@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 const WEATHER_REFRESH_MS = 15 * 60 * 1000;
+const WEATHER_RETRY_DELAYS_MS = [1_000, 3_000, 10_000] as const;
+const WEATHER_MAX_ATTEMPTS = WEATHER_RETRY_DELAYS_MS.length + 1;
 
 type WeatherDay = {
   date: string;
@@ -36,48 +38,105 @@ export function WeatherWidget() {
 
   useEffect(() => {
     let disposed = false;
+    let inFlight = false;
+    let retryTimer: number | null = null;
+    let resolveRetry: ((shouldContinue: boolean) => void) | null = null;
+
+    const waitForRetry = (delayMs: number): Promise<boolean> =>
+      new Promise((resolve) => {
+        resolveRetry = resolve;
+        retryTimer = window.setTimeout(() => {
+          retryTimer = null;
+          resolveRetry = null;
+          resolve(true);
+        }, delayMs);
+      });
 
     const loadWeather = async () => {
-      logWeatherEvent("load-start");
-      try {
-        const position = await getCurrentPosition();
-        logWeatherEvent("geolocation-ready", {
-          latitude: roundCoordinate(position.latitude),
-          longitude: roundCoordinate(position.longitude),
-          source: position.source,
-        });
-        const url = new URL("https://api.open-meteo.com/v1/forecast");
-        url.searchParams.set("latitude", String(position.latitude));
-        url.searchParams.set("longitude", String(position.longitude));
-        url.searchParams.set("current", "temperature_2m,weather_code");
-        url.searchParams.set(
-          "daily",
-          "weather_code,temperature_2m_max,temperature_2m_min",
-        );
-        url.searchParams.set("forecast_days", "4");
-        url.searchParams.set("temperature_unit", "celsius");
-        url.searchParams.set("timezone", "auto");
+      if (inFlight) {
+        logWeatherEvent("load-skipped", { reason: "already-in-flight" });
+        return;
+      }
 
-        const response = await fetch(url, { cache: "no-store" });
-        logWeatherEvent("request-response", {
-          status: response.status,
-          ok: response.ok,
+      inFlight = true;
+      let lastError: unknown = new Error("Weather load failed");
+
+      try {
+        for (let attempt = 1; attempt <= WEATHER_MAX_ATTEMPTS; attempt += 1) {
+          if (disposed) return;
+          if (attempt > 1) {
+            logWeatherEvent("retry-start", {
+              attempt,
+              maxAttempts: WEATHER_MAX_ATTEMPTS,
+            });
+          }
+          logWeatherEvent("load-start", {
+            attempt,
+            maxAttempts: WEATHER_MAX_ATTEMPTS,
+          });
+
+          try {
+            const position = await getCurrentPosition();
+            logWeatherEvent("geolocation-ready", {
+              latitude: roundCoordinate(position.latitude),
+              longitude: roundCoordinate(position.longitude),
+              source: position.source,
+            });
+            const url = new URL("https://api.open-meteo.com/v1/forecast");
+            url.searchParams.set("latitude", String(position.latitude));
+            url.searchParams.set("longitude", String(position.longitude));
+            url.searchParams.set("current", "temperature_2m,weather_code");
+            url.searchParams.set(
+              "daily",
+              "weather_code,temperature_2m_max,temperature_2m_min",
+            );
+            url.searchParams.set("forecast_days", "4");
+            url.searchParams.set("temperature_unit", "celsius");
+            url.searchParams.set("timezone", "auto");
+
+            const response = await fetch(url, { cache: "no-store" });
+            logWeatherEvent("request-response", {
+              status: response.status,
+              ok: response.ok,
+            });
+            if (!response.ok)
+              throw new Error(`Weather request failed (${response.status})`);
+            const payload: unknown = await response.json();
+            const data = parseWeatherResponse(payload);
+            logWeatherEvent("load-ready", {
+              attempt,
+              temperature: data.temperature,
+              weatherCode: data.weatherCode,
+              forecastDays: data.forecast.length,
+            });
+            if (!disposed) setWeather({ status: "ready", data });
+            return;
+          } catch (error) {
+            lastError = error;
+            const retryDelayMs = WEATHER_RETRY_DELAYS_MS[attempt - 1];
+            if (retryDelayMs === undefined) break;
+
+            logWeatherEvent("retry-scheduled", {
+              attempt,
+              nextAttempt: attempt + 1,
+              delayMs: retryDelayMs,
+              message: weatherErrorMessage(error),
+            });
+            if (!(await waitForRetry(retryDelayMs))) return;
+          }
+        }
+
+        logWeatherEvent("retry-exhausted", {
+          attempts: WEATHER_MAX_ATTEMPTS,
+          message: weatherErrorMessage(lastError),
         });
-        if (!response.ok)
-          throw new Error(`Weather request failed (${response.status})`);
-        const payload: unknown = await response.json();
-        const data = parseWeatherResponse(payload);
-        logWeatherEvent("load-ready", {
-          temperature: data.temperature,
-          weatherCode: data.weatherCode,
-          forecastDays: data.forecast.length,
-        });
-        if (!disposed) setWeather({ status: "ready", data });
-      } catch (error) {
         logWeatherEvent("load-failed", {
-          message: weatherErrorMessage(error),
+          attempts: WEATHER_MAX_ATTEMPTS,
+          message: weatherErrorMessage(lastError),
         });
         if (!disposed) setWeather({ status: "unavailable", data: null });
+      } finally {
+        inFlight = false;
       }
     };
 
@@ -90,6 +149,10 @@ export function WeatherWidget() {
     return () => {
       disposed = true;
       window.clearInterval(weatherTimer);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      retryTimer = null;
+      resolveRetry?.(false);
+      resolveRetry = null;
     };
   }, []);
 

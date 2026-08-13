@@ -17,7 +17,12 @@ export type PcgamingwikiResolvedVia =
 export type PcgamingwikiNormalizedValue = "YES" | "NO" | "UNKNOWN";
 export type PcgamingwikiConfidence = "HIGH" | "MEDIUM" | "LOW";
 export type PcgamingwikiCapability =
-  "NATIVE_HDR" | "HIGH_FIDELITY_UPSCALING" | "FRAME_GENERATION";
+  | "NATIVE_HDR"
+  | "HIGH_FIDELITY_UPSCALING"
+  | "FRAME_GENERATION"
+  | "FOUR_K"
+  | "SIXTY_FPS"
+  | "HIGH_REFRESH_120_FPS";
 
 export type PcgamingwikiGameRef = {
   pageTitle: string;
@@ -50,6 +55,9 @@ export type PcgamingwikiCapabilities = {
   nativeHdr: PcgamingwikiCapabilityEvidence;
   highFidelityUpscaling: PcgamingwikiCapabilityEvidence;
   frameGeneration: PcgamingwikiCapabilityEvidence;
+  fourK: PcgamingwikiCapabilityEvidence;
+  sixtyFps: PcgamingwikiCapabilityEvidence;
+  highRefresh120Fps: PcgamingwikiCapabilityEvidence;
 };
 
 export type PcgamingwikiIdentityConflict = {

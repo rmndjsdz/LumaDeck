@@ -1,0 +1,30 @@
+{
+  "applications": [
+    {
+      "LocalId": 267339675,
+      "Application": {
+        "CmsId": 104511000,
+        "DisplayName": "PRAGMATA",
+        "ShortName": "pragmata",
+        "LaunchCmd": "start steam://rungameid/3357650",
+        "DetectedFiles": [
+          "E:\\SteamLibrary\\steamapps\\common\\PRAGMATA\\PRAGMATA.exe"
+        ],
+        "IsOpsSupported": true
+      }
+    },
+    {
+      "LocalId": 46994356,
+      "Application": {
+        "CmsId": 101100611,
+        "DisplayName": "ELDEN RING",
+        "ShortName": "elden_ring",
+        "LaunchCmd": "start steam://rungameid/1245620",
+        "DetectedFiles": [
+          "G:\\SteamLibrary\\steamapps\\common\\ELDEN RING\\Game\\eldenring.exe"
+        ],
+        "IsOpsSupported": true
+      }
+    }
+  ]
+}

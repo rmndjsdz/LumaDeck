@@ -13,7 +13,8 @@ XeSS, FSR, TSR, NIS, and their frame-generation variants. GPU vendor is a
 closed enum with an `UNKNOWN` value. Display input includes the selected
 `displayId`, current mode, supported modes, and HDR support/state.
 
-The output preserves the current resolution and refresh rate. It contains HDR,
+The output preserves the current resolution and refresh rate when the source
+is the LumaDeck fallback, and records per-field provenance. It contains HDR,
 upscaling, frame-generation, and Lossless Scaling recommendations, an overall
 confidence, auditable reason strings, and warnings. Technology labels retain
 versions such as `DLSS 4`, `FSR 4`, and `XeSS 2`.
@@ -26,6 +27,9 @@ versions such as `DLSS 4`, `FSR 4`, and `XeSS 2`.
 - Native HDR `NO` yields `OFF`; if evidence says an alternative/workaround is
   available, the reason and warning preserve that fact. V1 does not execute it.
 - Unknown HDR evidence or display state remains `UNKNOWN`.
+- Native HDR capability and HDR recommendation are separate: a compatible local
+  NVIDIA/display combination may recommend RTX HDR while the game capability
+  remains `NATIVE_HDR=NO`.
 - Upscaling selection follows the conservative matrix NVIDIA (DLSS, XeSS, FSR,
   TSR, NIS), AMD (FSR, XeSS, TSR), and Intel (XeSS, FSR, TSR). A technology is
   selected only when both the game lists it and the normalized hardware matrix

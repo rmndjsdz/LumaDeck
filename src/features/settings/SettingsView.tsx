@@ -55,6 +55,7 @@ import type {
   StorageStatus,
   EdenExecutableInspection,
   EdenStatus,
+  ArtworkEnrichmentStatus,
 } from "./settings-types";
 import { validateSteamApiKey, validateSteamId64 } from "./settings-validation";
 import {
@@ -70,6 +71,10 @@ import { NetworkView } from "./NetworkView";
 import { DisplayView } from "./DisplayView";
 import { BluetoothView } from "./BluetoothView";
 import { BluetoothErrorBoundary } from "./BluetoothErrorBoundary";
+import {
+  SteamGridDbEnrichmentPanel,
+  SteamGridDbEnrichmentSummary,
+} from "./SteamGridDbEnrichmentPanel";
 
 export const SETTINGS_SCREEN_DEFINITION = {
   id: "settings",
@@ -206,6 +211,8 @@ export function SettingsView({
   const [steamGridDbDeleteConfirm, setSteamGridDbDeleteConfirm] =
     useState(false);
   const [steamGridDbError, setSteamGridDbError] = useState<string | null>(null);
+  const [steamGridDbEnrichmentStatus, setSteamGridDbEnrichmentStatus] =
+    useState<ArtworkEnrichmentStatus | null>(null);
   const [rapidApiReviewsConfiguration, setRapidApiReviewsConfiguration] =
     useState<RapidApiReviewsConfigurationStatus | null>(null);
   const [rapidApiReviewsApiKeyDraft, setRapidApiReviewsApiKeyDraft] =
@@ -1547,6 +1554,9 @@ export function SettingsView({
           onOpenDelete={openSteamGridDbDeleteDialog}
           onCancelDelete={() => setSteamGridDbDeleteConfirm(false)}
           onConfirmDelete={() => void deleteSteamGridDbApiKey()}
+          games={games}
+          enrichmentStatus={steamGridDbEnrichmentStatus}
+          onEnrichmentStatusChange={setSteamGridDbEnrichmentStatus}
         />
       )}
       {level === "rapidapi-reviews" && (
@@ -2581,6 +2591,9 @@ function SteamGridDbView({
   onOpenDelete,
   onCancelDelete,
   onConfirmDelete,
+  games,
+  enrichmentStatus,
+  onEnrichmentStatusChange,
 }: {
   configuration: SteamGridDbConfigurationStatus | null;
   apiKeyDraft: string;
@@ -2595,6 +2608,9 @@ function SteamGridDbView({
   onOpenDelete: () => void;
   onCancelDelete: () => void;
   onConfirmDelete: () => void;
+  games: readonly Game[];
+  enrichmentStatus: ArtworkEnrichmentStatus | null;
+  onEnrichmentStatusChange: (status: ArtworkEnrichmentStatus) => void;
 }) {
   const configured = configuration?.apiKeyConfigured ?? false;
   return (
@@ -2603,8 +2619,9 @@ function SteamGridDbView({
         eyebrow="Configuración · Integraciones · SteamGridDB"
         title="SteamGridDB"
         description="Obtén portadas, fondos, logos e iconos para personalizar tu biblioteca."
+        className="steamgriddb-heading"
       />
-      <div className="steam-settings-layout">
+      <div className="steam-settings-layout artwork-settings-layout">
         <div className="steam-settings-main">
           <article className="settings-panel">
             <div className="steam-account-heading">
@@ -2627,6 +2644,34 @@ function SteamGridDbView({
               <span>API Key</span>
               <strong>{configuration?.apiKeyMasked ?? "No configurada"}</strong>
             </div>
+            {configured && (
+              <div className="steamgriddb-key-actions">
+                <Focusable
+                  focusId="steamgriddb-change-key"
+                  scopeId="settings-shell"
+                  className="settings-action settings-action-primary"
+                  onConfirm={onOpenApiKey}
+                >
+                  <span
+                    className="settings-action-icon is-edit"
+                    aria-hidden="true"
+                  />
+                  Cambiar API Key
+                </Focusable>
+                <Focusable
+                  focusId="steamgriddb-delete-key"
+                  scopeId="settings-shell"
+                  className="settings-action settings-action-danger"
+                  onConfirm={onOpenDelete}
+                >
+                  <span
+                    className="settings-action-icon is-trash"
+                    aria-hidden="true"
+                  />
+                  Eliminar API Key
+                </Focusable>
+              </div>
+            )}
           </article>
           {editing || !configured ? (
             <article className="settings-panel settings-editor-panel">
@@ -2668,42 +2713,35 @@ function SteamGridDbView({
                 )}
               </div>
             </article>
-          ) : (
-            <Focusable
-              focusId="steamgriddb-change-key"
-              scopeId="settings-shell"
-              className="settings-action settings-action-primary"
-              onConfirm={onOpenApiKey}
-            >
-              Cambiar API Key
-            </Focusable>
-          )}
-          {configured && (
-            <Focusable
-              focusId="steamgriddb-delete-key"
-              scopeId="settings-shell"
-              className="settings-action settings-action-danger"
-              onConfirm={onOpenDelete}
-            >
-              Eliminar API Key
-            </Focusable>
-          )}
+          ) : null}
           {errorMessage && (
             <p className="settings-feedback is-error" role="alert">
               {errorMessage}
             </p>
           )}
+          {configured && (
+            <SteamGridDbEnrichmentPanel
+              games={games}
+              onStatusChange={onEnrichmentStatusChange}
+            />
+          )}
         </div>
-        <aside className="settings-panel settings-security-note">
-          <strong>Almacenamiento seguro</strong>
-          <p>
-            La API Key se cifra con DPAPI CurrentUser y solo se conserva en el
-            backend.
-          </p>
-          <small>
-            Esta primera etapa no realiza consultas, búsquedas ni descargas de
-            imágenes.
-          </small>
+        <aside className="steam-settings-side artwork-settings-side">
+          <section className="settings-panel settings-security-note">
+            <span className="artwork-lock-icon" aria-hidden="true" />
+            <strong>Almacenamiento seguro</strong>
+            <p>
+              La API Key se cifra con DPAPI CurrentUser y solo se conserva en el
+              backend.
+            </p>
+            <small>
+              Las consultas y descargas se ejecutan en backend con concurrencia
+              limitada; la API Key nunca llega al frontend.
+            </small>
+          </section>
+          {configured && (
+            <SteamGridDbEnrichmentSummary status={enrichmentStatus} />
+          )}
         </aside>
       </div>
       {deleteConfirm && (
@@ -4389,13 +4427,19 @@ function SettingsHeading({
   eyebrow,
   title,
   description,
+  className,
 }: {
   eyebrow: string;
   title: string;
   description: string;
+  className?: string;
 }) {
   return (
-    <div className="settings-heading">
+    <div
+      className={
+        className ? `settings-heading ${className}` : "settings-heading"
+      }
+    >
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <h1 id="settings-heading">{title}</h1>

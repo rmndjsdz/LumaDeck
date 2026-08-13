@@ -297,17 +297,20 @@ impl<'a> SettingsRepository<'a> {
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
         connection
             .query_row(
-                "SELECT g.id, g.title,
+                "SELECT g.id, g.title, g.platform, COALESCE(g.source, ''), g.title_id,
                     (SELECT external_id FROM game_provider_links
                      WHERE game_id = g.id AND provider_id = 'steam' LIMIT 1)
                  FROM games g WHERE g.id = ?1",
                 params![game_id],
                 |row| {
-                    let external_id = row.get::<_, Option<String>>(2)?;
+                    let external_id = row.get::<_, Option<String>>(5)?;
                     Ok(LocalGameIdentity {
                         local_game_id: row.get(0)?,
                         title: row.get(1)?,
                         steam_app_id: external_id.and_then(|value| value.parse::<i64>().ok()),
+                        platform: row.get(2)?,
+                        source: row.get(3)?,
+                        title_id: row.get(4)?,
                     })
                 },
             )
@@ -4432,7 +4435,7 @@ mod tests {
 
         let database_status = repository.get_database_status().expect("database status");
         assert!(database_status.path.ends_with("lumadeck.db"));
-        assert_eq!(database_status.schema_version, 32);
+        assert_eq!(database_status.schema_version, 34);
         assert_eq!(database_status.provider_count, 7);
         let connection = state.connection.lock().expect("database lock");
         let foreign_keys: i64 = connection

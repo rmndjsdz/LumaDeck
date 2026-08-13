@@ -56,12 +56,15 @@ pub enum PcgamingwikiResolvedVia {
     MediaWikiGogId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PcgamingwikiCapability {
     NativeHdr,
     HighFidelityUpscaling,
     FrameGeneration,
+    FourK,
+    SixtyFps,
+    HighRefresh120Fps,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +120,31 @@ pub struct PcgamingwikiCapabilities {
     pub native_hdr: PcgamingwikiCapabilityEvidence,
     pub high_fidelity_upscaling: PcgamingwikiCapabilityEvidence,
     pub frame_generation: PcgamingwikiCapabilityEvidence,
+    pub four_k: PcgamingwikiCapabilityEvidence,
+    pub sixty_fps: PcgamingwikiCapabilityEvidence,
+    pub high_refresh_120_fps: PcgamingwikiCapabilityEvidence,
+}
+
+fn unknown_capability(
+    capability: PcgamingwikiCapability,
+    source_page: &str,
+    source_field: &str,
+) -> PcgamingwikiCapabilityEvidence {
+    PcgamingwikiCapabilityEvidence {
+        capability,
+        normalized_value: PcgamingwikiNormalizedValue::Unknown,
+        source_value: None,
+        alternative_available: PcgamingwikiNormalizedValue::Unknown,
+        source_note: None,
+        technologies: Vec::new(),
+        source: PCGAMINGWIKI_SOURCE.to_string(),
+        source_page: source_page.to_string(),
+        source_field: source_field.to_string(),
+        confidence: PcgamingwikiConfidence::Low,
+        observed_at: now_string(),
+        provider_version: PCGAMINGWIKI_PROVIDER_VERSION,
+        stale: false,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,6 +251,10 @@ struct VideoFields {
     frame_generation: Option<String>,
     frame_generation_technologies: Option<String>,
     frame_generation_notes: Option<String>,
+    four_k: Option<String>,
+    sixty_fps: Option<String>,
+    high_refresh_120_fps: Option<String>,
+    high_refresh_120_fps_notes: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1146,6 +1178,10 @@ fn parse_video_fields(source: &str) -> Result<VideoFields, ProviderError> {
                 "frame generation note",
             ],
         ),
+        four_k: values.get("4k ultra hd").cloned(),
+        sixty_fps: values.get("60 fps").cloned(),
+        high_refresh_120_fps: values.get("120 fps").cloned(),
+        high_refresh_120_fps_notes: values.get("120 fps notes").cloned(),
     })
 }
 
@@ -1241,16 +1277,8 @@ fn clean_wikitext(value: &str) -> String {
 
 fn normalize_capabilities(fields: &VideoFields, source_page: &str) -> PcgamingwikiCapabilities {
     let hdr = normalize_hdr(fields);
-    let upscaling_note = note_or_default(
-        fields.upscaling.as_deref(),
-        fields.upscaling_notes.as_deref(),
-        "See the glossary page for potential workarounds.",
-    );
-    let frame_generation_note = note_or_default(
-        fields.frame_generation.as_deref(),
-        fields.frame_generation_notes.as_deref(),
-        "See the glossary page for potential workarounds.",
-    );
+    let upscaling_note = explicit_note(fields.upscaling_notes.as_deref());
+    let frame_generation_note = explicit_note(fields.frame_generation_notes.as_deref());
     let upscaling = normalize_technology_field(
         fields.upscaling.as_deref(),
         fields.upscaling_technologies.as_deref(),
@@ -1260,6 +1288,12 @@ fn normalize_capabilities(fields: &VideoFields, source_page: &str) -> Pcgamingwi
         fields.frame_generation.as_deref(),
         fields.frame_generation_technologies.as_deref(),
         frame_generation_note.as_deref(),
+    );
+    let four_k = normalize_boolean_field(fields.four_k.as_deref(), None);
+    let sixty_fps = normalize_boolean_field(fields.sixty_fps.as_deref(), None);
+    let high_refresh_120_fps = normalize_boolean_field(
+        fields.high_refresh_120_fps.as_deref(),
+        explicit_note(fields.high_refresh_120_fps_notes.as_deref()).as_deref(),
     );
     PcgamingwikiCapabilities {
         native_hdr: evidence(
@@ -1280,16 +1314,30 @@ fn normalize_capabilities(fields: &VideoFields, source_page: &str) -> Pcgamingwi
             source_page,
             "Frame generation",
         ),
+        four_k: evidence(
+            PcgamingwikiCapability::FourK,
+            four_k,
+            source_page,
+            "4K Ultra HD",
+        ),
+        sixty_fps: evidence(
+            PcgamingwikiCapability::SixtyFps,
+            sixty_fps,
+            source_page,
+            "60 FPS",
+        ),
+        high_refresh_120_fps: evidence(
+            PcgamingwikiCapability::HighRefresh120Fps,
+            high_refresh_120_fps,
+            source_page,
+            "120 FPS",
+        ),
     }
 }
 
 fn normalize_hdr(fields: &VideoFields) -> NormalizedField {
     let direct = fields.hdr.as_deref().unwrap_or_default();
-    let source_note = note_or_default(
-        Some(direct),
-        fields.hdr_notes.as_deref(),
-        "See the engine page to force native HDR output, or the glossary page for other alternatives.",
-    );
+    let source_note = explicit_note(fields.hdr_notes.as_deref());
     let source_value = match (&fields.hdr, &source_note) {
         (Some(value), Some(notes)) if !notes.is_empty() => Some(format!("{value} — {notes}")),
         (Some(value), _) => Some(value.clone()),
@@ -1372,6 +1420,38 @@ fn normalize_technology_field(
     }
 }
 
+fn normalize_boolean_field(value: Option<&str>, note: Option<&str>) -> NormalizedField {
+    let source = value.unwrap_or_default();
+    let source_value = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let source_note = explicit_note(note);
+    let normalized = if explicit_yes(source) {
+        PcgamingwikiNormalizedValue::Yes
+    } else if explicit_no(source) {
+        PcgamingwikiNormalizedValue::No
+    } else {
+        PcgamingwikiNormalizedValue::Unknown
+    };
+    let confidence = if matches!(
+        normalized,
+        PcgamingwikiNormalizedValue::Yes | PcgamingwikiNormalizedValue::No
+    ) {
+        PcgamingwikiConfidence::High
+    } else {
+        PcgamingwikiConfidence::Low
+    };
+    NormalizedField {
+        value: normalized,
+        source_value,
+        alternative_available: PcgamingwikiNormalizedValue::Unknown,
+        source_note,
+        technologies: Vec::new(),
+        confidence,
+    }
+}
+
 fn alternative_available(note: Option<&str>) -> PcgamingwikiNormalizedValue {
     let Some(note) = note.map(str::trim).filter(|value| !value.is_empty()) else {
         return PcgamingwikiNormalizedValue::Unknown;
@@ -1394,11 +1474,33 @@ fn alternative_available(note: Option<&str>) -> PcgamingwikiNormalizedValue {
     PcgamingwikiNormalizedValue::Unknown
 }
 
-fn note_or_default(value: Option<&str>, note: Option<&str>, default_note: &str) -> Option<String> {
+fn explicit_note(note: Option<&str>) -> Option<String> {
     note.map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-        .or_else(|| explicit_no(value.unwrap_or_default()).then(|| default_note.to_string()))
+}
+
+const GENERIC_HDR_GUIDANCE: &str =
+    "See the engine page to force native HDR output, or the glossary page for other alternatives.";
+
+fn sanitize_legacy_hdr_guidance(evidence: &mut PcgamingwikiCapabilityEvidence) {
+    if evidence.capability != PcgamingwikiCapability::NativeHdr {
+        return;
+    }
+    let is_generic = evidence
+        .source_note
+        .as_deref()
+        .is_some_and(|note| note.trim() == GENERIC_HDR_GUIDANCE);
+    if !is_generic {
+        return;
+    }
+    evidence.source_note = None;
+    evidence.alternative_available = PcgamingwikiNormalizedValue::Unknown;
+    evidence.source_value = evidence
+        .source_value
+        .as_deref()
+        .and_then(|value| value.split_once(" — ").map(|(raw, _)| raw.to_string()))
+        .or_else(|| evidence.source_value.clone());
 }
 
 fn explicit_yes(value: &str) -> bool {
@@ -1513,6 +1615,9 @@ fn response_from_cache(
         capabilities.native_hdr.stale = true;
         capabilities.high_fidelity_upscaling.stale = true;
         capabilities.frame_generation.stale = true;
+        capabilities.four_k.stale = true;
+        capabilities.sixty_fps.stale = true;
+        capabilities.high_refresh_120_fps.stale = true;
     }
     PcgamingwikiCapabilitiesResponse {
         status: PcgamingwikiResolutionStatus::Resolved,
@@ -1598,16 +1703,21 @@ fn load_cached_result(
         let value = row?;
         evidence.insert(capability_name(&value.capability), value);
     }
-    let (Some(native_hdr), Some(high_fidelity_upscaling), Some(frame_generation)) = (
-        evidence.remove("NATIVE_HDR"),
-        evidence.remove("HIGH_FIDELITY_UPSCALING"),
-        evidence.remove("FRAME_GENERATION"),
-    ) else {
+    let native_hdr = evidence.remove("NATIVE_HDR");
+    let high_fidelity_upscaling = evidence.remove("HIGH_FIDELITY_UPSCALING");
+    let frame_generation = evidence.remove("FRAME_GENERATION");
+    let four_k = evidence.remove("FOUR_K");
+    let sixty_fps = evidence.remove("SIXTY_FPS");
+    let high_refresh_120_fps = evidence.remove("HIGH_REFRESH_120_FPS");
+    let (Some(mut native_hdr), Some(high_fidelity_upscaling), Some(frame_generation)) =
+        (native_hdr, high_fidelity_upscaling, frame_generation)
+    else {
         return Ok(None);
     };
+    sanitize_legacy_hdr_guidance(&mut native_hdr);
     Ok(Some(CachedResult {
         game_ref: PcgamingwikiGameRef {
-            page_title,
+            page_title: page_title.clone(),
             page_id: page_identifier,
             canonical_url,
             steam_app_id,
@@ -1620,6 +1730,19 @@ fn load_cached_result(
             native_hdr,
             high_fidelity_upscaling,
             frame_generation,
+            four_k: four_k.unwrap_or_else(|| {
+                unknown_capability(PcgamingwikiCapability::FourK, &page_title, "4K Ultra HD")
+            }),
+            sixty_fps: sixty_fps.unwrap_or_else(|| {
+                unknown_capability(PcgamingwikiCapability::SixtyFps, &page_title, "60 FPS")
+            }),
+            high_refresh_120_fps: high_refresh_120_fps.unwrap_or_else(|| {
+                unknown_capability(
+                    PcgamingwikiCapability::HighRefresh120Fps,
+                    &page_title,
+                    "120 FPS",
+                )
+            }),
         },
         checked_at,
         identity_checked_at,
@@ -1647,6 +1770,9 @@ fn persist_result(
         &capabilities.native_hdr,
         &capabilities.high_fidelity_upscaling,
         &capabilities.frame_generation,
+        &capabilities.four_k,
+        &capabilities.sixty_fps,
+        &capabilities.high_refresh_120_fps,
     ] {
         transaction.execute("INSERT INTO pcgamingwiki_capability_evidence(game_id, capability, normalized_value, source_value, alternative_available, source_note, technologies_json, source, source_page, source_field, confidence, observed_at, provider_version, stale) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0) ON CONFLICT(game_id, capability) DO UPDATE SET normalized_value=excluded.normalized_value, source_value=excluded.source_value, alternative_available=excluded.alternative_available, source_note=excluded.source_note, technologies_json=excluded.technologies_json, source=excluded.source, source_page=excluded.source_page, source_field=excluded.source_field, confidence=excluded.confidence, observed_at=excluded.observed_at, provider_version=excluded.provider_version, stale=0", rusqlite::params![game_id, capability_name(&value.capability), normalized_name(&value.normalized_value), value.source_value, normalized_name(&value.alternative_available), value.source_note, serde_json::to_string(&value.technologies).unwrap_or_else(|_| "[]".to_string()), value.source, value.source_page, value.source_field, confidence_name(&value.confidence), value.observed_at, value.provider_version])?;
     }
@@ -1658,6 +1784,9 @@ fn capability_name(value: &PcgamingwikiCapability) -> &'static str {
         PcgamingwikiCapability::NativeHdr => "NATIVE_HDR",
         PcgamingwikiCapability::HighFidelityUpscaling => "HIGH_FIDELITY_UPSCALING",
         PcgamingwikiCapability::FrameGeneration => "FRAME_GENERATION",
+        PcgamingwikiCapability::FourK => "FOUR_K",
+        PcgamingwikiCapability::SixtyFps => "SIXTY_FPS",
+        PcgamingwikiCapability::HighRefresh120Fps => "HIGH_REFRESH_120_FPS",
     }
 }
 fn same_external_ids(
@@ -1696,6 +1825,9 @@ fn parse_capability(value: &str) -> PcgamingwikiCapability {
     match value {
         "HIGH_FIDELITY_UPSCALING" => PcgamingwikiCapability::HighFidelityUpscaling,
         "FRAME_GENERATION" => PcgamingwikiCapability::FrameGeneration,
+        "FOUR_K" => PcgamingwikiCapability::FourK,
+        "SIXTY_FPS" => PcgamingwikiCapability::SixtyFps,
+        "HIGH_REFRESH_120_FPS" => PcgamingwikiCapability::HighRefresh120Fps,
         _ => PcgamingwikiCapability::NativeHdr,
     }
 }
@@ -1754,6 +1886,38 @@ mod tests {
             result.frame_generation.normalized_value,
             PcgamingwikiNormalizedValue::Unknown
         ));
+        assert_eq!(
+            result.native_hdr.alternative_available,
+            PcgamingwikiNormalizedValue::Unknown
+        );
+        assert_eq!(result.native_hdr.source_note, None);
+    }
+
+    #[test]
+    fn parses_fighterz_video_capabilities_without_inferencing_performance() {
+        let source = "{{Video|4k ultra hd=true|60 fps=true|120 fps=false|120 fps notes=Capped to 60 FPS.|hdr=false|upscaling=unknown|framegen=unknown}}";
+        let fields = parse_video_fields(source).expect("fields");
+        let result = normalize_capabilities(&fields, "Dragon Ball FighterZ");
+        assert_eq!(
+            result.four_k.normalized_value,
+            PcgamingwikiNormalizedValue::Yes
+        );
+        assert_eq!(
+            result.sixty_fps.normalized_value,
+            PcgamingwikiNormalizedValue::Yes
+        );
+        assert_eq!(
+            result.high_refresh_120_fps.normalized_value,
+            PcgamingwikiNormalizedValue::No
+        );
+        assert_eq!(
+            result.high_refresh_120_fps.source_note.as_deref(),
+            Some("Capped to 60 FPS.")
+        );
+        assert_eq!(
+            result.native_hdr.alternative_available,
+            PcgamingwikiNormalizedValue::Unknown
+        );
     }
 
     #[test]

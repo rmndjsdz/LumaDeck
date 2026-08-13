@@ -15,6 +15,10 @@ import type {
   ResolvedCapability,
   ResolvedGameCapabilities,
 } from "./game-capabilities-types";
+import {
+  capabilityStateClass,
+  capabilityStateLabel,
+} from "./game-capability-presentation";
 import { GraphicsProfilePanel } from "../graphics-profile/GraphicsProfilePanel";
 
 const capabilityRows: readonly {
@@ -51,12 +55,16 @@ const overrideOptions: readonly {
 export function GameCapabilitiesPanel({
   gameId,
   steamAppId,
+  title,
+  executablePath,
   gogProductId = null,
   screenshotUrls = [],
   backgroundUrl = null,
 }: {
   gameId: string;
   steamAppId: number | null;
+  title?: string | null;
+  executablePath?: string | null;
   gogProductId?: string | null;
   screenshotUrls?: readonly string[];
   backgroundUrl?: string | null;
@@ -190,7 +198,13 @@ export function GameCapabilitiesPanel({
               />
             ))}
           </div>
-          <GraphicsProfilePanel gameId={gameId} capabilities={capabilities} />
+          <GraphicsProfilePanel
+            gameId={gameId}
+            steamAppId={steamAppId}
+            title={title ?? null}
+            executablePath={executablePath ?? null}
+            capabilities={capabilities}
+          />
         </>
       )}
       {editingCapability && capabilities && (
@@ -313,7 +327,7 @@ function capabilityDescription(
   if (label === "HDR nativo") {
     return value === "YES"
       ? "El juego declara soporte HDR nativo."
-      : "El juego no declara soporte HDR nativo.";
+      : "El juego no soporta HDR nativo.";
   }
   if (label === "Upscaling") {
     return value === "YES"
@@ -323,22 +337,6 @@ function capabilityDescription(
   return value === "YES"
     ? "El juego declara compatibilidad con frame generation."
     : "El juego no declara compatibilidad con frame generation.";
-}
-
-function capabilityStateLabel(capability: ResolvedCapability): string {
-  if (capability.value === "NO" && capability.alternativeAvailable === "YES") {
-    return "Parcialmente compatible";
-  }
-  if (capability.value === "YES") return "Compatible";
-  if (capability.value === "NO") return "No compatible";
-  return "Desconocido";
-}
-
-function capabilityStateClass(capability: ResolvedCapability): string {
-  if (capability.value === "NO" && capability.alternativeAvailable === "YES") {
-    return "is-partial";
-  }
-  return `is-${capability.value.toLowerCase()}`;
 }
 
 function commonSourceLabel(

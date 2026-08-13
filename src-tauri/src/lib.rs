@@ -1,6 +1,7 @@
 mod achievements;
 mod ai;
 mod artwork;
+mod artwork_enrichment;
 mod auto_hdr;
 mod bluetooth;
 mod consensus;
@@ -21,6 +22,7 @@ mod media_server;
 mod network;
 pub mod news;
 mod news_steam;
+mod nvidia_ops;
 mod pcgamingwiki;
 mod reviews;
 mod rtx_hdr;
@@ -508,6 +510,43 @@ async fn apply_steamgriddb_artwork(
             ))
         }
     }
+}
+
+#[tauri::command]
+async fn start_artwork_enrichment(
+    state: State<'_, DatabaseState>,
+    request: artwork_enrichment::ArtworkEnrichmentRequest,
+) -> Result<artwork_enrichment::ArtworkEnrichmentStatus, String> {
+    artwork_enrichment::run(&state, request).await
+}
+
+#[tauri::command]
+fn cancel_artwork_enrichment(
+    state: State<'_, DatabaseState>,
+) -> Result<artwork_enrichment::ArtworkEnrichmentStatus, String> {
+    if state.artwork_enrichment_running.load(Ordering::SeqCst) {
+        state
+            .artwork_enrichment_cancel_requested
+            .store(true, Ordering::SeqCst);
+    }
+    get_artwork_enrichment_status(state)
+}
+
+#[tauri::command]
+fn get_artwork_enrichment_status(
+    state: State<'_, DatabaseState>,
+) -> Result<artwork_enrichment::ArtworkEnrichmentStatus, String> {
+    if let Ok(status) = state.artwork_enrichment_status.lock() {
+        if status.status != "idle" || state.artwork_enrichment_running.load(Ordering::SeqCst) {
+            return Ok(status.clone());
+        }
+    }
+    let Some(summary) =
+        settings::get_last_artwork_enrichment_run(&state).map_err(|error| error.to_string())?
+    else {
+        return Ok(artwork_enrichment::ArtworkEnrichmentStatus::default());
+    };
+    serde_json::from_str(&summary).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1642,6 +1681,7 @@ async fn load_game_reviews_sources(
             cache
                 .as_ref()
                 .and_then(|value| decode_review_cache(value.opencritic_json.as_ref()))
+                .filter(reviews::is_usable_opencritic_cache)
         })
         .flatten();
     let cached_steam = cache_matches_app
@@ -1704,7 +1744,11 @@ async fn load_game_reviews_sources(
                 }
             }
             if cached_opencritic.is_none() {
-                if let Some(source) = value.opencritic.as_ref() {
+                if let Some(source) = value
+                    .opencritic
+                    .as_ref()
+                    .filter(|source| reviews::is_usable_opencritic_cache(source))
+                {
                     if let Ok(payload) = serde_json::to_string(source) {
                         let _ = settings::save_reviews_provider_cache(
                             &state,
@@ -3708,6 +3752,9 @@ pub fn run() {
             search_steamgriddb_artwork,
             cancel_steamgriddb_artwork_search,
             apply_steamgriddb_artwork,
+            start_artwork_enrichment,
+            cancel_artwork_enrichment,
+            get_artwork_enrichment_status,
             restore_steamgriddb_artwork,
             get_current_steamgriddb_artwork,
             get_provider_configuration,
@@ -3725,6 +3772,7 @@ pub fn run() {
             game_capabilities::set_game_capability_override,
             game_capabilities::clear_game_capability_override,
             graphics_profile::resolve_graphics_profile,
+            nvidia_ops::get_nvidia_ops_profile,
             rtx_hdr::get_rtx_hdr_profile,
             rtx_hdr::apply_rtx_hdr_profile,
             rtx_hdr::restore_rtx_hdr_profile,

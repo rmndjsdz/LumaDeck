@@ -221,9 +221,39 @@ fn rapid_api_request(
 
 fn slugify_title(value: &str) -> String {
     normalized_title(value)
+        .chars()
+        .filter_map(ascii_slug_character)
+        .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join("-")
+}
+
+fn ascii_slug_character(character: char) -> Option<char> {
+    let folded = match character {
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => 'a',
+        'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => 'c',
+        'ď' | 'đ' => 'd',
+        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => 'e',
+        'ĝ' | 'ğ' | 'ġ' | 'ģ' => 'g',
+        'ĥ' | 'ħ' => 'h',
+        'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => 'i',
+        'ĵ' => 'j',
+        'ķ' => 'k',
+        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => 'l',
+        'ñ' | 'ń' | 'ņ' | 'ň' | 'ŉ' | 'ŋ' => 'n',
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => 'o',
+        'ŕ' | 'ŗ' | 'ř' => 'r',
+        'ś' | 'ŝ' | 'ş' | 'š' | 'ß' => 's',
+        'ť' | 'ţ' | 'ŧ' => 't',
+        'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => 'u',
+        'ŵ' => 'w',
+        'ý' | 'ÿ' | 'ŷ' => 'y',
+        'ź' | 'ż' | 'ž' => 'z',
+        character if character.is_ascii_alphanumeric() || character.is_whitespace() => character,
+        _ => return None,
+    };
+    Some(folded)
 }
 
 fn metacritic_slug_candidates(title: &str) -> Vec<String> {
@@ -473,6 +503,10 @@ fn value_f64(value: &Value, keys: &[&str]) -> Option<f64> {
 fn value_score(value: &Value, keys: &[&str]) -> Option<f64> {
     keys.iter()
         .find_map(|key| parse_score_value(value.get(*key)).map(|score| score as f64))
+}
+
+pub fn is_usable_opencritic_cache(value: &OpenCriticDto) -> bool {
+    value.score.is_some() || value.review_count.is_some_and(|count| count > 0)
 }
 
 async fn fetch_opencritic(
@@ -858,8 +892,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        is_supported_review_language, metacritic_slug_candidates, normalized_title,
-        parse_score_value, select_featured_reviews, SteamReviewDto, SteamReviewSnapshotDto,
+        is_supported_review_language, is_usable_opencritic_cache, metacritic_slug_candidates,
+        normalized_title, parse_score_value, select_featured_reviews, OpenCriticDto,
+        SteamReviewDto, SteamReviewSnapshotDto,
     };
 
     #[test]
@@ -881,6 +916,31 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|candidate| candidate == "the-witcher-3-wild-hunt"));
+
+        let candidates = metacritic_slug_candidates("MARVEL Tōkon: Fighting Souls");
+        assert!(candidates
+            .iter()
+            .any(|candidate| candidate == "marvel-tokon-fighting-souls"));
+    }
+
+    #[test]
+    fn rejects_empty_opencritic_cache_entries() {
+        assert!(!is_usable_opencritic_cache(&OpenCriticDto {
+            id: Some(20101),
+            name: Some("Marvel Tokon: Fighting Souls".to_string()),
+            score: None,
+            review_count: Some(0),
+            percent_recommended: Some(-1.0),
+            url: Some("https://opencritic.com/game/20101".to_string()),
+        }));
+        assert!(is_usable_opencritic_cache(&OpenCriticDto {
+            id: Some(20101),
+            name: Some("Marvel Tokon: Fighting Souls".to_string()),
+            score: Some(87.0),
+            review_count: Some(20),
+            percent_recommended: Some(90.0),
+            url: Some("https://opencritic.com/game/20101".to_string()),
+        }));
     }
 
     #[test]

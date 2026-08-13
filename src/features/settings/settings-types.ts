@@ -31,6 +31,39 @@ export interface SteamGridDbConfigurationStatus {
   enabled: boolean;
 }
 
+export type ArtworkEnrichmentScope = "only_non_steam" | "all";
+export type ArtworkEnrichmentSlot =
+  | "grid_horizontal"
+  | "grid_vertical"
+  | "grid_square"
+  | "hero"
+  | "logo";
+
+export interface ArtworkEnrichmentRequest {
+  gameIds: string[];
+  scope: ArtworkEnrichmentScope;
+  slots: ArtworkEnrichmentSlot[];
+  maxDimension: number;
+  concurrency: number;
+}
+
+export interface ArtworkEnrichmentStatus {
+  status: "idle" | "running" | "completed" | "cancelled" | "error" | string;
+  processedGames: number;
+  totalGames: number;
+  currentGame?: string | null;
+  currentArtwork?: string | null;
+  downloadedAssets: number;
+  alreadyCompleteGames: number;
+  noResultGames: number;
+  ambiguousGames: number;
+  errorCount: number;
+  durationMs?: number | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  errorMessage?: string | null;
+}
+
 export type RapidApiReviewsConfigurationState =
   "not-configured" | "configured" | "credential-unavailable";
 

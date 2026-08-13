@@ -26,14 +26,24 @@ V1 soporta únicamente:
 - `NATIVE_HDR`
 - `HIGH_FIDELITY_UPSCALING`
 - `FRAME_GENERATION`
+- `FOUR_K`
+- `SIXTY_FPS`
+- `HIGH_REFRESH_120_FPS`
 
 Cada resultado conserva `YES`, `NO` o `UNKNOWN`, confianza, fuente,
 tecnologías, `alternativeAvailable`, `sourceNote`, evidencia ganadora,
 evidencia restante, `stale` y conflicto.
 
+Las capacidades de video (`FOUR_K`, `SIXTY_FPS` y `HIGH_REFRESH_120_FPS`) no
+representan la resolución actual del monitor, la frecuencia de refresco ni FPS
+estimados del hardware. Una nota como `Capped to 60 FPS.` se conserva como
+`sourceNote` de `HIGH_REFRESH_120_FPS`.
+
 `NO` describe ausencia de soporte nativo/out-of-the-box reportado; no significa
 que la capability sea imposible mediante una alternativa. La nota se conserva
-sin ejecutar ni interpretar el workaround.
+sin ejecutar ni interpretar el workaround. Una alternativa nunca cambia el
+estado de `NATIVE_HDR`: `NO + alternativeAvailable=YES` sigue siendo HDR nativo
+no compatible.
 
 La precedencia es independiente de confidence:
 

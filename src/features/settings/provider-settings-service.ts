@@ -15,6 +15,8 @@ import type {
   HltbPendingMatch,
   HltbSyncStatus,
   SteamGridDbConfigurationStatus,
+  ArtworkEnrichmentRequest,
+  ArtworkEnrichmentStatus,
   RapidApiReviewsConfigurationStatus,
   AIConfigurationStatus,
   AIConnectionStatus,
@@ -441,6 +443,12 @@ export const providerSettingsService = {
     }),
   deleteSteamGridDbApiKey: () =>
     call<SteamGridDbConfigurationStatus>("delete_steamgriddb_api_key"),
+  getArtworkEnrichmentStatus: () =>
+    call<ArtworkEnrichmentStatus>("get_artwork_enrichment_status"),
+  startArtworkEnrichment: (request: ArtworkEnrichmentRequest) =>
+    call<ArtworkEnrichmentStatus>("start_artwork_enrichment", { request }),
+  cancelArtworkEnrichment: () =>
+    call<ArtworkEnrichmentStatus>("cancel_artwork_enrichment"),
   getRapidApiReviewsConfiguration: () =>
     call<RapidApiReviewsConfigurationStatus>(
       "get_rapidapi_reviews_configuration",
