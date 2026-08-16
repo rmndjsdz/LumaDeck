@@ -71,6 +71,9 @@ import { NetworkView } from "./NetworkView";
 import { DisplayView } from "./DisplayView";
 import { BluetoothView } from "./BluetoothView";
 import { BluetoothErrorBoundary } from "./BluetoothErrorBoundary";
+import { AppearanceView } from "./AppearanceView";
+import { DEFAULT_THEME_ID } from "../../ui/theme/theme-registry";
+import { useTheme } from "../../ui/theme/theme-context";
 import {
   SteamGridDbEnrichmentPanel,
   SteamGridDbEnrichmentSummary,
@@ -137,6 +140,7 @@ function settingsAvailability(id: string): ActionAvailability {
   return id === "display" ||
     id === "network" ||
     id === "bluetooth" ||
+    id === "appearance" ||
     id === "integrations" ||
     id === "storage" ||
     id === "library"
@@ -174,6 +178,10 @@ export function SettingsView({
 }: SettingsViewProps) {
   const { engine } = useNavigation();
   const queryClient = useQueryClient();
+  const { previewThemeId, clearThemePreview } = useTheme();
+  const [settingsEntryFocus, setSettingsEntryFocus] = useState(
+    "settings-integrations",
+  );
   const [configuration, setConfiguration] =
     useState<SteamConfigurationStatus | null>(null);
   const [configurationState, setConfigurationState] =
@@ -658,7 +666,10 @@ export function SettingsView({
   };
 
   const focusTarget = useMemo(() => {
-    if (level === "settings") return "settings-integrations";
+    if (level === "settings") return settingsEntryFocus;
+    if (level === "appearance") {
+      return `appearance-theme-${DEFAULT_THEME_ID}`;
+    }
     if (level === "display") return "display-resolution";
     if (level === "network") return "network-refresh";
     if (level === "bluetooth") return "bluetooth-discovery";
@@ -701,6 +712,7 @@ export function SettingsView({
     editingApiKey,
     editingSteamId,
     level,
+    settingsEntryFocus,
     steamGridDbConfiguration?.apiKeyConfigured,
     steamGridDbDeleteConfirm,
     steamGridDbEditing,
@@ -777,6 +789,14 @@ export function SettingsView({
       onLevelChange("settings");
       return true;
     }
+    if (level === "appearance") {
+      if (previewThemeId) {
+        clearThemePreview();
+        return true;
+      }
+      onLevelChange("settings");
+      return true;
+    }
     if (editingSteamId || editingApiKey) {
       setEditingSteamId(false);
       setEditingApiKey(false);
@@ -824,6 +844,7 @@ export function SettingsView({
       onLevelChange("settings");
       return true;
     }
+    setSettingsEntryFocus("settings-integrations");
     onClose();
     return true;
   }, [
@@ -833,11 +854,14 @@ export function SettingsView({
     level,
     onClose,
     onLevelChange,
+    clearThemePreview,
+    previewThemeId,
     storageConfirm,
     steamGridDbDeleteConfirm,
     steamGridDbEditing,
     rapidApiReviewsDeleteConfirm,
     rapidApiReviewsEditing,
+    setSettingsEntryFocus,
   ]);
 
   useLayoutEffect(() => {
@@ -1426,12 +1450,17 @@ export function SettingsView({
           onOpenDisplay={() => onLevelChange("display")}
           onOpenNetwork={() => onLevelChange("network")}
           onOpenBluetooth={() => onLevelChange("bluetooth")}
+          onOpenAppearance={() => {
+            setSettingsEntryFocus("settings-appearance");
+            onLevelChange("appearance");
+          }}
           onOpenIntegrations={() => onLevelChange("integrations")}
           onOpenStorage={() => onLevelChange("storage")}
           onOpenLibrary={() => onLevelChange("library")}
           onAvailability={setAvailabilityFeedback}
         />
       )}
+      {level === "appearance" && <AppearanceView />}
       {level === "display" && <DisplayView />}
       {level === "network" && <NetworkView />}
       {level === "bluetooth" && (
@@ -1673,6 +1702,7 @@ function SettingsHome({
   onOpenDisplay,
   onOpenNetwork,
   onOpenBluetooth,
+  onOpenAppearance,
   onOpenIntegrations,
   onOpenStorage,
   onOpenLibrary,
@@ -1681,6 +1711,7 @@ function SettingsHome({
   onOpenDisplay: () => void;
   onOpenNetwork: () => void;
   onOpenBluetooth: () => void;
+  onOpenAppearance: () => void;
   onOpenIntegrations: () => void;
   onOpenStorage: () => void;
   onOpenLibrary: () => void;
@@ -1723,11 +1754,13 @@ function SettingsHome({
                       ? onOpenNetwork
                       : id === "bluetooth"
                         ? onOpenBluetooth
-                        : id === "storage"
-                          ? onOpenStorage
-                          : id === "library"
-                            ? onOpenLibrary
-                            : onOpenIntegrations
+                        : id === "appearance"
+                          ? onOpenAppearance
+                          : id === "storage"
+                            ? onOpenStorage
+                            : id === "library"
+                              ? onOpenLibrary
+                              : onOpenIntegrations
                   : undefined
               }
               onAvailabilityFeedback={onAvailability}

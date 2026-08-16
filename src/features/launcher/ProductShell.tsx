@@ -46,6 +46,7 @@ import {
 } from "../../ui/performance/media-manager";
 import { getHomeCriticalGames } from "./home-media";
 import { fetchGameDetails } from "../catalog/catalog-query";
+import { useTheme } from "../../ui/theme/theme-context";
 
 type PrimaryProductView = Exclude<ProductView, "details">;
 
@@ -59,6 +60,7 @@ const PRIMARY_SCREEN_SEQUENCE: readonly PrimaryScreenDefinition<PrimaryProductVi
 export function ProductShell() {
   recordRender("app-shell");
   const { engine, inputManager, registry } = useNavigation();
+  const { theme } = useTheme();
   const { data: games = [], isPending, isError } = useGames();
   const queryClient = useQueryClient();
   const visibleGames = useMemo(() => getVisibleGames(games), [games]);
@@ -160,9 +162,14 @@ export function ProductShell() {
     }),
     [],
   );
-  const homeEntryFocusId = `home-continue-${
-    visibleGames.find((game) => game.status === "playing")?.id ?? "empty"
-  }`;
+  const homeEntryFocusId =
+    theme.layout.home === "cinematic"
+      ? `home-cinematic-${homeCriticalGames[0]?.id ?? "empty"}`
+      : `home-continue-${
+          visibleGames.find((game) => game.status === "playing")?.id ?? "empty"
+        }`;
+  const isCinematicHome =
+    activeView === "home" && theme.layout.home === "cinematic";
   useEffect(() => {
     let disposed = false;
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
@@ -416,7 +423,7 @@ export function ProductShell() {
 
   return (
     <div
-      className={`app-shell${activeView === "home" ? " app-shell-home" : ""}${activeView === "details" ? " app-shell-details" : ""}`}
+      className={`app-shell${activeView === "home" ? " app-shell-home" : ""}${activeView === "details" ? " app-shell-details" : ""}${isCinematicHome ? " app-shell-cinematic" : ""}`}
     >
       <BackgroundView games={visibleGames} fallbackGameId={selectedGameId} />
       <ScreenNavigationAdapter
@@ -520,7 +527,9 @@ export function ProductShell() {
           {activeView !== "settings" &&
             !isPending &&
             !isError &&
-            (activeView !== "home" || homeMediaReady) && (
+            (activeView !== "home" ||
+              homeMediaReady ||
+              homeCriticalGames.length > 0) && (
               <ViewTransition view={activeView}>
                 {activeView === "home" && (
                   <HomeView

@@ -400,6 +400,8 @@ pub struct LocalSteamDetails {
     pub app_id: i64,
     pub description: Option<String>,
     pub short_description: Option<String>,
+    pub release_date: Option<String>,
+    pub review_score: Option<i64>,
     pub tags: Vec<String>,
     pub genres: Vec<String>,
     pub categories: Vec<String>,
