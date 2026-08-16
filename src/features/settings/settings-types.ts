@@ -33,11 +33,7 @@ export interface SteamGridDbConfigurationStatus {
 
 export type ArtworkEnrichmentScope = "only_non_steam" | "all";
 export type ArtworkEnrichmentSlot =
-  | "grid_horizontal"
-  | "grid_vertical"
-  | "grid_square"
-  | "hero"
-  | "logo";
+  "grid_horizontal" | "grid_vertical" | "grid_square" | "hero" | "logo";
 
 export interface ArtworkEnrichmentRequest {
   gameIds: string[];
@@ -233,6 +229,7 @@ export type HltbPendingMatch = {
 
 export type SettingsLevel =
   | "settings"
+  | "appearance"
   | "display"
   | "network"
   | "bluetooth"

@@ -1,0 +1,481 @@
+.app-shell-cinematic .app-header,
+.app-shell-cinematic .app-footer {
+  display: none;
+}
+
+.app-shell-cinematic .app-shell-main {
+  width: 100%;
+  min-height: 100vh;
+  padding: 0;
+}
+
+.cinematic-home {
+  --cinematic-focus-border-cycle: 3.6s;
+  --cinematic-cover-shine-cycle: 3.8s;
+  --cinematic-hero-crossfade: 420ms;
+  --cinematic-rating-enter: 340ms;
+  --cinematic-hero-height: clamp(510px, 58vh, 1250px);
+  --cinematic-breathing-space: clamp(72px, 10.5vh, 228px);
+  --cinematic-metadata-height: clamp(50px, 5.2vh, 112px);
+  --cinematic-inline-margin: clamp(24px, 3.2vw, 128px);
+  --cinematic-rail-gap: clamp(10px, 1vw, 36px);
+  --cinematic-rail-top-gap: clamp(20px, 2.3vh, 50px);
+  min-height: 100vh;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--theme-text-primary);
+  background: #000;
+}
+
+.cinematic-hero {
+  position: relative;
+  height: var(--cinematic-hero-height);
+  min-height: 510px;
+  overflow: hidden;
+  background: #000;
+}
+
+.cinematic-hero-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center center;
+  filter: saturate(0.82) brightness(0.9);
+}
+
+.cinematic-hero-art-stack {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.cinematic-hero-art-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 1;
+  transition: opacity var(--cinematic-hero-crossfade) var(--ease-standard);
+  will-change: opacity;
+}
+
+.cinematic-hero-art-layer.is-outgoing,
+.cinematic-hero-art-layer.is-incoming {
+  opacity: 0;
+}
+
+.cinematic-hero-art-layer.is-incoming.is-visible {
+  opacity: 1;
+}
+
+.cinematic-hero-fade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0) 45%,
+      rgba(0, 0, 0, 0.16) 62%,
+      #000 100%
+    ),
+    linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.04),
+      transparent 42%,
+      rgba(0, 0, 0, 0.18)
+    );
+  pointer-events: none;
+}
+
+.cinematic-hero-logo {
+  position: absolute;
+  right: 0;
+  bottom: clamp(42px, 4.8vw, 184px);
+  left: clamp(48px, 7.5vw, 320px);
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  min-height: 150px;
+}
+
+.cinematic-logo-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  opacity: 1;
+  transition: opacity var(--cinematic-hero-crossfade) var(--ease-standard);
+  will-change: opacity;
+}
+
+.cinematic-logo-layer.is-outgoing,
+.cinematic-logo-layer.is-incoming {
+  opacity: 0;
+}
+
+.cinematic-logo-layer.is-incoming.is-visible {
+  opacity: 1;
+}
+
+.cinematic-game-logo {
+  display: block;
+  width: min(64vw, 2160px);
+  max-height: min(19.3vw, 740px);
+  object-fit: contain;
+  object-position: left bottom;
+  filter: drop-shadow(0 5px 9px rgba(0, 0, 0, 0.78));
+}
+
+.cinematic-game-title {
+  max-width: 720px;
+  margin: 0;
+  color: #fffaf0;
+  font-size: clamp(2.5rem, 6vw, 7rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 0.92;
+  text-transform: uppercase;
+  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+}
+
+.cinematic-metadata {
+  margin-top: var(--cinematic-breathing-space);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: var(--cinematic-metadata-height);
+  min-height: 0;
+  padding: 0 var(--cinematic-inline-margin);
+  border-top: 1px solid rgba(247, 241, 232, 0.16);
+  border-bottom: 1px solid rgba(247, 241, 232, 0.12);
+  overflow-x: auto;
+  background: #000;
+  scrollbar-width: none;
+}
+
+.cinematic-metadata::-webkit-scrollbar {
+  display: none;
+}
+
+.cinematic-metadata-item {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: clamp(8px, 0.625vw, 24px);
+  min-height: 30px;
+  padding: 0 clamp(12px, 1.65vw, 60px);
+  color: rgba(247, 241, 232, 0.9);
+  font-size: clamp(0.76rem, 1.08vw, 2.76rem);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.cinematic-metadata-item + .cinematic-metadata-item {
+  border-left: 1px solid rgba(247, 241, 232, 0.22);
+}
+
+.cinematic-metadata-symbol {
+  width: 1.35em;
+  height: 1.35em;
+  flex: 0 0 auto;
+  color: rgba(247, 241, 232, 0.88);
+}
+
+.cinematic-metadata-icon {
+  display: block;
+  width: 1.45em;
+  height: 1.45em;
+  object-fit: contain;
+}
+
+.cinematic-age-rating {
+  display: block;
+  width: 2em;
+  height: 1.45em;
+  object-fit: cover;
+  object-position: right center;
+}
+
+.cinematic-age-rating-overlay {
+  position: absolute;
+  top: 55%;
+  right: 0;
+  z-index: 1;
+  display: grid;
+  width: clamp(92px, 5.2vw, 224px);
+  height: clamp(48px, 3.05vw, 132px);
+  place-items: center;
+  border-left: 1px solid rgba(247, 241, 232, 0.28);
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(56, 59, 62, 0.82);
+  font-size: clamp(2rem, 2.5vw, 6.8rem);
+  font-weight: 750;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  transform: translateY(-50%);
+  animation: cinematic-rating-enter var(--cinematic-rating-enter)
+    var(--ease-enter) both;
+}
+
+.cinematic-rail-region {
+  padding: var(--cinematic-rail-top-gap) var(--cinematic-inline-margin) 0;
+}
+
+.cinematic-rail-region .navigation-row {
+  --cinematic-focus-bleed: clamp(12px, 0.75vw, 28px);
+
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 7 * var(--cinematic-rail-gap)) / 8);
+  grid-template-columns: none;
+  gap: var(--cinematic-rail-gap);
+  overflow-x: auto;
+  margin: calc(-1 * var(--cinematic-focus-bleed));
+  padding: var(--cinematic-focus-bleed);
+  padding-bottom: calc(var(--cinematic-focus-bleed) + 8px);
+  scrollbar-width: none;
+}
+
+.cinematic-rail-region .navigation-row::-webkit-scrollbar {
+  display: none;
+}
+
+.cinematic-rail-card {
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  border-radius: clamp(14px, 0.8vw, 32px);
+  outline: 0;
+  background: transparent;
+  transition: box-shadow var(--motion-focus-fast) var(--ease-focus);
+  isolation: isolate;
+}
+
+.cinematic-rail-card::before,
+.cinematic-rail-card::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  content: "";
+}
+
+.cinematic-rail-card::before {
+  z-index: 2;
+  border: clamp(3px, 0.18vw, 6px) solid rgba(255, 250, 240, 0.92);
+  opacity: 0;
+  transition: opacity var(--motion-focus-fast) var(--ease-standard);
+}
+
+.cinematic-rail-card::after {
+  z-index: 3;
+  padding: clamp(3px, 0.18vw, 6px);
+  background: conic-gradient(
+    from 0turn,
+    transparent 0deg 286deg,
+    rgba(255, 250, 240, 0.02) 298deg,
+    rgba(255, 250, 240, 0.8) 312deg,
+    rgba(255, 250, 240, 0.08) 326deg,
+    transparent 340deg 360deg
+  );
+  opacity: 0;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+[data-input-mode="keyboard"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"],
+[data-input-mode="gamepad"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"],
+.cinematic-home .cinematic-rail-card:focus-visible {
+  z-index: 1;
+  box-shadow: 0 7px 16px rgba(0, 0, 0, 0.28);
+}
+
+[data-input-mode="keyboard"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"]::before,
+[data-input-mode="gamepad"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"]::before,
+.cinematic-home .cinematic-rail-card:focus-visible::before {
+  opacity: 1;
+}
+
+[data-input-mode="keyboard"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"]::after,
+[data-input-mode="gamepad"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"]::after,
+.cinematic-home .cinematic-rail-card:focus-visible::after {
+  animation: cinematic-focus-border var(--cinematic-focus-border-cycle) linear
+    infinite;
+  opacity: 0.72;
+}
+
+.cinematic-rail-art-frame {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: #0c0c0c;
+}
+
+.cinematic-rail-art-frame::after {
+  position: absolute;
+  top: -35%;
+  bottom: -35%;
+  left: -48%;
+  z-index: 1;
+  width: 34%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.2) 45%,
+    rgba(255, 255, 255, 0.08) 58%,
+    transparent
+  );
+  content: "";
+  opacity: 0;
+  transform: rotate(20deg) translateX(-210%);
+  transform-origin: center;
+  pointer-events: none;
+}
+
+[data-input-mode="keyboard"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"]
+  .cinematic-rail-art-frame::after,
+[data-input-mode="gamepad"]
+  .cinematic-home
+  .cinematic-rail-card[data-active="true"]
+  .cinematic-rail-art-frame::after,
+.cinematic-home
+  .cinematic-rail-card:focus-visible
+  .cinematic-rail-art-frame::after {
+  animation: cinematic-cover-shine var(--cinematic-cover-shine-cycle) linear
+    infinite;
+}
+
+.cinematic-rail-art {
+  position: relative;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+@keyframes cinematic-focus-border {
+  from {
+    transform: rotate(0turn);
+  }
+
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes cinematic-cover-shine {
+  0%,
+  16% {
+    opacity: 0;
+    transform: rotate(20deg) translateX(-210%);
+  }
+
+  20% {
+    opacity: 0.68;
+  }
+
+  43% {
+    opacity: 0;
+    transform: rotate(20deg) translateX(420%);
+  }
+
+  44%,
+  100% {
+    opacity: 0;
+    transform: rotate(20deg) translateX(420%);
+  }
+}
+
+@keyframes cinematic-rating-enter {
+  from {
+    opacity: 0;
+    transform: translate(115%, -50%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cinematic-hero-art-layer,
+  .cinematic-logo-layer,
+  .cinematic-age-rating-overlay {
+    animation: none;
+    transition-duration: 1ms;
+  }
+
+  .cinematic-rail-card::after,
+  .cinematic-rail-art-frame::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+.cinematic-home-empty {
+  min-height: 50vh;
+  display: grid;
+  place-items: center;
+}
+
+@media (max-width: 1100px) {
+  .cinematic-metadata {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .cinematic-rail-region .navigation-row {
+    grid-auto-columns: calc((100% - 5 * 14px) / 6);
+  }
+}
+
+@media (max-width: 760px) {
+  .cinematic-home {
+    margin: -32px -20px -48px;
+  }
+
+  .cinematic-hero {
+    height: 58vh;
+    min-height: 360px;
+  }
+
+  .cinematic-hero-logo {
+    bottom: 28px;
+    left: 28px;
+  }
+
+  .cinematic-rail-region {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+}

@@ -2435,8 +2435,8 @@ impl<'a> SettingsRepository<'a> {
                 let steam_details = connection
                     .query_row(
                         "SELECT steam_app_id, steam_description, steam_short_description,
-                        steam_multiplayer, steam_single_player, steam_cloud,
-                        steam_trading_cards, steam_workshop
+                        steam_release_date, steam_review_score, steam_multiplayer,
+                        steam_single_player, steam_cloud, steam_trading_cards, steam_workshop
                      FROM game_details WHERE game_id = ?1",
                         params![game.id],
                         |row| {
@@ -2444,11 +2444,13 @@ impl<'a> SettingsRepository<'a> {
                                 row.get::<_, Option<i64>>(0)?,
                                 row.get::<_, Option<String>>(1)?,
                                 row.get::<_, Option<String>>(2)?,
-                                row.get::<_, Option<i64>>(3)?,
+                                row.get::<_, Option<String>>(3)?,
                                 row.get::<_, Option<i64>>(4)?,
                                 row.get::<_, Option<i64>>(5)?,
                                 row.get::<_, Option<i64>>(6)?,
                                 row.get::<_, Option<i64>>(7)?,
+                                row.get::<_, Option<i64>>(8)?,
+                                row.get::<_, Option<i64>>(9)?,
                             ))
                         },
                     )
@@ -2481,6 +2483,8 @@ impl<'a> SettingsRepository<'a> {
                     steam_app_id,
                     description,
                     short_description,
+                    release_date,
+                    review_score,
                     multiplayer,
                     single_player,
                     cloud,
@@ -2503,6 +2507,8 @@ impl<'a> SettingsRepository<'a> {
                             app_id: steam_app_id.unwrap_or_default(),
                             description,
                             short_description,
+                            release_date,
+                            review_score,
                             tags,
                             genres: game.genres.clone(),
                             categories,

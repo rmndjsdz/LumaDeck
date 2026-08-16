@@ -4,6 +4,7 @@ import { ProductShell } from "./features/launcher/ProductShell";
 import { NavigationProvider } from "./ui/navigation/NavigationProvider";
 import { AutoCursor } from "./ui/input/AutoCursor";
 import { recordMediaTiming } from "./ui/performance/media-timing";
+import { ThemeProvider } from "./ui/theme/ThemeProvider";
 import "./App.css";
 
 function App() {
@@ -11,10 +12,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <DetailsQueryDiagnostics queryClient={queryClient} />
-      <NavigationProvider>
-        <AutoCursor />
-        <ProductShell />
-      </NavigationProvider>
+      <ThemeProvider>
+        <NavigationProvider>
+          <AutoCursor />
+          <ProductShell />
+        </NavigationProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

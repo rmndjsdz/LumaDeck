@@ -108,6 +108,7 @@ export type Game = {
   logoUrl: string;
   backgroundUrl: string;
   iconUrl?: string;
+  ageRating?: string;
   screenshots: string[];
   description: string;
   genres: string[];
@@ -117,6 +118,7 @@ export type Game = {
   favorite: boolean;
   hidden?: boolean;
   installed: boolean;
+  installSizeGb?: number;
   progress: number;
   status: GameStatus;
   achievements?: GameAchievementSummary;

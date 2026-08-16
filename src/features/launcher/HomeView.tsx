@@ -1,13 +1,15 @@
 import type { Game } from "../catalog/game-types";
-import { getVisibleGames } from "../catalog/game-visibility";
 import { Focusable } from "../../ui/navigation/focus/Focusable";
 import { useNavigationStore } from "../../stores/navigation-store";
 import { NavigationRow } from "../../ui/navigation/layouts/NavigationRow";
 import { NavigationRowGroup } from "../../ui/navigation/layouts/NavigationRowGroup";
 import type { NavigationScreenDefinition } from "../../ui/navigation/screen/navigation-screen-contract";
 import { GameCard } from "./GameCard";
-import { resolveFeaturedGame } from "./home-feature-selection";
 import { MediaImage } from "../../ui/performance/MediaImage";
+import { useTheme } from "../../ui/theme/theme-context";
+import { useMemo } from "react";
+import { buildHomePresentation } from "./home/home-presentation";
+import { CinematicHomeLayout } from "./home/layouts/CinematicHomeLayout";
 
 export const HOME_SCREEN_DEFINITION = {
   id: "home",
@@ -40,24 +42,15 @@ interface HomeViewProps {
 
 export function HomeView({ games, onOpen, onViewLibrary }: HomeViewProps) {
   const activeFocusId = useNavigationStore((state) => state.activeFocusId);
-  const visibleGames = getVisibleGames(games);
-  const playingGames = visibleGames.filter((game) => game.status === "playing");
-  const continuePlaying = (playingGames.length ? playingGames : visibleGames)
-    .filter((game) => game.lastPlayedAt && game.playtimeMinutes > 0)
-    .sort((left, right) =>
-      (right.lastPlayedAt ?? "").localeCompare(left.lastPlayedAt ?? ""),
-    )
-    .slice(0, 5);
-  const savedFavorites = visibleGames.filter((game) => game.favorite);
-  const favorites = (savedFavorites.length ? savedFavorites : visibleGames)
-    .filter((game) => game.coverUrl || game.verticalCoverUrl)
-    .slice(0, 6);
-  const featuredGame = resolveFeaturedGame(
-    visibleGames,
-    activeFocusId,
-    continuePlaying,
-    favorites,
+  const { theme } = useTheme();
+  const presentation = useMemo(
+    () => buildHomePresentation(games, activeFocusId),
+    [activeFocusId, games],
   );
+  if (theme.layout.home === "cinematic") {
+    return <CinematicHomeLayout presentation={presentation} onOpen={onOpen} />;
+  }
+  const { continuePlaying, favorites, featuredGame } = presentation;
   const homeRegion = HOME_SCREEN_DEFINITION.regions[0];
   const homeRows = HOME_SCREEN_DEFINITION.rowGroups[0];
 
@@ -101,7 +94,6 @@ export function HomeView({ games, onOpen, onViewLibrary }: HomeViewProps) {
     </section>
   );
 }
-
 
 function HomeHero({
   game,
