@@ -10,9 +10,8 @@
 }
 
 .cinematic-home {
-  --cinematic-focus-border-cycle: 3.6s;
   --cinematic-cover-shine-cycle: 3.8s;
-  --cinematic-hero-crossfade: 420ms;
+  --cinematic-logo-fade: 550ms;
   --cinematic-rating-enter: 340ms;
   --cinematic-hero-height: clamp(510px, 58vh, 1250px);
   --cinematic-breathing-space: clamp(72px, 10.5vh, 228px);
@@ -58,7 +57,6 @@
   position: absolute;
   inset: 0;
   opacity: 1;
-  transition: opacity var(--cinematic-hero-crossfade) var(--ease-standard);
   will-change: opacity;
 }
 
@@ -107,16 +105,15 @@
   display: flex;
   align-items: flex-end;
   opacity: 1;
-  transition: opacity var(--cinematic-hero-crossfade) var(--ease-standard);
+  transition: opacity var(--cinematic-logo-fade) var(--ease-standard);
   will-change: opacity;
 }
 
-.cinematic-logo-layer.is-outgoing,
-.cinematic-logo-layer.is-incoming {
+.cinematic-logo-layer.is-entering {
   opacity: 0;
 }
 
-.cinematic-logo-layer.is-incoming.is-visible {
+.cinematic-logo-layer.is-entering.is-visible {
   opacity: 1;
 }
 
@@ -258,8 +255,7 @@
   isolation: isolate;
 }
 
-.cinematic-rail-card::before,
-.cinematic-rail-card::after {
+.cinematic-rail-card::before {
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -269,31 +265,8 @@
 
 .cinematic-rail-card::before {
   z-index: 2;
-  border: clamp(3px, 0.18vw, 6px) solid rgba(255, 250, 240, 0.92);
+  border: clamp(3px, 0.18vw, 6px) solid rgba(255, 255, 255, 0.88);
   opacity: 0;
-  transition: opacity var(--motion-focus-fast) var(--ease-standard);
-}
-
-.cinematic-rail-card::after {
-  z-index: 3;
-  padding: clamp(3px, 0.18vw, 6px);
-  background: conic-gradient(
-    from 0turn,
-    transparent 0deg 286deg,
-    rgba(255, 250, 240, 0.02) 298deg,
-    rgba(255, 250, 240, 0.8) 312deg,
-    rgba(255, 250, 240, 0.08) 326deg,
-    transparent 340deg 360deg
-  );
-  opacity: 0;
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
 }
 
 [data-input-mode="keyboard"]
@@ -304,29 +277,17 @@
   .cinematic-rail-card[data-active="true"],
 .cinematic-home .cinematic-rail-card:focus-visible {
   z-index: 1;
-  box-shadow: 0 7px 16px rgba(0, 0, 0, 0.28);
 }
 
 [data-input-mode="keyboard"]
-  .cinematic-home
+  .cinematic-home.is-focus-settled
   .cinematic-rail-card[data-active="true"]::before,
 [data-input-mode="gamepad"]
-  .cinematic-home
+  .cinematic-home.is-focus-settled
   .cinematic-rail-card[data-active="true"]::before,
-.cinematic-home .cinematic-rail-card:focus-visible::before {
+.cinematic-home.is-focus-settled .cinematic-rail-card:focus-visible::before {
   opacity: 1;
-}
-
-[data-input-mode="keyboard"]
-  .cinematic-home
-  .cinematic-rail-card[data-active="true"]::after,
-[data-input-mode="gamepad"]
-  .cinematic-home
-  .cinematic-rail-card[data-active="true"]::after,
-.cinematic-home .cinematic-rail-card:focus-visible::after {
-  animation: cinematic-focus-border var(--cinematic-focus-border-cycle) linear
-    infinite;
-  opacity: 0.72;
+  transition: opacity var(--motion-focus-fast) var(--ease-standard);
 }
 
 .cinematic-rail-art-frame {
@@ -382,16 +343,6 @@
   object-fit: cover;
 }
 
-@keyframes cinematic-focus-border {
-  from {
-    transform: rotate(0turn);
-  }
-
-  to {
-    transform: rotate(1turn);
-  }
-}
-
 @keyframes cinematic-cover-shine {
   0%,
   16% {
@@ -435,7 +386,6 @@
     transition-duration: 1ms;
   }
 
-  .cinematic-rail-card::after,
   .cinematic-rail-art-frame::after {
     animation: none;
     opacity: 0;

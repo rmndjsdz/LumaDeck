@@ -1,6 +1,6 @@
 import "../cinematic-home.css";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MediaImage } from "../../../../ui/performance/MediaImage";
 import { Focusable } from "../../../../ui/navigation/focus/Focusable";
 import { NavigationRow } from "../../../../ui/navigation/layouts/NavigationRow";
@@ -50,48 +50,46 @@ function CinematicHomeContent({
   });
   const game = detailedGame?.id === summaryGame.id ? detailedGame : summaryGame;
   const cinematicLayers = useCinematicGameLayers(game);
+  const focusSettled = useCinematicFocusSettled(game.id);
   const ageRating = resolveAgeRating(game);
 
   return (
     <section
-      className="cinematic-home"
+      className={"cinematic-home" + (focusSettled ? " is-focus-settled" : "")}
       aria-labelledby="cinematic-home-heading"
     >
       <div className="cinematic-hero">
         <div className="cinematic-hero-art-stack" aria-hidden="true">
           <CinematicHeroLayer
-            game={cinematicLayers.baseGame}
+            key={"cinematic-hero-layer-" + cinematicLayers.heroGame.id}
+            game={cinematicLayers.heroGame}
             className={
-              cinematicLayers.incomingVisible
-                ? "cinematic-hero-art-layer is-outgoing"
-                : "cinematic-hero-art-layer"
+              "cinematic-hero-art-layer" +
+              (cinematicLayers.heroIncomingVisible ? " is-outgoing" : "")
             }
           />
-          {cinematicLayers.incomingGame && (
+          {cinematicLayers.heroIncomingGame && (
             <CinematicHeroLayer
-              game={cinematicLayers.incomingGame}
-              className={`cinematic-hero-art-layer is-incoming${
-                cinematicLayers.incomingVisible ? " is-visible" : ""
-              }`}
+              key={
+                "cinematic-hero-layer-" + cinematicLayers.heroIncomingGame.id
+              }
+              game={cinematicLayers.heroIncomingGame}
+              className={
+                "cinematic-hero-art-layer is-incoming" +
+                (cinematicLayers.heroIncomingVisible ? " is-visible" : "")
+              }
             />
           )}
         </div>
         <div className="cinematic-hero-fade" aria-hidden="true" />
         <div className="cinematic-hero-logo">
-          <CinematicLogoLayer
-            game={cinematicLayers.baseGame}
-            className={
-              cinematicLayers.incomingVisible
-                ? "cinematic-logo-layer is-outgoing"
-                : "cinematic-logo-layer"
-            }
-          />
-          {cinematicLayers.incomingGame && (
+          {cinematicLayers.logoGame && (
             <CinematicLogoLayer
-              game={cinematicLayers.incomingGame}
-              className={`cinematic-logo-layer is-incoming${
-                cinematicLayers.incomingVisible ? " is-visible" : ""
-              }`}
+              game={cinematicLayers.logoGame}
+              className={
+                "cinematic-logo-layer" +
+                (cinematicLayers.logoVisible ? " is-visible" : " is-entering")
+              }
             />
           )}
           <h1 id="cinematic-home-heading" className="visually-hidden">
@@ -156,56 +154,137 @@ function CinematicHomeContent({
 }
 
 interface CinematicGameLayers {
-  baseGame: Game;
-  incomingGame: Game | null;
-  incomingVisible: boolean;
+  targetGameId: string;
+  heroGame: Game;
+  heroIncomingGame: Game | null;
+  heroIncomingVisible: boolean;
+  logoGame: Game | null;
+  logoVisible: boolean;
 }
 
 function useCinematicGameLayers(game: Game): CinematicGameLayers {
   const [layers, setLayers] = useState<CinematicGameLayers>(() => ({
-    baseGame: game,
-    incomingGame: null,
-    incomingVisible: false,
+    targetGameId: game.id,
+    heroGame: game,
+    heroIncomingGame: null,
+    heroIncomingVisible: false,
+    logoGame: game,
+    logoVisible: true,
   }));
-  const latestGameIdRef = useRef(game.id);
+  const previousGameIdRef = useRef(game.id);
+  const transitionTokenRef = useRef(0);
 
-  useEffect(() => {
-    if (latestGameIdRef.current === game.id) return;
-    latestGameIdRef.current = game.id;
+  const renderedLayers =
+    layers.targetGameId === game.id
+      ? layers
+      : {
+          ...layers,
+          targetGameId: game.id,
+          heroGame:
+            layers.heroIncomingVisible && layers.heroIncomingGame
+              ? layers.heroIncomingGame
+              : layers.heroGame,
+          heroIncomingGame: game,
+          heroIncomingVisible: false,
+          logoGame: null,
+          logoVisible: false,
+        };
+
+  useLayoutEffect(() => {
+    if (previousGameIdRef.current === game.id) return;
+    previousGameIdRef.current = game.id;
+    const transitionToken = transitionTokenRef.current + 1;
+    transitionTokenRef.current = transitionToken;
 
     setLayers((current) => ({
-      baseGame: current.incomingGame ?? current.baseGame,
-      incomingGame: game,
-      incomingVisible: false,
+      targetGameId: game.id,
+      heroGame:
+        current.heroIncomingVisible && current.heroIncomingGame
+          ? current.heroIncomingGame
+          : current.heroGame,
+      heroIncomingGame: game,
+      heroIncomingVisible: false,
+      logoGame: null,
+      logoVisible: false,
     }));
 
-    const frameId = requestAnimationFrame(() => {
+    const logoEnterTimer = window.setTimeout(() => {
+      if (transitionTokenRef.current !== transitionToken) return;
       setLayers((current) =>
-        current.incomingGame?.id === game.id
-          ? { ...current, incomingVisible: true }
+        current.targetGameId === game.id
+          ? { ...current, logoGame: game, logoVisible: false }
           : current,
       );
-    });
-    const settleTimer = window.setTimeout(() => {
+    }, CINEMATIC_LOGO_DELAY_MS);
+    const logoVisibleTimer = window.setTimeout(() => {
+      if (transitionTokenRef.current !== transitionToken) return;
       setLayers((current) =>
-        current.incomingGame?.id === game.id && current.incomingVisible
+        current.targetGameId === game.id && current.logoGame?.id === game.id
+          ? { ...current, logoVisible: true }
+          : current,
+      );
+    }, CINEMATIC_LOGO_DELAY_MS + 1);
+    const heroVisibleTimer = window.setTimeout(() => {
+      if (transitionTokenRef.current !== transitionToken) return;
+      setLayers((current) =>
+        current.targetGameId === game.id
+          ? { ...current, heroIncomingVisible: true }
+          : current,
+      );
+    }, CINEMATIC_HERO_DELAY_MS);
+    const settleTimer = window.setTimeout(() => {
+      if (transitionTokenRef.current !== transitionToken) return;
+      setLayers((current) =>
+        current.targetGameId === game.id
           ? {
-              baseGame: game,
-              incomingGame: null,
-              incomingVisible: false,
+              targetGameId: game.id,
+              heroGame: game,
+              heroIncomingGame: null,
+              heroIncomingVisible: false,
+              logoGame: game,
+              logoVisible: true,
             }
           : current,
       );
-    }, 420);
+    }, CINEMATIC_TRANSITION_SETTLE_MS);
 
     return () => {
-      cancelAnimationFrame(frameId);
+      window.clearTimeout(logoEnterTimer);
+      window.clearTimeout(logoVisibleTimer);
+      window.clearTimeout(heroVisibleTimer);
       window.clearTimeout(settleTimer);
     };
   }, [game]);
 
-  return layers;
+  return renderedLayers;
 }
+
+function useCinematicFocusSettled(focusId: string): boolean {
+  const focusTokenRef = useRef({ focusId, token: 0 });
+  if (focusTokenRef.current.focusId !== focusId) {
+    focusTokenRef.current = {
+      focusId,
+      token: focusTokenRef.current.token + 1,
+    };
+  }
+  const focusToken = focusTokenRef.current.token;
+  const [settledToken, setSettledToken] = useState<number | null>(null);
+
+  useEffect(() => {
+    const settleTimer = window.setTimeout(() => {
+      setSettledToken(focusToken);
+    }, CINEMATIC_FOCUS_IDLE_DELAY_MS);
+
+    return () => window.clearTimeout(settleTimer);
+  }, [focusId, focusToken]);
+
+  return settledToken === focusToken;
+}
+
+const CINEMATIC_FOCUS_IDLE_DELAY_MS = 380;
+const CINEMATIC_LOGO_DELAY_MS = 650;
+const CINEMATIC_HERO_DELAY_MS = 750;
+const CINEMATIC_TRANSITION_SETTLE_MS = 1_300;
 
 function CinematicHeroLayer({
   game,
